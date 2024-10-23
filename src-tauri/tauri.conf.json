@@ -43,7 +43,7 @@
     },
     "bundle": {
       "active": true,
-      "targets": "all",
+      "targets": ["msi"],
       "identifier": "com.lyra.dev",
       "publisher": "Lyra",
       "shortDescription": "Lyra",
@@ -68,6 +68,12 @@
         "webviewInstallMode": {
           "silent": true,
           "type": "downloadBootstrapper"
+        },
+        "wix": {
+          "language": ["es-ES"],
+          "dialogImagePath": "./assets/dialog.webp",
+          "bannerPath": "./assets/banner.webp",
+          "skipWebviewInstall": true
         }
       }
     },
