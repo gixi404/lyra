@@ -13,6 +13,7 @@ const root = document.getElementById("root") as Container,
   FilePage: LazyCmp = lazy(() => import("./pages/FileContent")),
   PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences")),
   SupportPage: LazyCmp = lazy(() => import("./pages/Support")),
+  MyFilesPage: LazyCmp = lazy(() => import("./pages/MyFiles")),
   { myFontValue } = usePreferences(),
   router = createBrowserRouter([
     {
@@ -34,6 +35,10 @@ const root = document.getElementById("root") as Container,
     {
       path: PAGES.support,
       element: <SupportPage />,
+    },
+    {
+      path: PAGES.myFiles,
+      element: <MyFilesPage />,
     },
   ]);
 

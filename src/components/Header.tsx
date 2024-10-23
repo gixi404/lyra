@@ -174,6 +174,14 @@ function Header(): Component {
                   )}>
                   {d.Support}
                 </p>
+                <p
+                  onClick={() => goTo(PAGES.myFiles)}
+                  className={twMerge(
+                    isDay ? "hover:text-gray-500" : "hover:text-white",
+                    "cursor-default w-full"
+                  )}>
+                  {d.MyFiles}
+                </p>
               </div>
             )}
           </details>

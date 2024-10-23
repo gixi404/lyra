@@ -12,6 +12,7 @@ const PAGES: Pages = {
   preferences: "/preferences",
   file: "/file",
   updates: "/updates",
+  myFiles: "/myfiles",
 };
 
 const THEMES: Themes = {
@@ -49,17 +50,17 @@ const INTRO_ES: string = `Lyra es el espacio ideal para escribir sin distraccion
 const INTRO_EN: string = `Lyra is the perfect space for distraction-free writing. Ideal for those who enjoy focused writing, whether it’s a book, thoughts, or a personal journal. It works offline, keeping your texts secure and private on your device, with no data collection.\n\nWith customizable themes and keyboard shortcuts, it offers a smooth writing experience tailored to your style.\n\nAvailable in Spanish and English, with more languages coming soon.\n\nStart writing with Lyra and bring your ideas to life!`;
 
 export {
-  TEXT_ALIGNS,
   BASE_DIRECTORY,
-  WELCOME_ES,
-  WELCOME_EN,
-  INTRO_ES,
   INTRO_EN,
+  INTRO_ES,
   LANGS,
   MAIN_FOLDER,
   PAGES,
-  THEMES,
+  TEXT_ALIGNS,
   TEXT_SIZES,
+  THEMES,
+  WELCOME_EN,
+  WELCOME_ES,
 };
 
 interface TextSizes {
@@ -85,6 +86,7 @@ interface Pages {
   preferences: string;
   file: string;
   updates: string;
+  myFiles: string;
 }
 
 interface Themes {

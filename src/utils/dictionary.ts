@@ -133,6 +133,12 @@ function translations() {
     Delete: userLanguage("Delete", "Eliminar"),
     Recover: userLanguage("Recover", "Recuperar"),
     FileRecovered: userLanguage("Record recovered", "Archivo recuperado"),
+    YourFilesAreLocatedIn: userLanguage(
+      "Your files are located in > Documents > lyra",
+      "Tus archivos se encuentran en > Documentos > lyra"
+    ),
+    OpenFolder: userLanguage("Open folder", "Abrir carpeta"),
+    MyFiles: userLanguage("My files", "Mis archivos"),
   };
 
   return dictionary;
