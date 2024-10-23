@@ -73,7 +73,7 @@
           "language": ["es-ES"],
           "dialogImagePath": "./assets/dialog.webp",
           "bannerPath": "./assets/banner.webp",
-          "skipWebviewInstall": true
+          "skipWebviewInstall": true        
         }
       }
     },
