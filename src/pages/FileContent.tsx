@@ -1,20 +1,20 @@
-import listenCommands from "bind-mousetrap-global";
 import commands from "mousetrap";
-import { useEffect, useState } from "react";
+import listenCommands from "bind-mousetrap-global";
 import MainContainer from "../components/MainContainer";
 import ModifiedFile from "../components/ModifiedFile";
-import WordsFile from "../components/WordsFile";
 import useFile from "../hooks/useFile";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
+import WordsFile from "../components/WordsFile";
 import { configStore } from "../store/configStore";
+import { copyText, getDate, len } from "../utils/helpers";
 import { fileStore } from "../store/fileStore";
+import { useEffect, useState } from "react";
 import {
   increaseText,
   reduceText,
   toggleSpellchecker,
 } from "../utils/commands";
-import { copyText, getDate, len } from "../utils/helpers";
 import type { Component, stylesText } from "../utils/types";
 
 listenCommands(commands);
@@ -68,10 +68,6 @@ function FileContent(): Component {
     }
   }
 
-  useEffect(() => {
-    console.log(styles.fontSize);
-  }, [styles.fontSize]);
-
   return (
     <MainContainer>
       <WordsFile wordCounts={wordCounts} />
@@ -86,10 +82,9 @@ function FileContent(): Component {
           opacity: String(Number(styles.opacity) / 10),
           letterSpacing: String(styles.letterSpacing) + "px",
           fontSize: String(styles.fontSize),
-          // @ts-ignore
-          textAlign: String(styles.alignText),
+          textAlign: String(styles.alignText) as CanvasTextAlign,
         }}
-        className="text-2xl sm:min-w-[600px] w-full min-h-screen py-6 sm:py-20 px-10 lg:px-44 xl:px-64 resize-none border-none focus:ring-0 focus:outline-none bg-transparent placeholder:text-gray-100/50 text-pretty cursor-default"
+        className="text-2xl sm:min-w-[600px] w-full min-h-screen py-6 sm:py-20 px-10 lg:px-44 xl:px-64 resize-none border-none focus:ring-0 focus:outline-none bg-transparent placeholder:text-gray-100/50 text-pretty cursor-text"
       />
     </MainContainer>
   );

@@ -1,11 +1,11 @@
-import { invoke } from "@tauri-apps/api";
-import { createDir, exists, writeTextFile } from "@tauri-apps/api/fs";
-import { join } from "@tauri-apps/api/path";
-import { flushSync } from "react-dom";
 import toast from "react-hot-toast";
-import { type NavigateFunction, useNavigate } from "react-router-dom";
+import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
+import { createDir, exists, writeTextFile } from "@tauri-apps/api/fs";
+import { flushSync } from "react-dom";
+import { join } from "@tauri-apps/api/path";
+import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
   BASE_DIRECTORY,
   INTRO_EN,
@@ -16,7 +16,6 @@ import {
   WELCOME_EN,
   WELCOME_ES,
 } from "./consts";
-import translations from "./dictionary";
 import type { Timer } from "./types";
 
 const reload = (): void => window.location.reload();
@@ -44,16 +43,17 @@ function notification(type: "success" | "error", msg: string): void {
 
 function nameIsValid(name: string): boolean {
   const d = translations(),
-    regex: RegExp = /^[a-zA-ZÀ-ÿ0-9-_ !¡¿?]+$/,
-    nameIsLong: boolean = len(name) > 25,
-    invalidSymbols: boolean = !regex.test(name);
+    regex: RegExp = /[\\/:*"<>|?]/,
+    nameLong: boolean = len(name) > 60,
+    invalidSymbols: boolean = regex.test(name),
+    invalidStartEnd: boolean = /^[ .]|[ .]$/.test(name);
 
-  if (nameIsLong) {
+  if (nameLong) {
     notification("error", d.VeryLongName);
     return false;
   }
 
-  if (invalidSymbols) {
+  if (invalidSymbols || invalidStartEnd) {
     notification("error", d.NoSpecialCharacters);
     return false;
   }
@@ -64,14 +64,16 @@ function nameIsValid(name: string): boolean {
 function themes(): Themes {
   const { myTheme } = usePreferences(),
     isDay: boolean = myTheme() == THEMES.Day,
-    isClearNigth: boolean = myTheme() == THEMES.clearNigth;
-  return { isDay, isClearNigth };
+    isNigth: boolean = myTheme() == THEMES.clearNigth;
+  return { isDay, isNigth };
 }
 
 async function getSystemLang(): Promise<string> {
-  const lang: string = await invoke("get_system_lang");
-  if (lang.startsWith("es-")) return LANGS.es;
-  else return LANGS.en;
+  //* Arroja error al obtener el idioma del sistema.
+  // const lang: string = await invoke("get_system_lang");
+  // if (lang.startsWith("es-")) return LANGS.es;
+  // else return LANGS.en;
+  return Promise.resolve(LANGS.es);
 }
 
 async function verifySystemLang(): Promise<void> {
@@ -86,15 +88,16 @@ async function verifySystemLang(): Promise<void> {
 }
 
 async function verifyMainFolder(): Promise<void> {
-  const systemLang: string = await getSystemLang(),
-    isSpanish: boolean = systemLang == LANGS.es,
+  // const systemLang: string = await getSystemLang(),
+  // isSpanish: boolean = systemLang == LANGS.es,
+  const isSpanish: boolean = true,
     welcome: string = isSpanish ? WELCOME_ES : WELCOME_EN,
     intro: string = isSpanish ? INTRO_ES : INTRO_EN;
 
   while (true) {
-    const mainFolderExits: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
+    const mainFolderExists: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
     const path: string = await join(MAIN_FOLDER, welcome);
-    if (!mainFolderExits) {
+    if (!mainFolderExists) {
       createDir(MAIN_FOLDER, BASE_DIRECTORY)
         .then(() => writeTextFile(path, intro, BASE_DIRECTORY))
         .catch(e => console.error(`catch 'verifyMainFolder' ${e.message}`));
@@ -196,7 +199,7 @@ export {
 
 interface Themes {
   isDay: boolean;
-  isClearNigth: boolean;
+  isNigth: boolean;
 }
 
 type Navigation = { goTo: (path: string) => void };

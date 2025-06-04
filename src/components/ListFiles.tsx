@@ -1,30 +1,29 @@
-import { animated, useSpring } from "@react-spring/web";
-import { memo, useEffect } from "react";
-import usePreferences from "../hooks/usePreferences";
-import { configStore } from "../store/configStore";
-import { searchStore } from "../store/searchStore";
-import { len, normalize } from "../utils/helpers";
-import type { Component } from "../utils/types";
 import ItemFile from "./ItemFile";
 import NoFiles from "./NoFiles";
 import NoMatches from "./NoMatches";
+import usePreferences from "../hooks/usePreferences";
+import { animated, useSpring } from "@react-spring/web";
+import { configStore } from "../store/configStore";
+import { len, normalize } from "../utils/helpers";
+import { memo, useEffect } from "react";
+import { searchStore } from "../store/searchStore";
+import type { Component } from "../utils/types";
 
 const ListFiles = memo(({ arr }: Props): Component => {
   const { search, resetSearch, order } = searchStore(),
     { paperIsOpen } = configStore(),
-    { myPaper } = usePreferences(),
     animation = {
       from: { opacity: 0 },
       to: { opacity: 1 },
       config: { duration: 200 },
     },
-    [styles, api] = useSpring(() => animation);
+    [styles, api] = useSpring(() => ({ opacity: 1 }));
 
   useEffect(() => resetSearch(), [paperIsOpen]);
 
   useEffect(() => {
     api.start(animation);
-  }, [search, paperIsOpen, myPaper()]);
+  }, [search, paperIsOpen]);
 
   function renderFiles(): Component {
     const { myPaper } = usePreferences(),
@@ -33,7 +32,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
         ? myPaper().filter(f => normalize(f).includes(normalize(search)))
         : allFiles.filter(f => normalize(f).includes(normalize(search)));
 
-    if (len(files) === 0) {
+    if (len(files) == 0) {
       if (len(normalize(search)) > 0) return <NoMatches />;
       return <NoFiles />;
     }
@@ -48,7 +47,8 @@ const ListFiles = memo(({ arr }: Props): Component => {
   return (
     <animated.ol
       style={styles}
-      className="grid grid-cols-1 gap-y-2 place-items-center w-full overflow-hidden pb-20">
+      className="grid grid-cols-1 gap-y-2 place-items-center w-full overflow-hidden pb-20"
+    >
       {renderFiles()}
     </animated.ol>
   );

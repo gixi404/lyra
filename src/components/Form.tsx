@@ -1,4 +1,11 @@
+import translations from "../utils/dictionary";
+import useFile from "../hooks/useFile";
 import { animated, useSpring } from "@react-spring/web";
+import { configStore } from "../store/configStore";
+import { fileStore } from "../store/fileStore";
+import { PAGES } from "../utils/consts";
+import { searchStore } from "../store/searchStore";
+import { twMerge } from "tailwind-merge";
 import {
   Plus as AddIcon,
   ArrowDownAz,
@@ -12,13 +19,6 @@ import {
   useState,
 } from "react";
 import Dialog, { type SweetAlertResult } from "sweetalert2";
-import { twMerge } from "tailwind-merge";
-import useFile from "../hooks/useFile";
-import { configStore } from "../store/configStore";
-import { fileStore } from "../store/fileStore";
-import { searchStore } from "../store/searchStore";
-import { PAGES } from "../utils/consts";
-import translations from "../utils/dictionary";
 import {
   nameIsValid,
   navigation,
@@ -79,12 +79,11 @@ function Form(): Component {
     }).then((res: SweetAlertResult) => {
       if (res.isConfirmed) {
         e.preventDefault();
-        const file: File = { name: res.value, content: "" };
-        if (paperIsOpen) return;
-        if (isRepeated(file.name)) return notification("error", d.RepeatedItem);
-        if (!file.name) return notification("error", d.EnterName);
-        if (!nameIsValid(file.name)) return;
-        return fileManagement(file);
+        const file: File = {
+          name: res.value,
+          content: `## ${res.value} ${empty_text}`,
+        };
+        validateFields(file);
       }
     });
   }
@@ -97,6 +96,28 @@ function Form(): Component {
     goTo(PAGES.file);
   }
 
+  function validateFields(file: File): void {
+    switch (true) {
+      case paperIsOpen:
+        break;
+
+      case isRepeated(file.name):
+        notification("error", d.RepeatedItem);
+        break;
+
+      case !file.name:
+        notification("error", d.EnterName);
+        break;
+
+      case !nameIsValid(file.name):
+        break;
+
+      default:
+        fileManagement(file);
+        break;
+    }
+  }
+
   function handleSubmit(e: FormEvent): void {
     e.preventDefault();
     if (fileName) addFile(e);
@@ -106,7 +127,8 @@ function Form(): Component {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-col justify-center items-center w-full text-slate-400 gap-y-6 max-w-[340px] opacity-80">
+      className="flex flex-col justify-center items-center w-full text-slate-400 gap-y-6 max-w-[340px] opacity-80"
+    >
       <div className="flex justify-end items-start gap-x-3 w-full">
         <input
           autoFocus
@@ -129,7 +151,8 @@ function Form(): Component {
               ? "bg-gray-300 hover:bg-gray-200 text-slate-800 border border-gray-400"
               : "bg-gray-800 hover:bg-gray-700 text-sky-400 border border-sky-400",
             "flex items-center justify-center gap-x-3 px-3 h-[42px] rounded-md transition-colors"
-          )}>
+          )}
+        >
           <AddIcon size={25} strokeWidth={2.5} />
         </animated.button>
         <animated.button
@@ -140,7 +163,8 @@ function Form(): Component {
               ? "bg-gray-300 hover:bg-gray-200 text-slate-800 border border-gray-400"
               : "bg-gray-800 hover:bg-gray-700 text-sky-400 border border-sky-400",
             "flex items-center justify-center gap-x-3 px-3 h-[42px] rounded-md transition-colors"
-          )}>
+          )}
+        >
           {order ? (
             <ArrowDownAz size={25} strokeWidth={2} />
           ) : (
@@ -157,7 +181,8 @@ function Form(): Component {
             paperIsOpen && isDay && "bg-gray-400",
             paperIsOpen && !isDay && "bg-blue-950",
             "flex items-center justify-center gap-x-3 border h-[42px] rounded-md transition-colors px-3"
-          )}>
+          )}
+        >
           <PaperIcon size={20} strokeWidth={2} />
         </animated.button>
       </div>
@@ -166,7 +191,8 @@ function Form(): Component {
           className={twMerge(
             isDay ? "text-slate-900" : "text-slate-300",
             "w-full text-lg text-center"
-          )}>
+          )}
+        >
           {d.Archived}
         </p>
       )}
@@ -175,3 +201,64 @@ function Form(): Component {
 }
 
 export default Form;
+
+const empty_text: string = `
+  
+  
+  
+  
+  
+  
+  
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+
+
+
+
+
+
+
+
+
+
+`;

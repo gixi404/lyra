@@ -8,5 +8,5 @@ export const configStore: ZustandStore = create((set: any) => ({
   spellCheck: false,
   setSpellCheck: (newState: boolean) => set(() => ({ spellCheck: newState })),
   showHeader: true,
-  setShowHeader: () => set((state: any) => ({ showHeader: !state.showHeader })),
+  setShowHeader: (newState: boolean) => set(() => ({ showHeader: newState })),
 }));

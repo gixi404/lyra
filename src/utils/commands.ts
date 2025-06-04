@@ -1,10 +1,10 @@
-import { appWindow } from "@tauri-apps/api/window";
-import type { Dispatch, SetStateAction } from "react";
+import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
-import { PAGES, TEXT_SIZES } from "./consts";
-import translations from "./dictionary";
+import { appWindow } from "@tauri-apps/api/window";
 import { notification, pathIs } from "./helpers";
+import { PAGES, TEXT_SIZES } from "./consts";
+import type { Dispatch, SetStateAction } from "react";
 import type { stylesText } from "./types";
 
 async function toggleFullScreen(): Promise<void> {

@@ -1,3 +1,8 @@
+import useStorage from "./useStorage";
+import { BASE_DIRECTORY, MAIN_FOLDER, PAGES } from "../utils/consts";
+import { fileStore } from "../store/fileStore";
+import { join } from "@tauri-apps/api/path";
+import { navigation } from "../utils/helpers";
 import {
   exists,
   FileEntry,
@@ -7,11 +12,6 @@ import {
   renameFile as rename,
   writeTextFile,
 } from "@tauri-apps/api/fs";
-import { join } from "@tauri-apps/api/path";
-import { fileStore } from "../store/fileStore";
-import { BASE_DIRECTORY, MAIN_FOLDER, PAGES } from "../utils/consts";
-import { navigation } from "../utils/helpers";
-import useStorage from "./useStorage";
 
 function useFile(): Files {
   const { goTo } = navigation();

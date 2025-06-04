@@ -1,5 +1,5 @@
-import { LANGS, TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 import useStorage from "./useStorage";
+import { LANGS, TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 
 function usePreferences(): Preferences {
   const { getItem } = useStorage();

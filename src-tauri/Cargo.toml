@@ -1,11 +1,11 @@
 [package]
-name = "Lyra"
-version = "1.1.0"
-description = "Lyra: focused writing"
+name = "lyra"
+version = "2.0.0"
+description = "lyra: focused writing"
 authors = ["gixi"]
 edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/gixilym/lyra"
+license = "unlicense"
+repository = "https://github.com/gixi404/lyra"
 
 
 [build-dependencies]

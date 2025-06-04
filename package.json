@@ -1,7 +1,7 @@
 {
-  "name": "Lyra",
+  "name": "lyra",
   "private": true,
-  "version": "1.1.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,30 +13,30 @@
     "@fontsource/ia-writer-duo": "^5.0.11",
     "@fontsource/sarabun": "^5.0.20",
     "@react-spring/web": "^9.7.5",
-    "@tauri-apps/api": "^1.5.6",
+    "@tauri-apps/api": "^1.6.0",
     "bind-mousetrap-global": "^1.0.1",
     "lucide-react": "^0.378.0",
     "mousetrap": "^1.6.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.4.1",
-    "react-router-dom": "^6.23.0",
+    "react-router-dom": "^6.26.0",
     "react-select": "^5.8.0",
-    "sweetalert2": "^11.6.13",
+    "sweetalert2": "^11.12.4",
     "tailwind-merge": "^2.5.0",
-    "zustand": "^4.4.6"
+    "zustand": "^4.5.4"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^1.5.14",
+    "@tauri-apps/cli": "^1.6.0",
     "@types/mousetrap": "^1.6.15",
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.2.15",
-    "@types/react-dom": "^18.2.7",
+    "@types/node": "^20.14.15",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.3",
-    "typescript": "^5.0.2",
-    "vite": "^5.3.1"
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.41",
+    "tailwindcss": "^3.4.9",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
   }
 }

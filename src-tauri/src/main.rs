@@ -7,7 +7,7 @@ fn open_folder(path: String) -> Result<(), String> {
     Command::new("explorer")
         .arg(path)
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: std::io::Error| e.to_string())?;
     Ok(())
 }
 

@@ -14,7 +14,7 @@ import {
 } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
-function Presentation(): Component {
+function PresentationPage(): Component {
   const { goTo } = navigation();
   const { isDay } = themes();
   const d = translations();
@@ -33,7 +33,8 @@ function Presentation(): Component {
             className={twMerge(
               isDay ? "text-black/90" : "text-gray-200 ",
               "md:text-7xl text-5xl tracking-tight"
-            )}>
+            )}
+          >
             <span className="text-indigo-500">L</span>y
             <span className="text-indigo-500">r</span>a
             <span className="md:text-4xl text-2xl">:</span>
@@ -53,7 +54,8 @@ function Presentation(): Component {
           className={twMerge(
             isDay ? "text-black/90" : "text-gray-200",
             "md:text-lg text-md w-full flex justify-start items-center sm:gap-x-3 gap-x-1 [&>span]:text-indigo-500 [&>span]:font-semibold [&>span]:text-2xl"
-          )}>
+          )}
+        >
           <li>{d.MinimalDesing}</li>
           <span>-</span>
           <li>{d.OfflineAccess}</li>
@@ -64,7 +66,8 @@ function Presentation(): Component {
         <div className="w-full flex justify-start items-center">
           <button
             onClick={() => goTo(PAGES.list)}
-            className="text-xl text-white hover:bg-indigo-500 duration-75 pb-2 pt-1.5 px-6 rounded-lg bg-indigo-600">
+            className="text-xl text-white hover:bg-indigo-500 duration-75 pb-2 pt-1.5 px-6 rounded-lg bg-indigo-600"
+          >
             {d.Start}
           </button>
         </div>
@@ -73,19 +76,22 @@ function Presentation(): Component {
           className={twMerge(
             isDay ? "text-black/90" : "text-gray-400",
             "flex justify-start gap-x-10 items-center w-full md:text-lg text-md"
-          )}>
+          )}
+        >
           <a
             target="_blank"
             rel="noopener noreferrer"
             className="cursor-default hover:underline"
-            href="https://github.com/gixilym/lyra/releases">
-            {d.Version}: 1.1.0
+            href="https://github.com/gixi404/lyra/releases"
+          >
+            {d.Version}: 2.0.0
           </a>
           <a
             href="https://gixi.dev"
             target="_blank"
             rel="noopener noreferrer"
-            className="cursor-default hover:underline">
+            className="cursor-default hover:underline"
+          >
             {d.DevelopedBy}
           </a>
         </div>
@@ -94,4 +100,4 @@ function Presentation(): Component {
   );
 }
 
-export default Presentation;
+export default PresentationPage;

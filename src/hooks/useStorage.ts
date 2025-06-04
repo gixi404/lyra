@@ -1,9 +1,3 @@
-interface Storage {
-  getItem: (key: string, defaultValue: string) => string;
-  setItem: (key: string, value: string) => void;
-  removeItem: (key: string) => void;
-}
-
 function useStorage(): Storage {
   function getItem(key: string, defaultValue: string): string {
     const item: string = window.localStorage.getItem(key) ?? defaultValue;
@@ -24,3 +18,9 @@ function useStorage(): Storage {
 }
 
 export default useStorage;
+
+interface Storage {
+  getItem: (key: string, defaultValue: string) => string;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+}

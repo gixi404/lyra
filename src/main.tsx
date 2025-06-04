@@ -1,11 +1,11 @@
-import { lazy, StrictMode, Suspense } from "react";
-import { type Container, createRoot } from "react-dom/client";
-import { Toaster } from "react-hot-toast";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
-import usePreferences from "./hooks/usePreferences";
 import PresentationPage from "./pages/Presentation";
-import "./styles.css";
+import usePreferences from "./hooks/usePreferences";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { lazy, StrictMode, Suspense } from "react";
 import { PAGES } from "./utils/consts";
+import { Toaster } from "react-hot-toast";
+import "./styles.css";
+import { type Container, createRoot } from "react-dom/client";
 import type { LazyCmp } from "./utils/types";
 
 const root = document.getElementById("root") as Container,
@@ -44,7 +44,7 @@ const root = document.getElementById("root") as Container,
 
 createRoot(root).render(
   <StrictMode>
-    <Suspense fallback={null}>
+    <Suspense fallback={<></>}>
       <RouterProvider router={router} />
     </Suspense>
     <Toaster

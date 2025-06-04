@@ -108,7 +108,8 @@ function Preferences(): Component {
     <MainContainer>
       <animated.div
         style={styles}
-        className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-10 gap-x-6 gap-y-20">
+        className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-10 gap-x-6 gap-y-20"
+      >
         <div className="w-full px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-14">
           <div className=" flex justify-between items-center w-full">
             <div className="flex justify-center items-center gap-x-4">
@@ -152,7 +153,8 @@ function Preferences(): Component {
                   ? "bg-[#c0c0c0] text-black border-[#2b2b2b]"
                   : "bg-[#2b2b2b] text-[#d8d8d8] border-[#c0c0c0]",
                 "cursor-pointer w-[140px] md:w-[160px] justify-center items-center flex rounded-md border sm:text-lg text-sm h-10"
-              )}>
+              )}
+            >
               {myWordCount() ? d.Enabled : d.Disabled}
             </button>
           </div>
@@ -169,7 +171,8 @@ function Preferences(): Component {
                   ? "bg-[#c0c0c0] text-black border-[#2b2b2b]"
                   : "bg-[#2b2b2b] text-[#d8d8d8] border-[#c0c0c0]",
                 "cursor-pointer w-[140px] sm:w-[160px] justify-center items-center flex rounded-md sm:text-lg text-sm h-10 border"
-              )}>
+              )}
+            >
               {myLastModified() ? d.Enabled : d.Disabled}
             </button>
           </div>
@@ -183,7 +186,8 @@ function Preferences(): Component {
               className={twMerge(
                 isDay ? "border-[#2b2b2b]" : "border-[#c0c0c0] bg-[#2b2b2b]",
                 "flex flex-col justify-center py-0.5 items-center border w-[140px] sm:w-[160px] rounded-md h-10 "
-              )}>
+              )}
+            >
               <input
                 type="range"
                 min={1}
@@ -204,10 +208,7 @@ function Preferences(): Component {
               isSearchable={false}
               options={alignsOptions}
               placeholder={getAlignLabel()}
-              onChange={(e: any) => {
-                console.log(e.value);
-                changeAlign(e.value);
-              }}
+              onChange={e => changeAlign(e?.value ?? "start")}
               styles={stylesSelect()}
             />
           </div>
@@ -221,7 +222,8 @@ function Preferences(): Component {
               className={twMerge(
                 isDay ? "border-[#2b2b2b]" : "border-[#c0c0c0] bg-[#2b2b2b]",
                 "flex flex-col justify-center py-0.5 items-center border w-[140px] sm:w-[160px] rounded-md h-10"
-              )}>
+              )}
+            >
               <input
                 type="number"
                 value={spacing}
