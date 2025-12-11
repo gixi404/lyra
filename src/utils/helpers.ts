@@ -43,7 +43,7 @@ function notification(type: "success" | "error", msg: string): void {
 
 function nameIsValid(name: string): boolean {
   const d = translations(),
-    regex: RegExp = /[\\/:*"<>|?]/,
+    regex: RegExp = /[\\/:*"<>|]/,
     nameLong: boolean = len(name) > 60,
     invalidSymbols: boolean = regex.test(name),
     invalidStartEnd: boolean = /^[ .]|[ .]$/.test(name);
@@ -59,6 +59,10 @@ function nameIsValid(name: string): boolean {
   }
 
   return true;
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/\?/g, "@");
 }
 
 function themes(): Themes {
@@ -100,7 +104,10 @@ async function verifyMainFolder(): Promise<void> {
     if (!mainFolderExists) {
       createDir(MAIN_FOLDER, BASE_DIRECTORY)
         .then(() => writeTextFile(path, intro, BASE_DIRECTORY))
-        .catch(e => console.error(`catch 'verifyMainFolder' ${e.message}`));
+        .catch((e: unknown) => {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          console.error(`catch 'verifyMainFolder' ${errorMessage}`);
+        });
       break;
     } else break;
   }
@@ -137,24 +144,25 @@ function stylesSelect(): any {
     }),
     control: (styles: any) => ({
       ...styles,
-      backgroundColor: isDay ? "#c0c0c0" : "#2b2b2b",
-      border: isDay ? "1px solid #2b2b2b" : "1px solid #c0c0c0",
-      color: isDay ? "#000" : "#d8d8d8",
-      boxShadow: "0",
+      backgroundColor: isDay ? "#ffffff" : "#2b2b2b",
+      border: isDay ? "1px solid #9ca3af" : "1px solid #c0c0c0",
+      color: isDay ? "#111827" : "#d8d8d8",
+      boxShadow: isDay ? "0 1px 2px 0 rgba(0, 0, 0, 0.05)" : "0",
       width: "160px",
     }),
     option: (styles: any) => ({
       ...styles,
-      ":active": { backgroundColor: isDay ? "#b0b0b0" : "#2b2b2b" },
-      ":hover": { backgroundColor: isDay ? "#b0b0b0" : "#3e3e3e" },
-      backgroundColor: isDay ? "#c0c0c0" : "#2b2b2b",
+      ":active": { backgroundColor: isDay ? "#e5e7eb" : "#2b2b2b" },
+      ":hover": { backgroundColor: isDay ? "#f3f4f6" : "#3e3e3e" },
+      backgroundColor: isDay ? "#ffffff" : "#2b2b2b",
       border: 0,
-      color: isDay ? "#000" : "#e7e7e7",
+      color: isDay ? "#111827" : "#e7e7e7",
     }),
     menu: (styles: any) => ({
       ...styles,
-      backgroundColor: isDay ? "#c0c0c0" : "#2b2b2b",
+      backgroundColor: isDay ? "#ffffff" : "#2b2b2b",
       marginTop: 2,
+      boxShadow: isDay ? "0 4px 6px -1px rgba(0, 0, 0, 0.1)" : "none",
     }),
   };
 }
@@ -191,6 +199,7 @@ export {
   notification,
   pathIs,
   reload,
+  sanitizeFileName,
   stylesSelect,
   themes,
   verifyMainFolder,

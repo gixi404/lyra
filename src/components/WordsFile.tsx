@@ -1,9 +1,7 @@
 import { twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
-import { PAGES } from "../utils/consts";
 import translations from "../utils/dictionary";
-import { pathIs } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
 function WordsFile({ wordCounts }: { wordCounts: number }): Component {
@@ -15,9 +13,8 @@ function WordsFile({ wordCounts }: { wordCounts: number }): Component {
   return (
     <div
       className={twMerge(
-        showCount ? "opacity-65" : "opacity-0",
-        pathIs(PAGES.preferences) ? "justify-start" : "justify-center",
-        "flex items-center gap-x-2 z-50 sm:text-sm text-xs w-[200px] h-[37px] lowercase fixed inset-0 left-[370px] md:left-0 md:mx-auto pointer-events-none"
+        showCount ? "opacity-50" : "opacity-0",
+        "flex items-center justify-end z-40 text-xs lowercase fixed bottom-4 right-4 sm:right-6 pointer-events-none"
       )}>
       {myWordCount() && <p>{wordCounts + " " + d.Words}</p>}
     </div>

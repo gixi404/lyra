@@ -14,6 +14,7 @@
     "@fontsource/sarabun": "^5.0.20",
     "@react-spring/web": "^9.7.5",
     "@tauri-apps/api": "^1.6.0",
+    "@tinymce/tinymce-react": "^6.3.0",
     "bind-mousetrap-global": "^1.0.1",
     "lucide-react": "^0.378.0",
     "mousetrap": "^1.6.5",

@@ -32,7 +32,7 @@ function ItemFile({ fileName }: Props): Component {
       onMouseEnter={() => setHover(true)}
       className={twMerge(
         isDay
-          ? "border-gray-600/30 bg-gray-300 border-gray-400  text-gray-800"
+          ? "border-gray-400 bg-white hover:bg-gray-50 text-gray-800 shadow-sm"
           : "bg-gray-800/60 hover:bg-gray-800 text-gray-300 border-sky-200/5",
         "w-full max-w-[340px] h-12 rounded-md px-3 hover:cursor-pointer duration-75 flex justify-between items-center bg-gradient-to-b border-2 gap-x-3 relative"
       )}

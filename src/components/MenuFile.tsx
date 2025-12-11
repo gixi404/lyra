@@ -8,7 +8,7 @@ import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
-import { nameIsValid, notification, themes } from "../utils/helpers";
+import { nameIsValid, notification, sanitizeFileName, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
 function MenuFile({ fileName }: Props): Component {
@@ -45,11 +45,14 @@ function MenuFile({ fileName }: Props): Component {
         if (conditions) {
           return notification("error", d.InvalidName);
         } else if (!nameIsValid(res.value)) return;
-        else if (res.value != null && files.includes(res.value)) {
-          return notification("error", d.NameAlreadyExists);
-        } else {
-          renameFile(fileName, `${res.value}`);
-          notification("success", d.EditedName);
+        else {
+          const sanitizedName: string = sanitizeFileName(res.value);
+          if (files.includes(sanitizedName)) {
+            return notification("error", d.NameAlreadyExists);
+          } else {
+            renameFile(fileName, sanitizedName);
+            notification("success", d.EditedName);
+          }
         }
       }
     });
@@ -71,7 +74,10 @@ function MenuFile({ fileName }: Props): Component {
       customClass: { input: "no-focus-outline" },
     }).then(res => {
       if (res.isConfirmed) {
-        const updatedPaper: string[] = [fileName, ...myPaper()];
+        const currentPaper: string[] = myPaper();
+        const updatedPaper: string[] = currentPaper.includes(fileName)
+          ? currentPaper
+          : [fileName, ...currentPaper];
         setItem("paper", JSON.stringify(updatedPaper));
         notification("success", d.SentToTrash);
         editedFile();
@@ -87,7 +93,7 @@ function MenuFile({ fileName }: Props): Component {
         onClick={editFileName}
         className={twMerge(
           isDay
-            ? "hover:text-gray-500 text-slate-800"
+            ? "hover:text-indigo-700 text-gray-600"
             : "text-[#6cd3ff] hover:text-[#c3edff]",
           "h-full w-8 py-3"
         )}
@@ -97,7 +103,7 @@ function MenuFile({ fileName }: Props): Component {
         onClick={moveToTrash}
         className={twMerge(
           isDay
-            ? "hover:text-gray-500 text-slate-800"
+            ? "hover:text-red-700 text-gray-600"
             : "text-[#6cd3ff] hover:text-[#c3edff]",
           " h-full w-8 py-3"
         )}

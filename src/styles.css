@@ -60,3 +60,46 @@ details summary {
 .ql-clipboard {
   @apply outline-0;
 }
+
+/* TinyMCE Editor Styles */
+.tox-tinymce {
+  border: none !important;
+  outline: none !important;
+}
+
+.tox-editor-container {
+  border: none !important;
+}
+
+.tox-edit-area {
+  border: none !important;
+}
+
+.tox-edit-area__iframe {
+  border: none !important;
+  outline: none !important;
+}
+
+.tox .tox-edit-area__iframe:focus {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* TinyMCE Scrollbar - minimalista invisible */
+.tox-edit-area__iframe::-webkit-scrollbar {
+  @apply w-0 bg-transparent;
+}
+
+/* Toolbar sin bordes */
+.tox-toolbar,
+.tox-toolbar__primary {
+  border: none !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Statusbar sin bordes */
+.tox-statusbar {
+  border: none !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
+}

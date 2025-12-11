@@ -82,7 +82,7 @@ function MenuPaperFile({ fileName }: Props): Component {
         size={23}
         className={twMerge(
           isDay
-            ? "hover:text-gray-500 text-slate-800"
+            ? "hover:text-green-700 text-gray-600"
             : "text-[#6cd3ff] hover:text-[#c3edff]",
           " h-full w-8 py-3"
         )}
@@ -92,7 +92,7 @@ function MenuPaperFile({ fileName }: Props): Component {
         size={20}
         className={twMerge(
           isDay
-            ? "hover:text-gray-500 text-slate-800"
+            ? "hover:text-red-700 text-gray-600"
             : "text-[#6cd3ff] hover:text-[#c3edff]",
           " h-full w-8 py-3"
         )}

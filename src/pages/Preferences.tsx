@@ -108,13 +108,13 @@ function Preferences(): Component {
     <MainContainer>
       <animated.div
         style={styles}
-        className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-10 gap-x-6 gap-y-20"
+        className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20"
       >
-        <div className="w-full px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-14">
-          <div className=" flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-4">
-              <LanguageIcon size={30} />
-              <p className="text-md">{d.Language}</p>
+        <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
+              <LanguageIcon size={24} className="sm:w-[30px] sm:h-[30px]" />
+              <p className="text-sm sm:text-md">{d.Language}</p>
             </div>
             <Select
               className="sm:text-lg text-sm"
@@ -126,10 +126,10 @@ function Preferences(): Component {
             />
           </div>
 
-          <div className="flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-3">
-              <FontIcon size={38} />
-              <p className="text-md">{d.Font}</p>
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+              <FontIcon size={30} className="sm:w-[38px] sm:h-[38px]" />
+              <p className="text-sm sm:text-md">{d.Font}</p>
             </div>
             <Select
               className="sm:text-lg text-sm"
@@ -141,50 +141,50 @@ function Preferences(): Component {
             />
           </div>
 
-          <div className="flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-5">
-              <CountIcon size={25} />
-              <p className="text-md">{d.WordCount}</p>
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-5">
+              <CountIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
+              <p className="text-sm sm:text-md">{d.WordCount}</p>
             </div>
             <button
               onClick={changeWordCount}
               className={twMerge(
                 isDay
-                  ? "bg-[#c0c0c0] text-black border-[#2b2b2b]"
+                  ? "bg-white text-gray-900 border-gray-400 shadow-sm hover:bg-gray-50"
                   : "bg-[#2b2b2b] text-[#d8d8d8] border-[#c0c0c0]",
-                "cursor-pointer w-[140px] md:w-[160px] justify-center items-center flex rounded-md border sm:text-lg text-sm h-10"
+                "cursor-pointer w-[140px] md:w-[160px] justify-center items-center flex rounded-md border sm:text-lg text-sm h-10 transition-colors"
               )}
             >
               {myWordCount() ? d.Enabled : d.Disabled}
             </button>
           </div>
 
-          <div className="flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-5">
-              <CalendarIcon size={25} />
-              <p className="text-md">{d.LastModified}</p>
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-5">
+              <CalendarIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
+              <p className="text-sm sm:text-md">{d.LastModified}</p>
             </div>
             <button
               onClick={changeLastModified}
               className={twMerge(
                 isDay
-                  ? "bg-[#c0c0c0] text-black border-[#2b2b2b]"
+                  ? "bg-white text-gray-900 border-gray-400 shadow-sm hover:bg-gray-50"
                   : "bg-[#2b2b2b] text-[#d8d8d8] border-[#c0c0c0]",
-                "cursor-pointer w-[140px] sm:w-[160px] justify-center items-center flex rounded-md sm:text-lg text-sm h-10 border"
+                "cursor-pointer w-[140px] sm:w-[160px] justify-center items-center flex rounded-md sm:text-lg text-sm h-10 border transition-colors"
               )}
             >
               {myLastModified() ? d.Enabled : d.Disabled}
             </button>
           </div>
 
-          <div className="flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-4">
-              <OpacityIcon size={28} />
-              <p className="text-md">{d.TextOpacity}</p>
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
+              <OpacityIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
+              <p className="text-sm sm:text-md">{d.TextOpacity}</p>
             </div>
             <div
               className={twMerge(
-                isDay ? "border-[#2b2b2b]" : "border-[#c0c0c0] bg-[#2b2b2b]",
+                isDay ? "border-gray-400 bg-white shadow-sm" : "border-[#c0c0c0] bg-[#2b2b2b]",
                 "flex flex-col justify-center py-0.5 items-center border w-[140px] sm:w-[160px] rounded-md h-10 "
               )}
             >
@@ -198,10 +198,10 @@ function Preferences(): Component {
             </div>
           </div>
 
-          <div className="flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-3">
-              <AlignIcon size={25} />
-              <p className="text-md">{d.Aligment}</p>
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+              <AlignIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
+              <p className="text-sm sm:text-md">{d.Aligment}</p>
             </div>
             <Select
               className="sm:text-lg text-sm"
@@ -213,14 +213,14 @@ function Preferences(): Component {
             />
           </div>
 
-          <div className="flex justify-between items-center w-full">
-            <div className="flex justify-center items-center gap-x-4">
-              <SpacingIcon size={28} />
-              <p className="text-md">{d.LetterSpacing}</p>
+          <div className="flex justify-between items-center w-full gap-x-2">
+            <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
+              <SpacingIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
+              <p className="text-sm sm:text-md">{d.LetterSpacing}</p>
             </div>
             <div
               className={twMerge(
-                isDay ? "border-[#2b2b2b]" : "border-[#c0c0c0] bg-[#2b2b2b]",
+                isDay ? "border-gray-400 bg-white shadow-sm" : "border-[#c0c0c0] bg-[#2b2b2b]",
                 "flex flex-col justify-center py-0.5 items-center border w-[140px] sm:w-[160px] rounded-md h-10"
               )}
             >

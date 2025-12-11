@@ -19,8 +19,7 @@ fn get_system_lang() -> String {
 
 fn main() -> () {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_system_lang])
-        .invoke_handler(tauri::generate_handler![open_folder])
+        .invoke_handler(tauri::generate_handler![get_system_lang, open_folder])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
