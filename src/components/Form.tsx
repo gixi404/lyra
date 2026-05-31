@@ -33,7 +33,7 @@ function Form(): Component {
   const d = translations(),
     { goTo } = navigation(),
     { isDay } = themes(),
-    { createFile } = useFile(),
+    { createFile, resolveDisplayName } = useFile(),
     { paperIsOpen, setPaperIsOpen } = configStore(
       state => ({
         paperIsOpen: state.paperIsOpen,
@@ -59,8 +59,10 @@ function Form(): Component {
       }),
       shallow
     ),
-    isRepeated = (fileName: string): boolean =>
-      files.some((name: string) => name == fileName),
+    isRepeated = (fileName: string): boolean => {
+      const nextDisplayName: string = resolveDisplayName(fileName);
+      return files.some((name: string) => name == nextDisplayName);
+    },
     animation = {
       from: { opacity: 0 },
       to: { opacity: 1 },
@@ -103,9 +105,10 @@ function Form(): Component {
       if (res.isConfirmed) {
         e.preventDefault();
         const sanitizedName: string = sanitizeFileName(res.value);
+        const displayName: string = resolveDisplayName(sanitizedName);
         const file: File = {
           name: sanitizedName,
-          content: `## ${sanitizedName} ${empty_text}`,
+          content: `## ${displayName} ${empty_text}`,
         };
         validateFields(file);
       }
@@ -114,9 +117,10 @@ function Form(): Component {
 
   async function fileManagement(file: File): Promise<void> {
     setFileName("");
-    await createFile(file.name, file.content);
-    updateListFiles(file.name);
-    setSelectedFile(file);
+    const displayName: string = await createFile(file.name, file.content);
+    const nextFile: File = { ...file, name: displayName };
+    updateListFiles(displayName);
+    setSelectedFile(nextFile);
     goTo(PAGES.file);
   }
 

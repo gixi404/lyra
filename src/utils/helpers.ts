@@ -18,6 +18,9 @@ import {
 } from "./consts";
 import type { Timer } from "./types";
 
+const DEFAULT_FILE_EXTENSION = ".txt";
+const SUPPORTED_FILE_EXTENSIONS = [".txt", ".md"] as const;
+
 const reload = (): void => window.location.reload();
 
 function navigation(): Navigation {
@@ -63,6 +66,58 @@ function nameIsValid(name: string): boolean {
 
 function sanitizeFileName(name: string): string {
   return name.replace(/\?/g, "@");
+}
+
+function hasSupportedFileExtension(fileName: string): boolean {
+  return SUPPORTED_FILE_EXTENSIONS.some(extension => fileName.endsWith(extension));
+}
+
+function getLegacyFileName(fileName: string): string {
+  const matchingExtension = SUPPORTED_FILE_EXTENSIONS.find(extension => fileName.endsWith(extension));
+  return matchingExtension ? fileName.slice(0, -matchingExtension.length) : fileName;
+}
+
+function resolveDisplayFileName(fileName: string, currentName?: string): string {
+  if (hasSupportedFileExtension(fileName)) return fileName;
+  if (currentName?.endsWith(".md")) return `${fileName}.md`;
+  return `${fileName}${DEFAULT_FILE_EXTENSION}`;
+}
+
+function getCompatibleFileNames(fileName: string): string[] {
+  if (!hasSupportedFileExtension(fileName)) return [fileName];
+
+  if (!fileName.endsWith(DEFAULT_FILE_EXTENSION)) return [fileName];
+
+  const legacyName: string = getLegacyFileName(fileName);
+  return Array.from(new Set([fileName, legacyName]));
+}
+
+function getCompatibleStorageKeys(fileName: string, suffix: string = "", prefix: string = ""): string[] {
+  return getCompatibleFileNames(fileName).map(name => {
+    const scopedName = prefix ? `${prefix}:${name}` : name;
+    return `${scopedName}${suffix}`;
+  });
+}
+
+function resolveStoredFileName(fileName: string, files: string[]): string | null {
+  if (files.includes(fileName)) return fileName;
+  if (hasSupportedFileExtension(fileName)) return null;
+
+  const txtMatch: string = `${fileName}.txt`;
+  if (files.includes(txtMatch)) return txtMatch;
+
+  const mdMatch: string = `${fileName}.md`;
+  if (files.includes(mdMatch)) return mdMatch;
+
+  return null;
+}
+
+function normalizeStoredFileNames(fileNames: string[], files: string[]): string[] {
+  const normalizedNames = fileNames
+    .map(fileName => resolveStoredFileName(fileName, files))
+    .filter((fileName): fileName is string => Boolean(fileName));
+
+  return Array.from(new Set(normalizedNames));
 }
 
 function themes(): Themes {
@@ -199,6 +254,12 @@ export {
   notification,
   pathIs,
   reload,
+  resolveDisplayFileName,
+  resolveStoredFileName,
+  normalizeStoredFileNames,
+  getCompatibleStorageKeys,
+  getLegacyFileName,
+  hasSupportedFileExtension,
   sanitizeFileName,
   stylesSelect,
   themes,

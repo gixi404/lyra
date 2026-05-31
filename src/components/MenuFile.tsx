@@ -19,7 +19,7 @@ function MenuFile({ fileName }: Props): Component {
       shallow
     ),
     files: string[] = filesArr,
-    { renameFile } = useFile(),
+    { renameFile, resolveDisplayName } = useFile(),
     { setItem } = useStorage(),
     { isDay } = themes(),
     [styles] = useSpring(() => ({
@@ -51,11 +51,13 @@ function MenuFile({ fileName }: Props): Component {
         } else if (!nameIsValid(res.value)) return;
         else {
           const sanitizedName: string = sanitizeFileName(res.value);
-          if (files.includes(sanitizedName)) {
+          const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
+          if (nextDisplayName !== fileName && files.includes(nextDisplayName)) {
             return notification("error", d.NameAlreadyExists);
           } else {
-            renameFile(fileName, sanitizedName);
-            notification("success", d.EditedName);
+            renameFile(fileName, sanitizedName)
+              .then(() => notification("success", d.EditedName))
+              .catch(() => notification("error", d.InvalidName));
           }
         }
       }
@@ -78,7 +80,7 @@ function MenuFile({ fileName }: Props): Component {
       customClass: { input: "no-focus-outline" },
     }).then(res => {
       if (res.isConfirmed) {
-        const currentPaper: string[] = myPaper();
+        const currentPaper: string[] = myPaper(files);
         const updatedPaper: string[] = currentPaper.includes(fileName)
           ? currentPaper
           : [fileName, ...currentPaper];

@@ -18,10 +18,11 @@ function MenuPaperFile({ fileName }: Props): Component {
     { setItem } = useStorage(),
     { myPaper } = usePreferences(),
     { deleteFile } = useFile(),
-    { editedFile, removeFileFromList } = fileStore(
+    { editedFile, removeFileFromList, files } = fileStore(
       state => ({
         editedFile: state.editedFile,
         removeFileFromList: state.removeFileFromList,
+        files: state.files,
       }),
       shallow
     ),
@@ -45,7 +46,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       color: isDay ? "#000" : "#fff",
     }).then(res => {
       if (res.isConfirmed) {
-        const updatedPaper: string[] = myPaper().filter(
+        const updatedPaper: string[] = myPaper(files).filter(
           (f: string) => f != fileName
         );
         setItem("paper", JSON.stringify(updatedPaper));
@@ -69,7 +70,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       color: isDay ? "#000" : "#fff",
     }).then(res => {
       if (res.isConfirmed) {
-        const updatedPaper: string[] = myPaper().filter(
+        const updatedPaper: string[] = myPaper(files).filter(
           (f: string) => f != fileName
         );
         removeFileFromList(fileName);

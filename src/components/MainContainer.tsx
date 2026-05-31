@@ -2,10 +2,9 @@ import "@fontsource/ia-writer-duo";
 import "@fontsource/sarabun";
 import listenCommands from "bind-mousetrap-global";
 import commands from "mousetrap";
-import { type PropsWithChildren, useEffect } from "react";
+import { type PropsWithChildren } from "react";
 import { twJoin, twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
-import { toggleFullScreen } from "../utils/commands";
 import { PAGES } from "../utils/consts";
 import { pathIs, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
@@ -15,23 +14,22 @@ listenCommands(commands);
 
 function MainContainer({ children }: PropsWithChildren): Component {
   const { myFontValue } = usePreferences(),
-    { bindGlobal: listen, unbindGlobal }: any = commands,
     { isDay } = themes();
 
-  useEffect(() => {
-    const preventContextMenu = (e: Event): void => {
-      if (e.target instanceof HTMLTextAreaElement) return;
-      e.preventDefault();
-    };
+  // useEffect(() => {
+  //   const preventContextMenu = (e: Event): void => {
+  //     if (e.target instanceof HTMLTextAreaElement) return;
+  //     e.preventDefault();
+  //   };
 
-    listen("f11", () => toggleFullScreen());
-    addEventListener("contextmenu", preventContextMenu);
+  //   listen("f11", () => toggleFullScreen());
+  //   addEventListener("contextmenu", preventContextMenu);
 
-    return () => {
-      unbindGlobal("f11");
-      removeEventListener("contextmenu", preventContextMenu);
-    };
-  }, []);
+  //   return () => {
+  //     unbindGlobal("f11");
+  //     removeEventListener("contextmenu", preventContextMenu);
+  //   };
+  // }, []);
 
   return (
     <main
@@ -40,9 +38,10 @@ function MainContainer({ children }: PropsWithChildren): Component {
         pathIs(PAGES.file) ? "gap-0" : "gap-y-10 lg:gap-y-20",
         twJoin(
           myFontValue(),
-          "w-[100vw] min-h-screen flex flex-col items-center justify-start"
-        )
-      )}>
+          "w-[100vw] min-h-screen flex flex-col items-center justify-start",
+        ),
+      )}
+    >
       <Header />
       {children}
     </main>

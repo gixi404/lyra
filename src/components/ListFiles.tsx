@@ -24,7 +24,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
     paperIsOpen = configStore(state => state.paperIsOpen),
     fileIsEdited = fileStore(state => state.fileIsEdited),
     normalizedSearch = useMemo(() => normalize(search), [search]),
-    paperFiles = useMemo(() => myPaper(), [fileIsEdited]),
+    paperFiles = useMemo(() => myPaper(arr), [arr, fileIsEdited]),
     paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
     files = useMemo(() => {
       const source = paperIsOpen ? paperFiles : arr.filter(f => !paperSet.has(f));

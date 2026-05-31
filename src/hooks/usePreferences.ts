@@ -1,4 +1,5 @@
 import useStorage from "./useStorage";
+import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
 import { LANGS, TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 
 function usePreferences(): Preferences {
@@ -69,12 +70,18 @@ function usePreferences(): Preferences {
     return getItem("theme", THEMES.clearNigth);
   }
 
-  function myPaper(): string[] {
-    return JSON.parse(getItem("paper", "[]")) as string[];
+  function myPaper(files: string[] = []): string[] {
+    const paper: string[] = JSON.parse(getItem("paper", "[]")) as string[];
+    return files.length > 0 ? normalizeStoredFileNames(paper, files) : paper;
   }
 
   function myScroll(fileName: string): number {
-    const scroll: number = Number(getItem(`${fileName}-scroll`, "0"));
+    const scrollKeys: string[] = getCompatibleStorageKeys(fileName, "-scroll");
+    const scrollValue: string | null = scrollKeys.reduce<string | null>((value, key) => {
+      if (value !== null) return value;
+      return window.localStorage.getItem(key);
+    }, null);
+    const scroll: number = Number(scrollValue ?? "0");
     return scroll;
   }
 
@@ -109,6 +116,6 @@ interface Preferences {
   myOpacity: () => number;
   myFontSize: () => string;
   myTheme: () => string;
-  myPaper: () => string[];
+  myPaper: (files?: string[]) => string[];
   myScroll: (fileName: string) => number;
 }

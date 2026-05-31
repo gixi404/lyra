@@ -62,6 +62,20 @@ details summary {
 }
 
 /* TinyMCE Editor Styles */
+.tinymce-container {
+  @apply w-full flex-1 p-0;
+  min-height: calc(100vh - 40px);
+}
+
+.tinymce-container .tox-tinymce {
+  min-height: calc(100vh - 40px);
+  background: transparent !important;
+}
+
+.tinymce-container .tox-editor-header {
+  backdrop-filter: blur(8px);
+}
+
 .tox-tinymce {
   border: none !important;
   outline: none !important;
@@ -95,11 +109,28 @@ details summary {
 .tox-toolbar,
 .tox-toolbar__primary {
   border: none !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: transparent !important;
 }
 
 /* Statusbar sin bordes */
 .tox-statusbar {
   border: none !important;
   border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+.tinymce-container .tox-toolbar__group {
+  margin: 0.2rem 0 !important;
+}
+
+.tinymce-container .tox .tox-tbtn {
+  border-radius: 7px !important;
+}
+
+.tinymce-container .tox .tox-edit-area::before {
+  border: none !important;
+}
+
+.tinymce-container .tox .tox-sidebar-wrap {
+  background: transparent !important;
 }

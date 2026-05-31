@@ -7,7 +7,7 @@ import useStorage from "../hooks/useStorage";
 import WordsFile from "../components/WordsFile";
 import { fileStore } from "../store/fileStore";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { getDate } from "../utils/helpers";
+import { getCompatibleStorageKeys, getDate } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
 listenCommands(commands);
@@ -45,7 +45,11 @@ function FileContent(): Component {
   function readDraft(fileName: string): DraftPayload | null {
     if (!fileName) return null;
 
-    const rawDraft: string | null = window.localStorage.getItem(getDraftKey(fileName));
+    const draftKeys: string[] = getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX);
+    const rawDraft: string | null = draftKeys.reduce<string | null>((draft, key) => {
+      if (draft !== null) return draft;
+      return window.localStorage.getItem(key);
+    }, null);
     if (!rawDraft) return null;
 
     try {
@@ -69,7 +73,9 @@ function FileContent(): Component {
 
   function clearDraft(fileName: string): void {
     if (!fileName) return;
-    window.localStorage.removeItem(getDraftKey(fileName));
+    getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX).forEach(key => {
+      window.localStorage.removeItem(key);
+    });
   }
 
   async function persistLatestToDisk(): Promise<void> {
@@ -232,7 +238,8 @@ function FileContent(): Component {
   function saveLastModified(previousContent: string, currentContent: string): void {
     if (previousContent !== currentContent) {
       const date: string = getDate();
-      setItem(`${latestFileNameRef.current}-modified`, date);
+      const [modifiedKey] = getCompatibleStorageKeys(latestFileNameRef.current, "-modified");
+      setItem(modifiedKey, date);
     }
   }
 
@@ -240,7 +247,7 @@ function FileContent(): Component {
     <MainContainer>
       <WordsFile wordCounts={wordCounts} />
       <ModifiedFile />
-      <Suspense fallback={<div className="w-full h-full min-h-screen" />}>
+      <Suspense fallback={<div className="w-full flex-1" />}>
         <TinyEditor
           content={content}
           onContentChange={handleContentChange}
