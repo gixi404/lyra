@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "PKG_CONFIG_PATH=\"$PWD/src-tauri/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH\" LIBRARY_PATH=\"$PWD/src-tauri/libcompat:$LIBRARY_PATH\" tauri"
   },
   "dependencies": {
     "@fontsource/ia-writer-duo": "^5.0.11",
@@ -28,7 +28,7 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^1.6.0",
+    "@tauri-apps/cli": "^1.6.3",
     "@types/mousetrap": "^1.6.15",
     "@types/node": "^20.14.15",
     "@types/react": "^18.3.3",

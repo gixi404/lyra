@@ -31,6 +31,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sys-locale = "0.2"
 
+[patch.crates-io]
+wry = { path = "vendor/wry" }
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 

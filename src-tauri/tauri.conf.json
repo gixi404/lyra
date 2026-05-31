@@ -43,7 +43,7 @@
     },
     "bundle": {
       "active": true,
-      "targets": ["msi"],
+      "targets": ["msi", "deb", "appimage"],
       "identifier": "com.lyra.dev",
       "publisher": "Lyra",
       "shortDescription": "Lyra",
