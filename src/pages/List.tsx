@@ -4,21 +4,27 @@ import ListFiles from "../components/ListFiles";
 import Loading from "../components/Loading";
 import MainContainer from "../components/MainContainer";
 import useFile from "../hooks/useFile";
-import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
 import type { Component } from "../utils/types";
+import { shallow } from "zustand/shallow";
 
 function List(): Component {
   const { getFiles } = useFile(),
-    { paperIsOpen } = configStore(),
-    { setFiles, fileIsEdited, files } = fileStore(),
+    { setFiles, fileIsEdited, files } = fileStore(
+      state => ({
+        setFiles: state.setFiles,
+        fileIsEdited: state.fileIsEdited,
+        files: state.files,
+      }),
+      shallow
+    ),
     [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     getFiles()
       .then(files => setFiles(files))
       .finally(() => setLoading(false));
-  }, [fileIsEdited, paperIsOpen]);
+  }, [fileIsEdited]);
 
   return (
     <MainContainer>

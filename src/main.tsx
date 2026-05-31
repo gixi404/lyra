@@ -1,4 +1,3 @@
-import PresentationPage from "./pages/Presentation";
 import usePreferences from "./hooks/usePreferences";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { lazy, StrictMode, Suspense } from "react";
@@ -9,6 +8,7 @@ import { type Container, createRoot } from "react-dom/client";
 import type { LazyCmp } from "./utils/types";
 
 const root = document.getElementById("root") as Container,
+  PresentationPage: LazyCmp = lazy(() => import("./pages/Presentation")),
   ListPage: LazyCmp = lazy(() => import("./pages/List")),
   FilePage: LazyCmp = lazy(() => import("./pages/FileContent")),
   PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences")),

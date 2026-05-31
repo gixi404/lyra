@@ -10,6 +10,8 @@ interface TinyEditorProps {
   onWordCountChange: (count: number) => void;
 }
 
+const WORD_COUNT_DEBOUNCE_MS = 250;
+
 function TinyEditor({
   content,
   onContentChange,
@@ -32,18 +34,31 @@ function TinyEditor({
     }
   }, [content]);
 
+  useEffect(() => {
+    const wordCountTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      if (!editorRef.current) {
+        onWordCountChange(0);
+        return;
+      }
+
+      const editorText: string = editorRef.current.getContent({ format: "text" }) ?? "";
+      const normalizedText: string = editorText.trim();
+      if (normalizedText.length === 0) {
+        onWordCountChange(0);
+        return;
+      }
+
+      const words: string[] = normalizedText.split(/\s+/);
+      onWordCountChange(words.length);
+    }, WORD_COUNT_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(wordCountTimer);
+    };
+  }, [content, onWordCountChange]);
+
   const handleEditorChange = (newContent: string): void => {
     onContentChange(newContent);
-
-    // Calculate word count
-    const tempDiv: HTMLDivElement = document.createElement("div");
-    tempDiv.innerHTML = newContent;
-    const text: string = tempDiv.textContent || tempDiv.innerText || "";
-    const words: string[] = text
-      .trim()
-      .split(/\s+/)
-      .filter((word: string) => word.length > 0);
-    onWordCountChange(words.length);
   };
 
   const contentStyle: string = `
@@ -95,11 +110,8 @@ function TinyEditor({
           toolbar:
             "undo redo | blocks fontsize | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright alignjustify | numlist bullist | image link | removeformat",
           plugins: [
-            "autosave",
             "wordcount",
-            "fullscreen",
             "lists",
-            "advlist",
             "image",
             "link",
           ],
@@ -113,7 +125,6 @@ function TinyEditor({
           resize: false,
           branding: false,
           elementpath: false,
-          autosave_ask_before_unload: false,
           promotion: false,
           body_class: isDay ? "day-theme" : "dark-theme",
           toolbar_mode: "wrap",

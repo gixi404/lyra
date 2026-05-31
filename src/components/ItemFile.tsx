@@ -13,9 +13,9 @@ import type { Component, File } from "../utils/types";
 function ItemFile({ fileName }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
-    { paperIsOpen } = configStore(),
+    paperIsOpen = configStore(state => state.paperIsOpen),
     { readFile } = useFile(),
-    { setSelectedFile } = fileStore(),
+    setSelectedFile = fileStore(state => state.setSelectedFile),
     [hover, setHover] = useState<boolean>(false);
 
   async function openFile(): Promise<void> {

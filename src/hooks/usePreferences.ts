@@ -3,26 +3,24 @@ import { LANGS, TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 
 function usePreferences(): Preferences {
   const { getItem } = useStorage();
+  const readBoolean = (key: string, fallback: string): boolean =>
+    JSON.parse(getItem(key, fallback)) as boolean;
 
   function myLastModified(): boolean {
-    const modified: boolean = JSON.parse(getItem("last-modified", "true"));
-    return modified;
+    return readBoolean("last-modified", "true");
   }
 
   function myLangLabel(): string {
-    const lang: string = getItem("language", LANGS.en);
-    return lang == LANGS.en ? "English" : "Español";
+    return myLangValue() == LANGS.en ? "English" : "Español";
   }
 
   function myLangValue(defaultValue?: string): string {
-    const lang: string = getItem("language", defaultValue || LANGS.en);
-    return lang;
+    if (defaultValue === "nothing") return getItem("language", defaultValue);
+    return getItem("language", LANGS.en);
   }
 
   function myFontLabel(): string {
-    const font: string = getItem("font", "font-duo");
-
-    switch (font) {
+    switch (myFontValue()) {
       case "font-duo":
         return "Monospace";
 
@@ -44,43 +42,35 @@ function usePreferences(): Preferences {
   }
 
   function myFontValue(): string {
-    const font: string = getItem("font", "font-duo");
-    return font;
+    return getItem("font", "font-duo");
   }
 
   function myAlign(): string {
-    const align: string = getItem("align-text", TEXT_ALIGNS.start);
-    return align;
+    return getItem("align-text", TEXT_ALIGNS.start);
   }
 
   function myWordCount(): boolean {
-    const count: boolean = JSON.parse(getItem("word-count", "true"));
-    return count;
+    return readBoolean("word-count", "true");
   }
 
   function mySpacing(): number {
-    const spacing: number = Number(getItem("spacing", "0"));
-    return spacing;
+    return Number(getItem("spacing", "0"));
   }
 
   function myOpacity(): number {
-    const opacity: number = Number(getItem("opacity", "10"));
-    return opacity;
+    return Number(getItem("opacity", "10"));
   }
 
   function myFontSize(): string {
-    const fontSize: string = getItem("font-size", TEXT_SIZES.lg);
-    return fontSize;
+    return getItem("font-size", TEXT_SIZES.lg);
   }
 
   function myTheme(): string {
-    const theme = getItem("theme", THEMES.clearNigth);
-    return theme;
+    return getItem("theme", THEMES.clearNigth);
   }
 
   function myPaper(): string[] {
-    const paper: string[] = JSON.parse(getItem("paper", "[]"));
-    return paper;
+    return JSON.parse(getItem("paper", "[]")) as string[];
   }
 
   function myScroll(fileName: string): number {

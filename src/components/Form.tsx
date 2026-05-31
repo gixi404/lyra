@@ -27,16 +27,38 @@ import {
   themes,
 } from "../utils/helpers";
 import type { Component, File } from "../utils/types";
+import { shallow } from "zustand/shallow";
 
 function Form(): Component {
   const d = translations(),
     { goTo } = navigation(),
     { isDay } = themes(),
     { createFile } = useFile(),
-    { paperIsOpen, setPaperIsOpen } = configStore(),
+    { paperIsOpen, setPaperIsOpen } = configStore(
+      state => ({
+        paperIsOpen: state.paperIsOpen,
+        setPaperIsOpen: state.setPaperIsOpen,
+      }),
+      shallow
+    ),
     [fileName, setFileName] = useState<string>(""),
-    { search, setSearch, order, toggleOrder } = searchStore(),
-    { updateListFiles, setSelectedFile, files } = fileStore(),
+    { search, setSearch, order, toggleOrder } = searchStore(
+      state => ({
+        search: state.search,
+        setSearch: state.setSearch,
+        order: state.order,
+        toggleOrder: state.toggleOrder,
+      }),
+      shallow
+    ),
+    { updateListFiles, setSelectedFile, files } = fileStore(
+      state => ({
+        updateListFiles: state.updateListFiles,
+        setSelectedFile: state.setSelectedFile,
+        files: state.files,
+      }),
+      shallow
+    ),
     isRepeated = (fileName: string): boolean =>
       files.some((name: string) => name == fileName),
     animation = {
@@ -90,9 +112,9 @@ function Form(): Component {
     });
   }
 
-  function fileManagement(file: File): void {
+  async function fileManagement(file: File): Promise<void> {
     setFileName("");
-    createFile(file.name);
+    await createFile(file.name, file.content);
     updateListFiles(file.name);
     setSelectedFile(file);
     goTo(PAGES.file);
@@ -115,7 +137,7 @@ function Form(): Component {
         break;
 
       default:
-        fileManagement(file);
+        void fileManagement(file);
         break;
     }
   }

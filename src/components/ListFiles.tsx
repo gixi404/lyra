@@ -5,13 +5,39 @@ import usePreferences from "../hooks/usePreferences";
 import { animated, useSpring } from "@react-spring/web";
 import { configStore } from "../store/configStore";
 import { len, normalize } from "../utils/helpers";
-import { memo, useEffect } from "react";
+import { memo, useEffect, useMemo } from "react";
+import { shallow } from "zustand/shallow";
 import { searchStore } from "../store/searchStore";
+import { fileStore } from "../store/fileStore";
 import type { Component } from "../utils/types";
 
 const ListFiles = memo(({ arr }: Props): Component => {
-  const { search, resetSearch, order } = searchStore(),
-    { paperIsOpen } = configStore(),
+  const { myPaper } = usePreferences(),
+    { search, resetSearch, order } = searchStore(
+      state => ({
+        search: state.search,
+        resetSearch: state.resetSearch,
+        order: state.order,
+      }),
+      shallow
+    ),
+    paperIsOpen = configStore(state => state.paperIsOpen),
+    fileIsEdited = fileStore(state => state.fileIsEdited),
+    normalizedSearch = useMemo(() => normalize(search), [search]),
+    paperFiles = useMemo(() => myPaper(), [fileIsEdited]),
+    paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
+    files = useMemo(() => {
+      const source = paperIsOpen ? paperFiles : arr.filter(f => !paperSet.has(f));
+
+      const indexedSource = source.map(name => ({
+        name,
+        normalizedName: normalize(name),
+      }));
+
+      return source
+        .filter((_, index) => indexedSource[index].normalizedName.includes(normalizedSearch))
+        .sort((a, b) => (order ? a.localeCompare(b) : b.localeCompare(a)));
+    }, [arr, normalizedSearch, order, paperFiles, paperIsOpen, paperSet]),
     animation = {
       from: { opacity: 0 },
       to: { opacity: 1 },
@@ -26,22 +52,12 @@ const ListFiles = memo(({ arr }: Props): Component => {
   }, [search, paperIsOpen]);
 
   function renderFiles(): Component {
-    const { myPaper } = usePreferences(),
-      allFiles = arr.filter((f: string) => !myPaper().includes(f)),
-      files: string[] = paperIsOpen
-        ? myPaper().filter(f => normalize(f).includes(normalize(search)))
-        : allFiles.filter(f => normalize(f).includes(normalize(search)));
-
     if (len(files) == 0) {
-      if (len(normalize(search)) > 0) return <NoMatches />;
+      if (len(normalizedSearch) > 0) return <NoMatches />;
       return <NoFiles />;
     }
 
-    const sorted: string[] = files.sort((a, b) =>
-      order ? a.localeCompare(b) : b.localeCompare(a)
-    );
-
-    return sorted.map((n: string) => <ItemFile fileName={n} key={n} />);
+    return files.map((n: string) => <ItemFile fileName={n} key={n} />);
   }
 
   return (

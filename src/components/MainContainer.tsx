@@ -2,7 +2,7 @@ import "@fontsource/ia-writer-duo";
 import "@fontsource/sarabun";
 import listenCommands from "bind-mousetrap-global";
 import commands from "mousetrap";
-import { type PropsWithChildren } from "react";
+import { type PropsWithChildren, useEffect } from "react";
 import { twJoin, twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
 import { toggleFullScreen } from "../utils/commands";
@@ -15,13 +15,23 @@ listenCommands(commands);
 
 function MainContainer({ children }: PropsWithChildren): Component {
   const { myFontValue } = usePreferences(),
-    { bindGlobal: listen }: any = commands,
-    { isDay } = themes(),
-    textarea: Textarea = document.querySelector("textarea");
+    { bindGlobal: listen, unbindGlobal }: any = commands,
+    { isDay } = themes();
 
-  listen("f11", () => toggleFullScreen());
-  addEventListener("contextmenu", (e: Event) => e.preventDefault());
-  textarea?.addEventListener("contextmenu", (e: Event) => e.stopPropagation());
+  useEffect(() => {
+    const preventContextMenu = (e: Event): void => {
+      if (e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+    };
+
+    listen("f11", () => toggleFullScreen());
+    addEventListener("contextmenu", preventContextMenu);
+
+    return () => {
+      unbindGlobal("f11");
+      removeEventListener("contextmenu", preventContextMenu);
+    };
+  }, []);
 
   return (
     <main
@@ -40,5 +50,3 @@ function MainContainer({ children }: PropsWithChildren): Component {
 }
 
 export default MainContainer;
-
-type Textarea = HTMLTextAreaElement | null;

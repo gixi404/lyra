@@ -1,13 +1,20 @@
-import usePreferences from "../hooks/usePreferences";
 import { LANGS } from "./consts";
 
-function userLanguage(enText: string, esText: string): string {
-  const { myLangValue } = usePreferences();
-  const text: string = myLangValue() == LANGS.es ? esText : enText;
-  return text;
+const cache = new Map<string, Record<string, string>>();
+
+function getCurrentLang(): string {
+  const lang = window.localStorage.getItem("language") ?? LANGS.en;
+  return lang == LANGS.es ? LANGS.es : LANGS.en;
 }
 
 function translations() {
+  const lang = getCurrentLang();
+  const fromCache = cache.get(lang);
+  if (fromCache) return fromCache;
+
+  const userLanguage = (enText: string, esText: string): string =>
+    lang == LANGS.es ? esText : enText;
+
   const dictionary = {
     StartTyping: userLanguage("Start typing...", "Comienza a escribir..."),
     Suggestions: userLanguage("Suggestions", "Sugerencias"),
@@ -141,6 +148,7 @@ function translations() {
     MyFiles: userLanguage("My files", "Mis archivos"),
   };
 
+  cache.set(lang, dictionary);
   return dictionary;
 }
 

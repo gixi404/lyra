@@ -10,6 +10,7 @@ import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
 import { notification, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
+import { shallow } from "zustand/shallow";
 
 function MenuPaperFile({ fileName }: Props): Component {
   const d = translations(),
@@ -17,7 +18,13 @@ function MenuPaperFile({ fileName }: Props): Component {
     { setItem } = useStorage(),
     { myPaper } = usePreferences(),
     { deleteFile } = useFile(),
-    { editedFile, removeFileFromList } = fileStore(),
+    { editedFile, removeFileFromList } = fileStore(
+      state => ({
+        editedFile: state.editedFile,
+        removeFileFromList: state.removeFileFromList,
+      }),
+      shallow
+    ),
     [styles] = useSpring(() => ({
       from: { opacity: 0 },
       to: { opacity: 1 },

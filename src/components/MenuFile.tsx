@@ -10,10 +10,14 @@ import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
 import { nameIsValid, notification, sanitizeFileName, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
+import { shallow } from "zustand/shallow";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
-    { files: filesArr, editedFile } = fileStore(),
+    { files: filesArr, editedFile } = fileStore(
+      state => ({ files: state.files, editedFile: state.editedFile }),
+      shallow
+    ),
     files: string[] = filesArr,
     { renameFile } = useFile(),
     { setItem } = useStorage(),
