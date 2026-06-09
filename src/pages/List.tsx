@@ -29,7 +29,7 @@ function List(): Component {
   return (
     <MainContainer>
       <div className="flex flex-row justify-center items-start w-full h-full">
-        <div className="w-full max-w-[580px] h-5/6 overflow-x-hidden overflow-y-visible flex flex-col justify-center items-center gap-y-8">
+        <div className="w-full max-w-[960px] h-5/6 overflow-x-hidden overflow-y-visible flex flex-col justify-center items-center gap-y-8 px-4">
           <Form />
           {loading ? <Loading /> : <ListFiles arr={files} />}
         </div>

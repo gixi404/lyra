@@ -84,7 +84,7 @@ function MenuPaperFile({ fileName }: Props): Component {
   return (
     <animated.div
       style={styles}
-      className="flex w-20 justify-center items-center gap-x-1 h-full absolute top-0 right-0 duration-200">
+      className="absolute top-0 right-0 flex h-full items-center justify-center gap-x-3 rounded-r-[8px] bg-[#101010] px-3 duration-200">
       <RecoveryIcon
         onClick={recoveryPaperItem}
         size={23}

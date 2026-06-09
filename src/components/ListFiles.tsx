@@ -60,14 +60,14 @@ const ListFiles = memo(({ arr }: Props): Component => {
     return files.map((n: string) => <ItemFile fileName={n} key={n} />);
   }
 
-  return (
-    <animated.ol
-      style={styles}
-      className="grid grid-cols-1 gap-y-2 place-items-center w-full overflow-hidden pb-20"
-    >
-      {renderFiles()}
-    </animated.ol>
-  );
+    return (
+      <animated.ol
+        style={styles}
+        className="grid w-full grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 items-stretch overflow-hidden pb-20"
+      >
+        {renderFiles()}
+      </animated.ol>
+    );
 });
 
 export default ListFiles;

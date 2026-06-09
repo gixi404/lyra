@@ -1,7 +1,6 @@
 import MenuFile from "./MenuFile";
 import MenuPaperFile from "./MenuPaperFile";
 import useFile from "../hooks/useFile";
-import { ChevronRight } from "lucide-react";
 import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
 import { navigation, themes } from "../utils/helpers";
@@ -36,13 +35,20 @@ function ItemFile({ fileName }: Props): Component {
       onMouseEnter={() => setHover(true)}
       className={twMerge(
         isDay
-          ? "border-gray-400 bg-white hover:bg-gray-50 text-gray-800 shadow-sm"
-          : "bg-gray-800/60 hover:bg-gray-800 text-gray-300 border-sky-200/5",
-        "w-full max-w-[340px] h-12 rounded-md px-3 hover:cursor-pointer duration-75 flex justify-between items-center bg-gradient-to-b border-2 gap-x-3 relative"
+          ? "border-gray-300 bg-white hover:border-gray-400 hover:bg-gray-50 text-gray-800 shadow-sm"
+          : "border-zinc-800 bg-zinc-900 hover:border-zinc-700 hover:bg-zinc-900/95 text-zinc-200",
+        "relative flex min-h-[84px] w-full cursor-pointer items-start rounded-[8px] border px-4 py-3 duration-150"
       )}
     >
-      <ChevronRight size={24} color="#94a3b8" />
-      <p className="text-md w-full text-start overflow-ellipsis overflow-hidden whitespace-nowrap">
+      <p
+        className="w-full text-left font-sans text-[15px] leading-5"
+        style={{
+          display: "-webkit-box",
+          overflow: "hidden",
+          WebkitBoxOrient: "vertical",
+          WebkitLineClamp: 2,
+          textOverflow: "ellipsis",
+        }}>
         {getListLabel(fileName)}
       </p>
       {hover && !paperIsOpen && <MenuFile fileName={fileName} />}
