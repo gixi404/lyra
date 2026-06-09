@@ -2,13 +2,15 @@ import "@fontsource/ia-writer-duo";
 import "@fontsource/sarabun";
 import listenCommands from "bind-mousetrap-global";
 import commands from "mousetrap";
-import { type PropsWithChildren } from "react";
+import { useEffect, type PropsWithChildren } from "react";
 import { twJoin, twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
 import { PAGES } from "../utils/consts";
 import { pathIs, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import Header from "./Header";
+import { listen } from "@tauri-apps/api/event";
+import { toggleFullScreen } from "../utils/commands";
 
 listenCommands(commands);
 
@@ -16,29 +18,29 @@ function MainContainer({ children }: PropsWithChildren): Component {
   const { myFontValue } = usePreferences(),
     { isDay } = themes();
 
-  // useEffect(() => {
-  //   const preventContextMenu = (e: Event): void => {
-  //     if (e.target instanceof HTMLTextAreaElement) return;
-  //     e.preventDefault();
-  //   };
+  useEffect(() => {
+    const preventContextMenu = (e: Event): void => {
+      if (e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+    };
 
-  //   listen("f11", () => toggleFullScreen());
-  //   addEventListener("contextmenu", preventContextMenu);
+    listen("f11", () => toggleFullScreen());
+    addEventListener("contextmenu", preventContextMenu);
 
-  //   return () => {
-  //     unbindGlobal("f11");
-  //     removeEventListener("contextmenu", preventContextMenu);
-  //   };
-  // }, []);
+    return () => {
+      // unbindGlobal("f11");
+      removeEventListener("contextmenu", preventContextMenu);
+    };
+  }, []);
 
   return (
     <main
       className={twMerge(
-        isDay ? "bg-[#e0e0e0] text-gray-800" : "bg-[#1a1a1a] text-gray-200/90",
-        pathIs(PAGES.file) ? "gap-0" : "gap-y-10 lg:gap-y-20",
+        isDay ? "bg-[#e0e0e0] text-gray-800" : "bg-[#101010] text-gray-200/90",
+        pathIs(PAGES.file) ? "gap-0 items-stretch" : "gap-y-10 lg:gap-y-20 items-center",
         twJoin(
           myFontValue(),
-          "w-[100vw] min-h-screen flex flex-col items-center justify-start",
+          "w-[100vw] min-h-screen flex flex-col justify-start",
         ),
       )}
     >

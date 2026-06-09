@@ -284,8 +284,7 @@ impl InnerWebView {
         settings.set_javascript_can_access_clipboard(true);
       }
 
-      // Enable App cache
-      settings.set_enable_offline_web_application_cache(true);
+      // Deprecated in WebKitGTK and does nothing.
       settings.set_enable_page_cache(true);
 
       // Set user agent

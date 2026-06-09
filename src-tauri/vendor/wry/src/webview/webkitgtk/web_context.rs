@@ -104,6 +104,7 @@ pub trait WebContextExt {
   /// When duplicate schemes are registered, the duplicate handler will still be submitted and the
   /// `Err(Error::DuplicateCustomProtocol)` will be returned. It is safe to ignore if you are
   /// relying on the platform's implementation to properly handle duplicated scheme handlers.
+  #[allow(dead_code)]
   fn register_uri_scheme<F>(&mut self, name: &str, handler: F) -> crate::Result<()>
   where
     F: Fn(&Request<Vec<u8>>) -> crate::Result<Response<Cow<'static, [u8]>>> + 'static;

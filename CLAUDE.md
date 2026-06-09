@@ -44,13 +44,13 @@ Creates MSI installer for Windows with Spanish language support.
 **Pages:**
 - `Presentation.tsx`: Landing page, initializes main folder
 - `List.tsx`: File list view with search/filter
-- `FileContent.tsx`: Rich text editor using TinyMCE with auto-save
+- `FileContent.tsx`: Plain text editor view with auto-save and draft recovery
 - `Preferences.tsx`: Settings (theme, language, font, alignment)
 - `Support.tsx`: Help and support information
 - `MyFiles.tsx`: Opens system folder containing user files
 
 **Key Components:**
-- `TinyEditor.tsx`: Rich text editor component using TinyMCE (local installation in `/public/tinymce/`)
+- `TinyEditor.tsx`: Minimal controlled textarea editor component with word count updates
 
 **Key Utilities:**
 - `commands.ts`: Keyboard shortcuts and UI commands
@@ -85,11 +85,8 @@ Uses React Router v6 with View Transitions API for smooth page transitions. All 
 
 ### Text Editor
 
-- **TinyMCE 6**: Rich text editor with local installation
-- **Location**: `/public/tinymce/` (self-hosted, no CDN)
-- **Package**: `@tinymce/tinymce-react` for React integration
-- **Features**: Minimal UI for distraction-free writing, auto-save, word count, theme-aware
-- **Configuration**: Simple setup with no toolbar/menubar, focuses on pure writing experience
+- **Native `<textarea>`**: Plain text editor
+- **Features**: Auto-save, word count, theme-aware
 - **Customization**: Respects user preferences (font size, alignment, opacity, letter spacing)
 
 ## Important Technical Details

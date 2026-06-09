@@ -13,7 +13,6 @@
 - `src-tauri/tauri.conf.json` still uses `npm run dev` / `npm run build` in its Tauri pre-commands. Don’t “fix” that casually without checking the wrapper behavior.
 - TypeScript is strict (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`), so avoid dead bindings and loose refactors.
 - Tauri filesystem access is scoped to `$DOCUMENT/**/**`; keep file-path work inside the Documents folder and use `@tauri-apps/api/path` `join()` instead of string concatenation.
-- TinyMCE is self-hosted from `public/tinymce/`; keep it local.
 
 ## Code shape to expect
 

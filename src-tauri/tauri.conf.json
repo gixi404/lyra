@@ -43,7 +43,7 @@
     },
     "bundle": {
       "active": true,
-      "targets": ["msi", "deb", "appimage"],
+      "targets": ["msi", "deb", "rpm", "appimage"],
       "identifier": "com.lyra.dev",
       "publisher": "Lyra",
       "shortDescription": "Lyra",
@@ -57,6 +57,12 @@
         "icons/icon.ico",
         "icons/icon.png"
       ],
+      "deb": {
+        "desktopTemplate": "./linux/lyra.desktop.hbs"
+      },
+      "rpm": {
+        "desktopTemplate": "./linux/lyra.desktop.hbs"
+      },
       "windows": {
         "allowDowngrades": true,
         "certificateThumbprint": null,

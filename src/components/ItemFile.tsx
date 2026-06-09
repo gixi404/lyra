@@ -18,6 +18,10 @@ function ItemFile({ fileName }: Props): Component {
     setSelectedFile = fileStore(state => state.setSelectedFile),
     [hover, setHover] = useState<boolean>(false);
 
+  function getListLabel(name: string): string {
+    return name.replace(/\.(txt|md)$/i, "");
+  }
+
   async function openFile(): Promise<void> {
     const fileContent: string = await readFile(fileName);
     const newSelectedFile: File = { name: fileName, content: fileContent };
@@ -39,7 +43,7 @@ function ItemFile({ fileName }: Props): Component {
     >
       <ChevronRight size={24} color="#94a3b8" />
       <p className="text-md w-full text-start overflow-ellipsis overflow-hidden whitespace-nowrap">
-        {fileName}
+        {getListLabel(fileName)}
       </p>
       {hover && !paperIsOpen && <MenuFile fileName={fileName} />}
       {hover && paperIsOpen && <MenuPaperFile fileName={fileName} />}

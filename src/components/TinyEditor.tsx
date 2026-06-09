@@ -1,5 +1,5 @@
-import { useRef, useEffect } from "react";
-import { Editor } from "@tinymce/tinymce-react";
+import { useRef, useEffect, useCallback } from "react";
+import type { CSSProperties, ChangeEvent } from "react";
 import usePreferences from "../hooks/usePreferences";
 import { themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
@@ -17,7 +17,7 @@ function TinyEditor({
   onContentChange,
   onWordCountChange,
 }: TinyEditorProps): Component {
-  const editorRef = useRef<any>(null),
+  const textareaRef = useRef<HTMLTextAreaElement>(null),
     { isDay } = themes(),
     { myFontSize, myAlign, myOpacity, mySpacing } = usePreferences(),
     fontSize: string = myFontSize(),
@@ -26,23 +26,13 @@ function TinyEditor({
     letterSpacing: number = mySpacing();
 
   useEffect(() => {
-    if (editorRef.current) {
-      const currentContent: string = editorRef.current.getContent();
-      if (currentContent !== content) {
-        editorRef.current.setContent(content);
-      }
-    }
-  }, [content]);
-
-  useEffect(() => {
-    const wordCountTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
-      if (!editorRef.current) {
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      if (!textareaRef.current) {
         onWordCountChange(0);
         return;
       }
 
-      const editorText: string = editorRef.current.getContent({ format: "text" }) ?? "";
-      const normalizedText: string = editorText.trim();
+      const normalizedText: string = textareaRef.current.value.trim();
       if (normalizedText.length === 0) {
         onWordCountChange(0);
         return;
@@ -53,114 +43,44 @@ function TinyEditor({
     }, WORD_COUNT_DEBOUNCE_MS);
 
     return () => {
-      clearTimeout(wordCountTimer);
+      clearTimeout(timer);
     };
   }, [content, onWordCountChange]);
 
-  const handleEditorChange = (newContent: string): void => {
-    onContentChange(newContent);
-  };
-
-  const contentStyle: string = `
-    :root {
-      color-scheme: ${isDay ? "light" : "dark"};
-    }
-    html {
-      background-color: ${isDay ? "#f5f5f4" : "#0f0f0f"};
-    }
-    body {
-      box-sizing: border-box;
-      font-family: inherit;
-      font-size: ${fontSize};
-      text-align: ${textAlign};
-      opacity: ${opacity / 10};
-      letter-spacing: ${letterSpacing}px;
-      background-color: ${isDay ? "#f5f5f4" : "#0f0f0f"};
-      color: ${isDay ? "#1f2937" : "#e5e7eb"};
-      padding: 0.75rem 1.25rem 1.5rem;
-      line-height: 1.9;
-      max-width: 72ch;
-      margin: 0 auto;
-      min-height: calc(100vh - 40px);
-    }
-    body:focus {
-      outline: none !important;
-      border: none !important;
-      box-shadow: none !important;
-    }
-    p, li {
-      margin: 0 0 0.95em;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      line-height: 1.35;
-      margin: 1.25em 0 0.55em;
-    }
-    ::-webkit-scrollbar {
-      width: 0;
-      background: transparent;
-    }
-    * {
-      outline: none !important;
-    }
-  `;
+  const handleChange = useCallback(
+    (e: ChangeEvent<HTMLTextAreaElement>): void => {
+      onContentChange(e.target.value);
+    },
+    [onContentChange],
+  );
 
   return (
-    <div className="tinymce-container w-full h-full flex-1">
-      <Editor
-        tinymceScriptSrc="/tinymce/tinymce.min.js"
-        licenseKey="gpl"
-        onInit={(_evt: unknown, editor: any) => {
-          editorRef.current = editor;
-          if (content) {
-            editor.setContent(content);
-          }
-        }}
-        value={content}
-        init={{
-          height: "calc(100vh - 40px)",
-          min_height: 420,
-          menubar: false,
-          statusbar: false,
-          toolbar:
-            "undo redo | blocks fontsize | bold italic underline | alignleft aligncenter alignright | bullist numlist | link image | removeformat",
-          plugins: [
-            "wordcount",
-            "lists",
-            "image",
-            "link",
-          ],
-          content_style: contentStyle,
-          skin: isDay ? "oxide" : "oxide-dark",
-          skin_url: "/tinymce/skins/ui/" + (isDay ? "oxide" : "oxide-dark"),
-          content_css: false,
-          placeholder: "...",
-          browser_spellcheck: true,
-          contextmenu: false,
-          resize: false,
-          branding: false,
-          elementpath: false,
-          promotion: false,
-          body_class: isDay ? "day-theme" : "dark-theme",
-          toolbar_mode: "wrap",
-          toolbar_sticky: true,
-          toolbar_sticky_offset: 40,
-          font_size_formats: "8pt 10pt 12pt 14pt 16pt 18pt 20pt 24pt 28pt 32pt 36pt",
-          image_advtab: true,
-          file_picker_types: "image",
-          automatic_uploads: true,
-          images_upload_handler: (blobInfo: any) => {
-            return new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                resolve(reader.result as string);
-              };
-              reader.readAsDataURL(blobInfo.blob());
-            });
-          },
-        }}
-        onEditorChange={handleEditorChange}
-      />
-    </div>
+    <textarea
+      ref={textareaRef}
+      value={content}
+      onChange={handleChange}
+      placeholder="..."
+      spellCheck
+      className="block h-full w-full flex-1 resize-none border border-transparent bg-transparent leading-relaxed transition-shadow focus:outline-none"
+      style={{
+        minHeight: "100%",
+        height: "100%",
+        fontSize,
+        textAlign: textAlign as CSSProperties["textAlign"],
+        opacity: opacity / 10,
+        letterSpacing: `${letterSpacing}px`,
+        backgroundColor: isDay ? "rgba(245, 245, 244, 0.82)" : "rgba(15, 15, 15, 0.92)",
+        color: isDay ? "#1f2937" : "#e5e7eb",
+        padding: "80px 140px",
+        width: "100%",
+        maxWidth: "1200px",
+        margin: "0 auto",
+        fontFamily: '"SFMono-Regular", "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+        outline: "none",
+        borderColor: isDay ? "rgba(120, 113, 108, 0.14)" : "rgba(245, 245, 244, 0.08)",
+        lineHeight: 1.9,
+      }}
+    />
   );
 }
 

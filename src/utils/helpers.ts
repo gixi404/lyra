@@ -77,6 +77,10 @@ function getLegacyFileName(fileName: string): string {
   return matchingExtension ? fileName.slice(0, -matchingExtension.length) : fileName;
 }
 
+function getEditableFileName(fileName: string): string {
+  return getLegacyFileName(fileName);
+}
+
 function resolveDisplayFileName(fileName: string, currentName?: string): string {
   if (hasSupportedFileExtension(fileName)) return fileName;
   if (currentName?.endsWith(".md")) return `${fileName}.md`;
@@ -246,6 +250,7 @@ export {
   copyText,
   featherAnimation,
   getDate,
+  getEditableFileName,
   getSystemLang,
   len,
   nameIsValid,

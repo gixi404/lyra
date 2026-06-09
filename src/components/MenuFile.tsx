@@ -8,7 +8,13 @@ import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
-import { nameIsValid, notification, sanitizeFileName, themes } from "../utils/helpers";
+import {
+  getEditableFileName,
+  nameIsValid,
+  notification,
+  sanitizeFileName,
+  themes,
+} from "../utils/helpers";
 import type { Component } from "../utils/types";
 import { shallow } from "zustand/shallow";
 
@@ -30,10 +36,12 @@ function MenuFile({ fileName }: Props): Component {
 
   function editFileName(e: SyntheticEvent): void {
     e.stopPropagation();
+    const editableFileName: string = getEditableFileName(fileName);
+
     Dialog.fire({
       title: d.EnterNewName,
       input: "text",
-      inputValue: fileName,
+      inputValue: editableFileName,
       inputAttributes: { autocapitalize: "off" },
       showCancelButton: true,
       confirmButtonText: d.Change,
@@ -50,7 +58,7 @@ function MenuFile({ fileName }: Props): Component {
           return notification("error", d.InvalidName);
         } else if (!nameIsValid(res.value)) return;
         else {
-          const sanitizedName: string = sanitizeFileName(res.value);
+          const sanitizedName: string = sanitizeFileName(getEditableFileName(res.value));
           const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
           if (nextDisplayName !== fileName && files.includes(nextDisplayName)) {
             return notification("error", d.NameAlreadyExists);

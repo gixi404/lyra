@@ -108,7 +108,7 @@ function translations() {
     Words: userLanguage("words", "palabras"),
     EditedName: userLanguage("Edited name", "Nombre editado"),
     Cancel: userLanguage("Cancel", "Cancelar"),
-    Change: userLanguage("Change", "Cambiar"),
+    Change: userLanguage("Save", "Guardar"),
     EnterNewName: userLanguage("Enter new name", "Ingrese el nuevo nombre"),
     Help: userLanguage("Help", "Ayuda"),
     Commands: userLanguage("Commands", "Comandos"),
