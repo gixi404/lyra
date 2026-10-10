@@ -1,19 +1,11 @@
-import { twMerge } from "tailwind-merge";
-import translations from "../utils/dictionary";
-import { themes } from "../utils/helpers";
+import { Loader2 } from "lucide-react";
 import type { Component } from "../utils/types";
 
 function Loading(): Component {
-  const { isDay } = themes();
-  const d = translations();
   return (
-    <p
-      className={twMerge(
-        isDay ? "text-black/70" : "text-gray-300",
-        "text-lg w-full text-center"
-      )}>
-      {d.Loading}
-    </p>
+    <div className="w-[680px] max-w-full flex items-center justify-center py-12">
+      <Loader2 size={24} className="animate-spin text-[#00a8ff]" />
+    </div>
   );
 }
 

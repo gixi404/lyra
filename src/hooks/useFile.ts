@@ -9,14 +9,14 @@ import {
   resolveDisplayFileName,
 } from "../utils/helpers";
 import {
+  DirEntry,
   exists,
-  FileEntry,
   readDir,
   readTextFile,
-  removeFile as remove,
-  renameFile as rename,
+  remove,
+  rename,
   writeTextFile,
-} from "@tauri-apps/api/fs";
+} from "@tauri-apps/plugin-fs";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 
@@ -51,7 +51,8 @@ function useFile(): Files {
     const { pathFile: oldPath } = await getFilePath(oldName);
     const nextDisplayName: string = resolveDisplayName(newName, oldName);
     const newPath: string = await getRenamedFilePath(oldName, newName);
-    await rename(oldPath, newPath, BASE_DIRECTORY);
+    const baseDir = BASE_DIRECTORY.baseDir;
+    await rename(oldPath, newPath, { oldPathBaseDir: baseDir, newPathBaseDir: baseDir });
 
     moveCompatibleValue(oldName, nextDisplayName, "", DRAFT_STORAGE_PREFIX);
     moveCompatibleValue(oldName, nextDisplayName, "-modified");
@@ -81,7 +82,7 @@ function useFile(): Files {
   async function getFiles(): Promise<string[]> {
     let dir: any[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
     dir = dir
-      .map((f: FileEntry) => f.name)
+      .map((f: DirEntry) => f.name)
       .filter(
         (name): name is string =>
           typeof name === "string" &&

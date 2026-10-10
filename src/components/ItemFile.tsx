@@ -6,7 +6,6 @@ import { fileStore } from "../store/fileStore";
 import { navigation, themes } from "../utils/helpers";
 import { PAGES } from "../utils/consts";
 import { twMerge } from "tailwind-merge";
-import { useState } from "react";
 import type { Component, File } from "../utils/types";
 
 function ItemFile({ fileName }: Props): Component {
@@ -14,11 +13,14 @@ function ItemFile({ fileName }: Props): Component {
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
     { readFile } = useFile(),
-    setSelectedFile = fileStore(state => state.setSelectedFile),
-    [hover, setHover] = useState<boolean>(false);
+    setSelectedFile = fileStore(state => state.setSelectedFile);
 
   function getListLabel(name: string): string {
     return name.replace(/\.(txt|md)$/i, "");
+  }
+
+  function getFileTypeLabel(name: string): string {
+    return name.endsWith(".md") ? "MARKDOWN" : "TEXTO";
   }
 
   async function openFile(): Promise<void> {
@@ -31,28 +33,33 @@ function ItemFile({ fileName }: Props): Component {
   return (
     <li
       onClick={openFile}
-      onMouseLeave={() => setHover(false)}
-      onMouseEnter={() => setHover(true)}
       className={twMerge(
+        "group relative flex items-center justify-between w-full py-3.5 px-1 border-b cursor-pointer transition-colors duration-150 select-none",
         isDay
-          ? "border-gray-300 bg-white hover:border-gray-400 hover:bg-gray-50 text-gray-800 shadow-sm"
-          : "border-zinc-800 bg-zinc-900 hover:border-zinc-700 hover:bg-zinc-900/95 text-zinc-200",
-        "relative flex min-h-[84px] w-full cursor-pointer items-start rounded-[8px] border px-4 py-3 duration-150"
+          ? "border-neutral-200/80 hover:bg-neutral-100/50 text-neutral-800"
+          : "border-zinc-800/60 hover:bg-zinc-900/40 text-zinc-200"
       )}
     >
-      <p
-        className="w-full text-left font-sans text-[15px] leading-5"
-        style={{
-          display: "-webkit-box",
-          overflow: "hidden",
-          WebkitBoxOrient: "vertical",
-          WebkitLineClamp: 2,
-          textOverflow: "ellipsis",
-        }}>
+      <span
+        className="font-sans text-sm sm:text-[15px] truncate pr-4 text-left font-normal"
+        title={getListLabel(fileName)}
+      >
         {getListLabel(fileName)}
-      </p>
-      {hover && !paperIsOpen && <MenuFile fileName={fileName} />}
-      {hover && paperIsOpen && <MenuPaperFile fileName={fileName} />}
+      </span>
+
+      <div className="flex items-center gap-x-3 shrink-0">
+        {!paperIsOpen && <MenuFile fileName={fileName} />}
+        {paperIsOpen && <MenuPaperFile fileName={fileName} />}
+
+        <span
+          className={twMerge(
+            "font-mono text-[11px] tracking-widest uppercase text-right min-w-[70px]",
+            isDay ? "text-neutral-400" : "text-zinc-500"
+          )}
+        >
+          {getFileTypeLabel(fileName)}
+        </span>
+      </div>
     </li>
   );
 }

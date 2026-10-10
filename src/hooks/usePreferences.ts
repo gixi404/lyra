@@ -3,7 +3,7 @@ import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/hel
 import { LANGS, TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 
 function usePreferences(): Preferences {
-  const { getItem } = useStorage();
+  const { getItem, setItem } = useStorage();
   const readBoolean = (key: string, fallback: string): boolean =>
     JSON.parse(getItem(key, fallback)) as boolean;
 
@@ -67,7 +67,14 @@ function usePreferences(): Preferences {
   }
 
   function myTheme(): string {
-    return getItem("theme", THEMES.clearNigth);
+    const savedTheme = getItem("theme", "nothing");
+    if (savedTheme === "nothing" || savedTheme === "auto") {
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const defaultTheme = prefersDark ? THEMES.clearNigth : THEMES.Day;
+      setItem("theme", defaultTheme);
+      return defaultTheme;
+    }
+    return savedTheme;
   }
 
   function myPaper(files: string[] = []): string[] {

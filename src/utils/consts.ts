@@ -1,12 +1,12 @@
-import { BaseDirectory } from "@tauri-apps/api/fs";
+import { BaseDirectory } from "@tauri-apps/plugin-fs";
 
-const BASE_DIRECTORY: { dir: BaseDirectory } = { dir: BaseDirectory.Document };
+const BASE_DIRECTORY: { baseDir: BaseDirectory } = { baseDir: BaseDirectory.Document };
 
 const MAIN_FOLDER: string = "lyra";
 
 const PAGES: Pages = {
-  presentation: "/",
-  list: "/list",
+  presentation: "/presentation",
+  list: "/",
   backup: "/backup",
   support: "/support",
   preferences: "/preferences",

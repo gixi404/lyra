@@ -1,5 +1,3 @@
-import commands from "mousetrap";
-import listenCommands from "bind-mousetrap-global";
 import MainContainer from "../components/MainContainer";
 import ModifiedFile from "../components/ModifiedFile";
 import useFile from "../hooks/useFile";
@@ -9,8 +7,6 @@ import { fileStore } from "../store/fileStore";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { getCompatibleStorageKeys, getDate } from "../utils/helpers";
 import type { Component } from "../utils/types";
-
-listenCommands(commands);
 
 const AUTOSAVE_DEBOUNCE_MS = 400;
 const DRAFT_DEBOUNCE_MS = 250;
@@ -26,7 +22,6 @@ function FileContent(): Component {
   const { setItem } = useStorage(),
     { selectedFile } = fileStore(),
     { saveFileContent } = useFile(),
-    { bindGlobal: listen }: any = commands,
     [content, setContent] = useState<string>(() => selectedFile.content ?? ""),
     [wordCounts, setWordCounts] = useState<number>(0),
     autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
@@ -203,26 +198,6 @@ function FileContent(): Component {
     isDirtyRef.current = startingContent !== diskContent;
   }, [selectedFile.name, selectedFile.content]);
 
-  useEffect(() => {
-    const preventCtrlJ = (e: Event): void => e.preventDefault();
-    const preventCtrlG = (e: Event): void => e.preventDefault();
-
-    listen("ctrl+j", preventCtrlJ);
-    listen("ctrl+g", preventCtrlG);
-
-    return () => {
-      const globalCommands: any = commands;
-
-      if (typeof globalCommands.unbindGlobal === "function") {
-        globalCommands.unbindGlobal("ctrl+j");
-        globalCommands.unbindGlobal("ctrl+g");
-        return;
-      }
-
-      commands.unbind("ctrl+j");
-      commands.unbind("ctrl+g");
-    };
-  }, []);
 
   function handleContentChange(newContent: string): void {
     isDirtyRef.current = true;

@@ -1,7 +1,5 @@
-import { animated, useSpring } from "@react-spring/web";
 import { ArrowUpLeft as RecoveryIcon, Trash as RemoveIcon } from "lucide-react";
-import type { SyntheticEvent } from "react";
-import Dialog from "sweetalert2";
+import { type SyntheticEvent, useState } from "react";
 import { twMerge } from "tailwind-merge";
 import useFile from "../hooks/useFile";
 import usePreferences from "../hooks/usePreferences";
@@ -11,6 +9,7 @@ import translations from "../utils/dictionary";
 import { notification, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import { shallow } from "zustand/shallow";
+import Modal from "./Modal";
 
 function MenuPaperFile({ fileName }: Props): Component {
   const d = translations(),
@@ -26,86 +25,96 @@ function MenuPaperFile({ fileName }: Props): Component {
       }),
       shallow
     ),
-    [styles] = useSpring(() => ({
-      from: { opacity: 0 },
-      to: { opacity: 1 },
-      config: { duration: 100 },
-    }));
+    [isRestoreOpen, setIsRestoreOpen] = useState(false),
+    [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
-  function recoveryPaperItem(e: SyntheticEvent): void {
-    e.stopPropagation();
-    Dialog.fire({
-      text: d.RestoreQuestion,
-      icon: "question",
-      showCancelButton: true,
-      confirmButtonColor: "#1d74c5",
-      cancelButtonColor: "#565454",
-      confirmButtonText: d.Recover,
-      cancelButtonText: d.Cancel,
-      background: isDay ? "#dedede" : "#202020",
-      color: isDay ? "#000" : "#fff",
-    }).then(res => {
-      if (res.isConfirmed) {
-        const updatedPaper: string[] = myPaper(files).filter(
-          (f: string) => f != fileName
-        );
-        setItem("paper", JSON.stringify(updatedPaper));
-        notification("success", d.FileRecovered);
-        editedFile();
-      }
-    });
+  function handleRestoreConfirm(): void {
+    const updatedPaper: string[] = myPaper(files).filter(
+      (f: string) => f !== fileName
+    );
+    setItem("paper", JSON.stringify(updatedPaper));
+    notification("success", d.FileRecovered);
+    setIsRestoreOpen(false);
+    editedFile();
   }
 
-  function removeItem(e: SyntheticEvent): void {
-    e.stopPropagation();
-
-    Dialog.fire({
-      text: d.DeleteQuestion,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#d33",
-      confirmButtonText: d.Delete,
-      cancelButtonText: d.Cancel,
-      background: isDay ? "#dedede" : "#202020",
-      color: isDay ? "#000" : "#fff",
-    }).then(res => {
-      if (res.isConfirmed) {
-        const updatedPaper: string[] = myPaper(files).filter(
-          (f: string) => f != fileName
-        );
-        removeFileFromList(fileName);
-        setItem("paper", JSON.stringify(updatedPaper));
-        deleteFile(fileName);
-        editedFile();
-        notification("success", d.DeletedFile);
-      }
-    });
+  function handleDeleteConfirm(): void {
+    const updatedPaper: string[] = myPaper(files).filter(
+      (f: string) => f !== fileName
+    );
+    removeFileFromList(fileName);
+    setItem("paper", JSON.stringify(updatedPaper));
+    deleteFile(fileName);
+    setIsDeleteOpen(false);
+    editedFile();
+    notification("success", d.DeletedFile);
   }
+
   return (
-    <animated.div
-      style={styles}
-      className="absolute top-0 right-0 flex h-full items-center justify-center gap-x-3 rounded-r-[8px] bg-[#101010] px-3 duration-200">
-      <RecoveryIcon
-        onClick={recoveryPaperItem}
-        size={23}
-        className={twMerge(
-          isDay
-            ? "hover:text-green-700 text-gray-600"
-            : "text-[#6cd3ff] hover:text-[#c3edff]",
-          " h-full w-8 py-3"
-        )}
+    <>
+      {!(isRestoreOpen || isDeleteOpen) && (
+        <div
+          className={twMerge(
+            "absolute right-1 top-1/2 -translate-y-1/2 items-center gap-x-1 p-1 rounded-xl shadow-md z-10 flex md:hidden md:group-hover:flex md:focus-within:flex",
+            isDay
+              ? "bg-white border border-neutral-200 text-neutral-600"
+              : "bg-zinc-800 border border-zinc-700 text-zinc-300"
+          )}
+        >
+          <button
+            type="button"
+            onClick={(e: SyntheticEvent) => {
+              e.stopPropagation();
+              setIsRestoreOpen(true);
+            }}
+            className={twMerge(
+              "p-1.5 rounded-lg transition-colors",
+              isDay
+                ? "hover:bg-emerald-50 hover:text-emerald-600"
+                : "hover:bg-emerald-500/20 hover:text-emerald-400"
+            )}
+          >
+            <RecoveryIcon size={17} />
+          </button>
+          <button
+            type="button"
+            onClick={(e: SyntheticEvent) => {
+              e.stopPropagation();
+              setIsDeleteOpen(true);
+            }}
+            className={twMerge(
+              "p-1.5 rounded-lg transition-colors",
+              isDay
+                ? "hover:bg-rose-50 hover:text-rose-600"
+                : "hover:bg-rose-500/20 hover:text-rose-400"
+            )}
+          >
+            <RemoveIcon size={16} />
+          </button>
+        </div>
+      )}
+
+      <Modal
+        isOpen={isRestoreOpen}
+        onClose={() => setIsRestoreOpen(false)}
+        onConfirm={handleRestoreConfirm}
+        title={d.RestoreQuestion}
+        description={`"${fileName.replace(/\.(txt|md)$/i, "")}"`}
+        confirmText={d.Recover}
+        cancelText={d.Cancel}
       />
-      <RemoveIcon
-        onClick={removeItem}
-        size={20}
-        className={twMerge(
-          isDay
-            ? "hover:text-red-700 text-gray-600"
-            : "text-[#6cd3ff] hover:text-[#c3edff]",
-          " h-full w-8 py-3"
-        )}
+
+      <Modal
+        isOpen={isDeleteOpen}
+        onClose={() => setIsDeleteOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        title={d.DeleteQuestion}
+        description={`"${fileName.replace(/\.(txt|md)$/i, "")}"`}
+        confirmText={d.Delete}
+        cancelText={d.Cancel}
+        variant="danger"
       />
-    </animated.div>
+    </>
   );
 }
 

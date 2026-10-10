@@ -5,6 +5,7 @@ import Loading from "../components/Loading";
 import MainContainer from "../components/MainContainer";
 import useFile from "../hooks/useFile";
 import { fileStore } from "../store/fileStore";
+import { verifyMainFolder, verifySystemLang } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import { shallow } from "zustand/shallow";
 
@@ -21,15 +22,20 @@ function List(): Component {
     [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    getFiles()
-      .then(files => setFiles(files))
-      .finally(() => setLoading(false));
+    async function init() {
+      await verifyMainFolder();
+      await verifySystemLang();
+      const filesList = await getFiles();
+      setFiles(filesList);
+      setLoading(false);
+    }
+    init();
   }, [fileIsEdited]);
 
   return (
     <MainContainer>
-      <div className="flex flex-row justify-center items-start w-full h-full">
-        <div className="w-full max-w-[960px] h-5/6 overflow-x-hidden overflow-y-visible flex flex-col justify-center items-center gap-y-8 px-4">
+      <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
+        <div className="w-[680px] max-w-full flex flex-col items-center gap-y-6 sm:gap-y-8">
           <Form />
           {loading ? <Loading /> : <ListFiles arr={files} />}
         </div>

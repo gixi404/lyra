@@ -1,6 +1,6 @@
 import translations from "../utils/dictionary";
 import useFile from "../hooks/useFile";
-import { animated, useSpring } from "@react-spring/web";
+import Modal from "./Modal";
 import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
 import { PAGES } from "../utils/consts";
@@ -11,14 +11,10 @@ import {
   ArrowDownAz,
   ArrowDownZa,
   Archive as PaperIcon,
+  Search as SearchIcon,
+  X as ClearIcon,
 } from "lucide-react";
-import {
-  type FormEvent,
-  type SyntheticEvent,
-  useEffect,
-  useState,
-} from "react";
-import Dialog, { type SweetAlertResult } from "sweetalert2";
+import { type FormEvent, useState } from "react";
 import {
   nameIsValid,
   navigation,
@@ -41,7 +37,7 @@ function Form(): Component {
       }),
       shallow
     ),
-    [fileName, setFileName] = useState<string>(""),
+    [isModalOpen, setIsModalOpen] = useState<boolean>(false),
     { search, setSearch, order, toggleOrder } = searchStore(
       state => ({
         search: state.search,
@@ -61,62 +57,10 @@ function Form(): Component {
     ),
     isRepeated = (fileName: string): boolean => {
       const nextDisplayName: string = resolveDisplayName(fileName);
-      return files.some((name: string) => name == nextDisplayName);
-    },
-    animation = {
-      from: { opacity: 0 },
-      to: { opacity: 1 },
-      config: { duration: 150 },
-    },
-    [stylesToggle, apiToggle] = useSpring(() => animation),
-    [add, setAdd] = useState<boolean>(true),
-    [stylesAdd, apiAdd] = useSpring(() => animation),
-    [stylesPaper, apiPaper] = useSpring(() => animation);
-
-  useEffect(() => {
-    apiToggle.start(animation);
-  }, [order]);
-
-  useEffect(() => {
-    apiPaper.start(animation);
-  }, [paperIsOpen]);
-
-  useEffect(() => {
-    apiAdd.start(animation);
-  }, [add]);
-
-  function addFile(e: SyntheticEvent): void {
-    e.stopPropagation();
-    setAdd(!add);
-    Dialog.fire({
-      title: d.EnterTheFileName,
-      input: "text",
-      showCancelButton: true,
-      inputAttributes: { autoComplete: "off" },
-      inputAutoFocus: true,
-      confirmButtonColor: "#1d74c5",
-      cancelButtonColor: "#565454",
-      confirmButtonText: d.Add,
-      cancelButtonText: d.Cancel,
-      background: isDay ? "#dedede" : "#202020",
-      color: isDay ? "#000" : "#fff",
-      customClass: { input: "no-focus-outline" },
-    }).then((res: SweetAlertResult) => {
-      if (res.isConfirmed) {
-        e.preventDefault();
-        const sanitizedName: string = sanitizeFileName(res.value);
-        const displayName: string = resolveDisplayName(sanitizedName);
-        const file: File = {
-          name: sanitizedName,
-          content: `## ${displayName} ${empty_text}`,
-        };
-        validateFields(file);
-      }
-    });
-  }
+      return files.some((name: string) => name === nextDisplayName);
+    };
 
   async function fileManagement(file: File): Promise<void> {
-    setFileName("");
     const displayName: string = await createFile(file.name, file.content);
     const nextFile: File = { ...file, name: displayName };
     updateListFiles(displayName);
@@ -124,169 +68,140 @@ function Form(): Component {
     goTo(PAGES.file);
   }
 
-  function validateFields(file: File): void {
-    switch (true) {
-      case paperIsOpen:
-        break;
+  function handleCreateConfirm(value?: string): void {
+    if (!value) return;
+    const sanitizedName: string = sanitizeFileName(value);
+    const displayName: string = resolveDisplayName(sanitizedName);
 
-      case isRepeated(file.name):
-        notification("error", d.RepeatedItem);
-        break;
-
-      case !file.name:
-        notification("error", d.EnterName);
-        break;
-
-      case !nameIsValid(file.name):
-        break;
-
-      default:
-        void fileManagement(file);
-        break;
+    if (paperIsOpen) {
+      setIsModalOpen(false);
+      return;
     }
+
+    if (isRepeated(sanitizedName)) {
+      notification("error", d.RepeatedItem);
+      return;
+    }
+
+    if (!nameIsValid(sanitizedName)) {
+      return;
+    }
+
+    setIsModalOpen(false);
+    const file: File = {
+      name: sanitizedName,
+      content: `## ${displayName}\n\n`,
+    };
+    void fileManagement(file);
   }
 
   function handleSubmit(e: FormEvent): void {
     e.preventDefault();
-    if (fileName) addFile(e);
-    else return;
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="flex flex-col justify-center items-center w-full text-slate-400 gap-y-4 sm:gap-y-6 max-w-[340px] opacity-80 px-4 sm:px-0"
-    >
-      <div className="flex justify-end items-start gap-x-2 sm:gap-x-3 w-full">
-        <input
-          autoFocus
-          type="search"
+    <>
+      <form
+        onSubmit={handleSubmit}
+        className="flex flex-col justify-center items-center w-[680px] max-w-full"
+      >
+        <div
           className={twMerge(
-            isDay
-              ? "placeholder:text-gray-600 bg-white text-gray-900 border-gray-400 shadow-sm"
-              : "placeholder:text-sky-200/60 border-sky-400 bg-gray-800 text-sky-100",
-            "w-full border h-[38px] sm:h-[42px] rounded-md px-3 sm:px-4 outline-0 text-sm sm:text-base"
-          )}
-          placeholder={d.Search + "..."}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        <animated.button
-          style={stylesAdd}
-          onClick={addFile}
-          className={twMerge(
-            isDay
-              ? "bg-white hover:bg-gray-50 text-gray-700 border border-gray-400 shadow-sm"
-              : "bg-gray-800 hover:bg-gray-700 text-sky-400 border border-sky-400",
-            "flex items-center justify-center gap-x-3 px-2 sm:px-3 h-[38px] sm:h-[42px] rounded-md transition-colors"
+            "flex items-center justify-between w-full h-12 px-1 gap-x-4 border-b pb-2",
+            isDay ? "border-neutral-200/80" : "border-zinc-800/60"
           )}
         >
-          <AddIcon size={20} className="sm:w-[25px] sm:h-[25px]" strokeWidth={2.5} />
-        </animated.button>
-        <animated.button
-          style={stylesToggle}
-          onClick={() => toggleOrder(!order)}
-          className={twMerge(
-            isDay
-              ? "bg-white hover:bg-gray-50 text-gray-700 border border-gray-400 shadow-sm"
-              : "bg-gray-800 hover:bg-gray-700 text-sky-400 border border-sky-400",
-            "flex items-center justify-center gap-x-3 px-2 sm:px-3 h-[38px] sm:h-[42px] rounded-md transition-colors"
-          )}
-        >
-          {order ? (
-            <ArrowDownAz size={20} className="sm:w-[25px] sm:h-[25px]" strokeWidth={2} />
-          ) : (
-            <ArrowDownZa size={20} className="sm:w-[25px] sm:h-[25px]" strokeWidth={2} />
-          )}
-        </animated.button>
-        <animated.button
-          style={stylesPaper}
-          onClick={setPaperIsOpen}
-          className={twMerge(
-            isDay
-              ? "bg-white hover:bg-gray-50 text-gray-700 border border-gray-400 shadow-sm"
-              : "bg-gray-800 hover:bg-gray-700 text-sky-400 border border-sky-400",
-            paperIsOpen && isDay && "bg-indigo-100 border-indigo-500",
-            paperIsOpen && !isDay && "bg-blue-950",
-            "flex items-center justify-center gap-x-3 border h-[38px] sm:h-[42px] rounded-md transition-colors px-2 sm:px-3"
-          )}
-        >
-          <PaperIcon size={18} className="sm:w-[20px] sm:h-[20px]" strokeWidth={2} />
-        </animated.button>
-      </div>
-      {paperIsOpen && (
-        <p
-          className={twMerge(
-            isDay ? "text-slate-900" : "text-slate-300",
-            "w-full text-base sm:text-lg text-center"
-          )}
-        >
-          {d.Archived}
-        </p>
-      )}
-    </form>
+          {/* Lupa + Input de Búsqueda */}
+          <div className="relative flex-1 flex items-center pr-8">
+            <SearchIcon
+              size={17}
+              className={`shrink-0 pointer-events-none mr-3 ${
+                isDay ? "text-neutral-400" : "text-zinc-500"
+              }`}
+            />
+            <input
+              autoFocus
+              type="text"
+              className={twMerge(
+                isDay
+                  ? "bg-transparent text-neutral-900 placeholder:text-neutral-400 font-sans text-sm outline-none w-full"
+                  : "bg-transparent text-zinc-100 placeholder:text-zinc-500 font-sans text-sm outline-none w-full"
+              )}
+              placeholder={d.Search + "..."}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className={`absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded transition-colors ${
+                  isDay
+                    ? "text-neutral-400 hover:text-neutral-600"
+                    : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                <ClearIcon size={14} />
+              </button>
+            )}
+          </div>
+
+          {/* Grupo de Iconos de Acción Derecha */}
+          <div className="flex items-center gap-x-3 sm:gap-x-4 shrink-0">
+            <button
+              type="button"
+              onClick={() => toggleOrder(!order)}
+              className={`p-1.5 transition-colors rounded-lg ${
+                isDay
+                  ? "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60"
+              }`}
+            >
+              {order ? (
+                <ArrowDownAz size={18} strokeWidth={2} />
+              ) : (
+                <ArrowDownZa size={18} strokeWidth={2} />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={setPaperIsOpen}
+              className={twMerge(
+                "p-1.5 transition-colors rounded-lg",
+                isDay
+                  ? "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60",
+                paperIsOpen && (isDay ? "text-indigo-600 bg-indigo-50" : "text-sky-400 bg-sky-500/10")
+              )}
+            >
+              <PaperIcon size={16} strokeWidth={2} />
+            </button>
+
+            {/* Botón celeste (+) */}
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="w-10 h-10 rounded-xl bg-[#00a8ff] hover:bg-[#0096e6] text-black font-semibold flex items-center justify-center shadow-lg shadow-[#00a8ff]/20 transition-transform active:scale-95 ml-1"
+            >
+              <AddIcon size={20} strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConfirm={handleCreateConfirm}
+        title={d.EnterTheFileName}
+        hasInput
+        inputPlaceholder="¿Cómo se llama la obra maestra?"
+        confirmText={d.Add}
+        cancelText={d.Cancel}
+      />
+    </>
   );
 }
 
 export default Form;
-
-const empty_text: string = `
-  
-  
-  
-  
-  
-  
-  
-
-
-
-
-
-
-
-
-
-
-
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-
-
-
-
-
-
-
-
-
-
-
-`;

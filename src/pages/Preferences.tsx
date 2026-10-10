@@ -106,10 +106,11 @@ function Preferences(): Component {
 
   return (
     <MainContainer>
-      <animated.div
-        style={styles}
-        className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20"
-      >
+      <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
+        <animated.div
+          style={styles}
+          className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20"
+        >
         <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
           <div className="flex justify-between items-center w-full gap-x-2">
             <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
@@ -236,8 +237,9 @@ function Preferences(): Component {
           </div>
         </div>
       </animated.div>
-    </MainContainer>
-  );
+    </div>
+  </MainContainer>
+);
 }
 
 export default Preferences;

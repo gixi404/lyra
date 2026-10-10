@@ -9,4 +9,7 @@ export const configStore: ZustandStore = create((set: any) => ({
   setSpellCheck: (newState: boolean) => set(() => ({ spellCheck: newState })),
   showHeader: true,
   setShowHeader: (newState: boolean) => set(() => ({ showHeader: newState })),
+  themeTick: 0,
+  toggleThemeTick: () =>
+    set((state: any) => ({ themeTick: state.themeTick + 1 })),
 }));

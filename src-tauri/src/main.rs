@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::process::Command;
-use sys_locale::get_locale;
+use tauri::Manager;
 
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
@@ -41,15 +41,19 @@ fn open_folder(path: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-fn get_system_lang() -> String {
-    let lang: String = get_locale().unwrap_or_else(|| "invalid".to_string()).into();
-    return lang;
-}
-
-fn main() -> () {
+fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_system_lang, open_folder])
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(icon) = app.default_window_icon() {
+                    let _ = window.set_icon(icon.clone());
+                }
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![open_folder])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

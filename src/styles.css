@@ -2,24 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply caret-indigo-400 bg-black/90 text-gray-300 grid place-content-center place-items-center overflow-x-hidden overflow-y-auto select-none;
+@layer base {
+  html, body, #root {
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scrollbar-gutter: stable;
+    overflow-y: scroll;
+  }
+
+  body {
+    @apply caret-indigo-400 text-zinc-200 flex flex-col justify-start items-stretch overflow-x-hidden select-none antialiased;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
 }
 
 .no-focus-outline:focus {
   outline: none !important;
   box-shadow: none !important;
-  border-color: 0 !important;
 }
 
-#feather {
-  @apply opacity-0;
-  transition: opacity 1s ease-in-out;
-}
 
-#feather.visible {
-  @apply opacity-100;
-}
 
 details summary::-webkit-details-marker {
   @apply hidden;
@@ -30,15 +37,31 @@ details summary {
 }
 
 ::selection {
-  @apply bg-gray-700/80;
+  @apply bg-sky-500/30 text-sky-200;
 }
 
 ::-webkit-scrollbar {
-  @apply w-0 bg-transparent;
+  @apply w-1.5 bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-zinc-800 rounded-full;
 }
 
 .normal-opacity {
   @apply !opacity-90 !text-white;
 }
 
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
 
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}

@@ -8,7 +8,6 @@ import { type Container, createRoot } from "react-dom/client";
 import type { LazyCmp } from "./utils/types";
 
 const root = document.getElementById("root") as Container,
-  PresentationPage: LazyCmp = lazy(() => import("./pages/Presentation")),
   ListPage: LazyCmp = lazy(() => import("./pages/List")),
   FilePage: LazyCmp = lazy(() => import("./pages/FileContent")),
   PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences")),
@@ -16,10 +15,6 @@ const root = document.getElementById("root") as Container,
   MyFilesPage: LazyCmp = lazy(() => import("./pages/MyFiles")),
   { myFontValue } = usePreferences(),
   router = createBrowserRouter([
-    {
-      path: PAGES.presentation,
-      element: <PresentationPage />,
-    },
     {
       path: PAGES.list,
       element: <ListPage />,

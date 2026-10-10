@@ -2,9 +2,8 @@ import ItemFile from "./ItemFile";
 import NoFiles from "./NoFiles";
 import NoMatches from "./NoMatches";
 import usePreferences from "../hooks/usePreferences";
-import { animated, useSpring } from "@react-spring/web";
 import { configStore } from "../store/configStore";
-import { len, normalize } from "../utils/helpers";
+import { len, normalize, themes } from "../utils/helpers";
 import { memo, useEffect, useMemo } from "react";
 import { shallow } from "zustand/shallow";
 import { searchStore } from "../store/searchStore";
@@ -13,6 +12,7 @@ import type { Component } from "../utils/types";
 
 const ListFiles = memo(({ arr }: Props): Component => {
   const { myPaper } = usePreferences(),
+    { isDay } = themes(),
     { search, resetSearch, order } = searchStore(
       state => ({
         search: state.search,
@@ -37,37 +37,46 @@ const ListFiles = memo(({ arr }: Props): Component => {
       return source
         .filter((_, index) => indexedSource[index].normalizedName.includes(normalizedSearch))
         .sort((a, b) => (order ? a.localeCompare(b) : b.localeCompare(a)));
-    }, [arr, normalizedSearch, order, paperFiles, paperIsOpen, paperSet]),
-    animation = {
-      from: { opacity: 0 },
-      to: { opacity: 1 },
-      config: { duration: 200 },
-    },
-    [styles, api] = useSpring(() => ({ opacity: 1 }));
+    }, [arr, normalizedSearch, order, paperFiles, paperIsOpen, paperSet]);
 
   useEffect(() => resetSearch(), [paperIsOpen]);
 
-  useEffect(() => {
-    api.start(animation);
-  }, [search, paperIsOpen]);
-
   function renderFiles(): Component {
-    if (len(files) == 0) {
+    if (len(files) === 0) {
       if (len(normalizedSearch) > 0) return <NoMatches />;
       return <NoFiles />;
     }
 
-    return files.map((n: string) => <ItemFile fileName={n} key={n} />);
+    return (
+      <>
+        {files.map((n: string) => (
+          <ItemFile fileName={n} key={n} />
+        ))}
+      </>
+    );
   }
 
-    return (
-      <animated.ol
-        style={styles}
-        className="grid w-full grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 items-stretch overflow-hidden pb-20"
+  return (
+    <div className="flex flex-col w-[680px] max-w-full">
+      {/* Cabecera DOCUMENTOS + Contador */}
+      <div
+        className={`flex items-center justify-between w-[680px] max-w-full pb-2.5 mb-1 border-b ${
+          isDay ? "border-neutral-200 text-neutral-400" : "border-zinc-800/80 text-zinc-500"
+        }`}
       >
+        <span className="font-mono text-[11px] tracking-widest uppercase">
+          {paperIsOpen ? "PAPELERA" : "DOCUMENTOS"}
+        </span>
+        <span className="font-mono text-[11px] tracking-widest">
+          {files.length}
+        </span>
+      </div>
+
+      <ul className="flex flex-col w-[680px] max-w-full pb-20">
         {renderFiles()}
-      </animated.ol>
-    );
+      </ul>
+    </div>
+  );
 });
 
 export default ListFiles;

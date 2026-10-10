@@ -63,21 +63,24 @@ function TinyEditor({
       spellCheck
       className="block h-full w-full flex-1 resize-none border border-transparent bg-transparent leading-relaxed transition-shadow focus:outline-none"
       style={{
-        minHeight: "100%",
-        height: "100%",
+        boxSizing: "border-box",
+        minHeight: "100vh",
         fontSize,
         textAlign: textAlign as CSSProperties["textAlign"],
         opacity: opacity / 10,
         letterSpacing: `${letterSpacing}px`,
-        backgroundColor: isDay ? "rgba(245, 245, 244, 0.82)" : "rgba(15, 15, 15, 0.92)",
+        backgroundColor: "transparent",
         color: isDay ? "#1f2937" : "#e5e7eb",
-        padding: "80px 140px",
+        paddingTop: "70px",
+        paddingBottom: "70px",
+        paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
+        paddingRight: "clamp(1.5rem, calc(50% - 374px), 50%)",
         width: "100%",
-        maxWidth: "1200px",
-        margin: "0 auto",
+        maxWidth: "100%",
+        margin: "0",
         fontFamily: '"SFMono-Regular", "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
         outline: "none",
-        borderColor: isDay ? "rgba(120, 113, 108, 0.14)" : "rgba(245, 245, 244, 0.08)",
+        border: "none",
         lineHeight: 1.9,
       }}
     />

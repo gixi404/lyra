@@ -1,7 +1,5 @@
-import { animated, useSpring } from "@react-spring/web";
 import { Edit2 as EditIcon, Archive as TrashIcon } from "lucide-react";
-import type { SyntheticEvent } from "react";
-import Dialog from "sweetalert2";
+import { type SyntheticEvent, useState } from "react";
 import { twMerge } from "tailwind-merge";
 import useFile from "../hooks/useFile";
 import usePreferences from "../hooks/usePreferences";
@@ -17,6 +15,7 @@ import {
 } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import { shallow } from "zustand/shallow";
+import Modal from "./Modal";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
@@ -27,103 +26,106 @@ function MenuFile({ fileName }: Props): Component {
     files: string[] = filesArr,
     { renameFile, resolveDisplayName } = useFile(),
     { setItem } = useStorage(),
+    { myPaper } = usePreferences(),
     { isDay } = themes(),
-    [styles] = useSpring(() => ({
-      from: { opacity: 0 },
-      to: { opacity: 1 },
-      config: { duration: 100 },
-    }));
+    [isEditOpen, setIsEditOpen] = useState(false),
+    [isTrashOpen, setIsTrashOpen] = useState(false);
 
-  function editFileName(e: SyntheticEvent): void {
-    e.stopPropagation();
-    const editableFileName: string = getEditableFileName(fileName);
+  function handleEditConfirm(value?: string): void {
+    if (!value) return notification("error", d.InvalidName);
+    if (!nameIsValid(value)) return;
 
-    Dialog.fire({
-      title: d.EnterNewName,
-      input: "text",
-      inputValue: editableFileName,
-      inputAttributes: { autocapitalize: "off" },
-      showCancelButton: true,
-      confirmButtonText: d.Change,
-      cancelButtonText: d.Cancel,
-      confirmButtonColor: "#1d74c5",
-      cancelButtonColor: "#565454",
-      background: isDay ? "#dedede" : "#202020",
-      color: isDay ? "#000" : "#fff",
-      customClass: { input: "no-focus-outline" },
-    }).then(res => {
-      if (res.isConfirmed) {
-        const conditions: boolean = !res.value || res.value == null;
-        if (conditions) {
-          return notification("error", d.InvalidName);
-        } else if (!nameIsValid(res.value)) return;
-        else {
-          const sanitizedName: string = sanitizeFileName(getEditableFileName(res.value));
-          const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
-          if (nextDisplayName !== fileName && files.includes(nextDisplayName)) {
-            return notification("error", d.NameAlreadyExists);
-          } else {
-            renameFile(fileName, sanitizedName)
-              .then(() => notification("success", d.EditedName))
-              .catch(() => notification("error", d.InvalidName));
-          }
-        }
-      }
-    });
+    const sanitizedName: string = sanitizeFileName(getEditableFileName(value));
+    const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
+
+    if (nextDisplayName !== fileName && files.includes(nextDisplayName)) {
+      notification("error", d.NameAlreadyExists);
+      return;
+    }
+
+    setIsEditOpen(false);
+    renameFile(fileName, sanitizedName)
+      .then(() => notification("success", d.EditedName))
+      .catch(() => notification("error", d.InvalidName));
   }
 
-  function moveToTrash(e: SyntheticEvent): void {
-    e.stopPropagation();
-    const { myPaper } = usePreferences();
-    Dialog.fire({
-      text: d.MoveToTrash,
-      icon: "question",
-      showCancelButton: true,
-      confirmButtonColor: "#1d74c5",
-      cancelButtonColor: "#565454",
-      confirmButtonText: d.Confirm,
-      cancelButtonText: d.Cancel,
-      background: isDay ? "#dedede" : "#202020",
-      color: isDay ? "#000" : "#fff",
-      customClass: { input: "no-focus-outline" },
-    }).then(res => {
-      if (res.isConfirmed) {
-        const currentPaper: string[] = myPaper(files);
-        const updatedPaper: string[] = currentPaper.includes(fileName)
-          ? currentPaper
-          : [fileName, ...currentPaper];
-        setItem("paper", JSON.stringify(updatedPaper));
-        notification("success", d.SentToTrash);
-        editedFile();
-      }
-    });
+  function handleTrashConfirm(): void {
+    const currentPaper: string[] = myPaper(files);
+    const updatedPaper: string[] = currentPaper.includes(fileName)
+      ? currentPaper
+      : [fileName, ...currentPaper];
+    setItem("paper", JSON.stringify(updatedPaper));
+    notification("success", d.SentToTrash);
+    setIsTrashOpen(false);
+    editedFile();
   }
 
   return (
-    <animated.div
-      style={styles}
-      className="absolute top-0 right-0 flex h-full items-center justify-center gap-x-3 rounded-r-[8px] bg-[#101010] px-3 duration-200">
-      <EditIcon
-        onClick={editFileName}
-        className={twMerge(
-          isDay
-            ? "hover:text-indigo-700 text-gray-600"
-            : "text-[#6cd3ff] hover:text-[#c3edff]",
-          "h-full w-8 py-3"
-        )}
-        size={19}
+    <>
+      {!(isEditOpen || isTrashOpen) && (
+        <div
+          className={twMerge(
+            "absolute right-1 top-1/2 -translate-y-1/2 items-center gap-x-1 p-1 rounded-xl shadow-md z-10 flex md:hidden md:group-hover:flex md:focus-within:flex",
+            isDay
+              ? "bg-white border border-neutral-200 text-neutral-600"
+              : "bg-zinc-800 border border-zinc-700 text-zinc-300"
+          )}
+        >
+          <button
+            type="button"
+            onClick={(e: SyntheticEvent) => {
+              e.stopPropagation();
+              setIsEditOpen(true);
+            }}
+            className={twMerge(
+              "p-1.5 rounded-lg transition-colors",
+              isDay
+                ? "hover:bg-neutral-100 hover:text-indigo-600"
+                : "hover:bg-zinc-700 hover:text-sky-400"
+            )}
+          >
+            <EditIcon size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={(e: SyntheticEvent) => {
+              e.stopPropagation();
+              setIsTrashOpen(true);
+            }}
+            className={twMerge(
+              "p-1.5 rounded-lg transition-colors",
+              isDay
+                ? "hover:bg-rose-50 hover:text-rose-600"
+                : "hover:bg-rose-500/20 hover:text-rose-400"
+            )}
+          >
+            <TrashIcon size={16} />
+          </button>
+        </div>
+      )}
+
+      <Modal
+        isOpen={isEditOpen}
+        onClose={() => setIsEditOpen(false)}
+        onConfirm={handleEditConfirm}
+        title={d.EnterNewName}
+        hasInput
+        initialValue={getEditableFileName(fileName)}
+        confirmText={d.Change}
+        cancelText={d.Cancel}
       />
-      <TrashIcon
-        onClick={moveToTrash}
-        className={twMerge(
-          isDay
-            ? "hover:text-red-700 text-gray-600"
-            : "text-[#6cd3ff] hover:text-[#c3edff]",
-          " h-full w-8 py-3"
-        )}
-        size={19}
+
+      <Modal
+        isOpen={isTrashOpen}
+        onClose={() => setIsTrashOpen(false)}
+        onConfirm={handleTrashConfirm}
+        title={d.MoveToTrash}
+        description={`"${fileName.replace(/\.(txt|md)$/i, "")}"`}
+        confirmText={d.Confirm}
+        cancelText={d.Cancel}
+        variant="danger"
       />
-    </animated.div>
+    </>
   );
 }
 

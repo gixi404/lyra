@@ -10,13 +10,14 @@ function NoFiles(): Component {
   const d = translations();
 
   return (
-    <p
+    <li
       className={twMerge(
-        isDay ? "text-black/70" : "text-gray-300/90",
-        "text-lg"
-      )}>
+        "w-full py-3.5 px-1 border-b text-left font-sans text-sm sm:text-[15px] select-none list-none",
+        isDay ? "border-neutral-200/80 text-neutral-500" : "border-zinc-800/60 text-zinc-500"
+      )}
+    >
       {paperIsOpen ? d.NothingHere : d.AddYourFirstAnnotation}
-    </p>
+    </li>
   );
 }
 

@@ -2,7 +2,8 @@ import toast from "react-hot-toast";
 import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
-import { createDir, exists, writeTextFile } from "@tauri-apps/api/fs";
+import { configStore } from "../store/configStore";
+import { exists, mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { flushSync } from "react-dom";
 import { join } from "@tauri-apps/api/path";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
@@ -16,7 +17,6 @@ import {
   WELCOME_EN,
   WELCOME_ES,
 } from "./consts";
-import type { Timer } from "./types";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
 const SUPPORTED_FILE_EXTENSIONS = [".txt", ".md"] as const;
@@ -35,11 +35,15 @@ function navigation(): Navigation {
 
 function notification(type: "success" | "error", msg: string): void {
   toast[type](msg, {
-    duration: 2000,
+    duration: 2200,
     style: {
-      backgroundColor: "#202020",
-      color: "#fff",
-      padding: "6px 20px",
+      backgroundColor: "#18181b",
+      color: "#f4f4f5",
+      border: "1px solid #27272a",
+      borderRadius: "12px",
+      fontSize: "13px",
+      padding: "8px 16px",
+      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
     },
   });
 }
@@ -125,17 +129,18 @@ function normalizeStoredFileNames(fileNames: string[], files: string[]): string[
 }
 
 function themes(): Themes {
+  configStore(state => state.themeTick);
   const { myTheme } = usePreferences(),
-    isDay: boolean = myTheme() == THEMES.Day,
-    isNigth: boolean = myTheme() == THEMES.clearNigth;
+    theme = myTheme();
+  let isDay: boolean = theme === THEMES.Day;
+  if (theme === "auto") {
+    isDay = !window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  const isNigth: boolean = !isDay;
   return { isDay, isNigth };
 }
 
 async function getSystemLang(): Promise<string> {
-  //* Arroja error al obtener el idioma del sistema.
-  // const lang: string = await invoke("get_system_lang");
-  // if (lang.startsWith("es-")) return LANGS.es;
-  // else return LANGS.en;
   return Promise.resolve(LANGS.es);
 }
 
@@ -151,8 +156,6 @@ async function verifySystemLang(): Promise<void> {
 }
 
 async function verifyMainFolder(): Promise<void> {
-  // const systemLang: string = await getSystemLang(),
-  // isSpanish: boolean = systemLang == LANGS.es,
   const isSpanish: boolean = true,
     welcome: string = isSpanish ? WELCOME_ES : WELCOME_EN,
     intro: string = isSpanish ? INTRO_ES : INTRO_EN;
@@ -161,7 +164,7 @@ async function verifyMainFolder(): Promise<void> {
     const mainFolderExists: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
     const path: string = await join(MAIN_FOLDER, welcome);
     if (!mainFolderExists) {
-      createDir(MAIN_FOLDER, BASE_DIRECTORY)
+      mkdir(MAIN_FOLDER, BASE_DIRECTORY)
         .then(() => writeTextFile(path, intro, BASE_DIRECTORY))
         .catch((e: unknown) => {
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -226,12 +229,6 @@ function stylesSelect(): any {
   };
 }
 
-function featherAnimation(): () => void {
-  const feather = document.getElementById("feather") as HTMLDivElement;
-  const timer: Timer = setTimeout(() => feather?.classList.add("visible"), 300);
-  return () => clearTimeout(timer);
-}
-
 function pathIs(path: string): boolean {
   const currentPath: string = window.location.pathname;
   return currentPath == path;
@@ -248,7 +245,6 @@ const len = (val: string | any[]): number => val.length;
 
 export {
   copyText,
-  featherAnimation,
   getDate,
   getEditableFileName,
   getSystemLang,
