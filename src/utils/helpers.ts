@@ -1,7 +1,6 @@
-import toast from "react-hot-toast";
+import { useToastStore } from "../store/toastStore";
 import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
-import useStorage from "../hooks/useStorage";
 import { configStore } from "../store/configStore";
 import { exists, mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { flushSync } from "react-dom";
@@ -9,12 +8,9 @@ import { join } from "@tauri-apps/api/path";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
   BASE_DIRECTORY,
-  INTRO_EN,
   INTRO_ES,
-  LANGS,
   MAIN_FOLDER,
   THEMES,
-  WELCOME_EN,
   WELCOME_ES,
 } from "./consts";
 
@@ -34,18 +30,7 @@ function navigation(): Navigation {
 }
 
 function notification(type: "success" | "error", msg: string): void {
-  toast[type](msg, {
-    duration: 2200,
-    style: {
-      backgroundColor: "#18181b",
-      color: "#f4f4f5",
-      border: "1px solid #27272a",
-      borderRadius: "12px",
-      fontSize: "13px",
-      padding: "8px 16px",
-      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-    },
-  });
+  useToastStore.getState().addToast(type, msg);
 }
 
 function nameIsValid(name: string): boolean {
@@ -140,25 +125,9 @@ function themes(): Themes {
   return { isDay, isNigth };
 }
 
-async function getSystemLang(): Promise<string> {
-  return Promise.resolve(LANGS.es);
-}
-
-async function verifySystemLang(): Promise<void> {
-  const { setItem } = useStorage();
-  const { myLangValue } = usePreferences();
-  if (myLangValue("nothing") == "nothing") {
-    let lang: string = await getSystemLang();
-    lang = lang == LANGS.es ? LANGS.es : LANGS.en;
-    setItem("language", lang);
-    reload();
-  }
-}
-
 async function verifyMainFolder(): Promise<void> {
-  const isSpanish: boolean = true,
-    welcome: string = isSpanish ? WELCOME_ES : WELCOME_EN,
-    intro: string = isSpanish ? INTRO_ES : INTRO_EN;
+  const welcome: string = WELCOME_ES,
+    intro: string = INTRO_ES;
 
   while (true) {
     const mainFolderExists: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
@@ -193,42 +162,6 @@ function getDate(): string {
   return formattedDate;
 }
 
-function stylesSelect(): any {
-  const { isDay } = themes();
-  return {
-    placeholder: (styles: any) => ({
-      ...styles,
-      color: isDay ? "#000" : "#d8d8d8",
-    }),
-    singleValue: (styles: any) => ({
-      ...styles,
-      color: isDay ? "#000" : "#d8d8d8",
-    }),
-    control: (styles: any) => ({
-      ...styles,
-      backgroundColor: isDay ? "#ffffff" : "#2b2b2b",
-      border: isDay ? "1px solid #9ca3af" : "1px solid #c0c0c0",
-      color: isDay ? "#111827" : "#d8d8d8",
-      boxShadow: isDay ? "0 1px 2px 0 rgba(0, 0, 0, 0.05)" : "0",
-      width: "160px",
-    }),
-    option: (styles: any) => ({
-      ...styles,
-      ":active": { backgroundColor: isDay ? "#e5e7eb" : "#2b2b2b" },
-      ":hover": { backgroundColor: isDay ? "#f3f4f6" : "#3e3e3e" },
-      backgroundColor: isDay ? "#ffffff" : "#2b2b2b",
-      border: 0,
-      color: isDay ? "#111827" : "#e7e7e7",
-    }),
-    menu: (styles: any) => ({
-      ...styles,
-      backgroundColor: isDay ? "#ffffff" : "#2b2b2b",
-      marginTop: 2,
-      boxShadow: isDay ? "0 4px 6px -1px rgba(0, 0, 0, 0.1)" : "none",
-    }),
-  };
-}
-
 function pathIs(path: string): boolean {
   const currentPath: string = window.location.pathname;
   return currentPath == path;
@@ -247,7 +180,6 @@ export {
   copyText,
   getDate,
   getEditableFileName,
-  getSystemLang,
   len,
   nameIsValid,
   navigation,
@@ -262,10 +194,8 @@ export {
   getLegacyFileName,
   hasSupportedFileExtension,
   sanitizeFileName,
-  stylesSelect,
   themes,
   verifyMainFolder,
-  verifySystemLang,
 };
 
 interface Themes {

@@ -1,245 +1,230 @@
-import { animated, useSpring } from "@react-spring/web";
+import { invoke } from "@tauri-apps/api/core";
+import { documentDir, join } from "@tauri-apps/api/path";
 import {
   AlignLeft as AlignIcon,
-  Calendar as CalendarIcon,
-  Quote as CountIcon,
+  ChevronDown,
   CaseSensitive as FontIcon,
-  Languages as LanguageIcon,
-  Lightbulb as OpacityIcon,
-  Space as SpacingIcon,
+  Folder as FolderIcon,
+  Focus as FocusIcon,
 } from "lucide-react";
 import { useState } from "react";
-import Select from "react-select";
 import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
-import { LANGS } from "../utils/consts";
+import { MAIN_FOLDER } from "../utils/consts";
 import translations from "../utils/dictionary";
-import { reload, stylesSelect, themes } from "../utils/helpers";
+import { themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
 const d = translations(),
   fontsOptions: Options[] = [
-    { value: "font-duo", label: "Monospace" },
-    { value: "font-sara", label: "Sarabun" },
-    { value: "font-cursive", label: "Cursive" },
-    { value: "font-revert", label: "Revert" },
-    { value: "font-serif", label: "Sans serif" },
-  ] as const,
-  langsOptions: Options[] = [
-    { value: LANGS.en, label: "English" },
-    { value: LANGS.es, label: "Español" },
+    { value: "font-duo", label: "iA Writer Duo" },
+    { value: "font-inter", label: "Inter" },
+    { value: "font-fira", label: "Fira Code" },
+    { value: "font-jetbrains", label: "JetBrains Mono" },
+    { value: "font-roboto", label: "Roboto" },
+    { value: "font-lora", label: "Lora" },
+    { value: "font-merriweather", label: "Merriweather" },
+    { value: "font-opensans", label: "Open Sans" },
+    { value: "font-poppins", label: "Poppins" },
+    { value: "font-montserrat", label: "Montserrat" },
+    { value: "font-sourcecode", label: "Source Code Pro" },
+    { value: "font-spacemono", label: "Space Mono" },
+    { value: "font-playfair", label: "Playfair Display" },
+    { value: "font-nunito", label: "Nunito" },
+    { value: "font-cinzel", label: "Cinzel" },
   ] as const,
   alignsOptions: Options[] = [
     { value: "start", label: d.Left },
     { value: "center", label: d.Centered },
     { value: "end", label: d.Right },
+  ] as const,
+  shortcutsList = [
+    { keys: "Ctrl + Z", label: "Deshacer cambio" },
+    { keys: "Ctrl + Y", label: "Rehacer cambio" },
+    { keys: "Ctrl + F", label: "Buscar y reemplazar" },
+    { keys: "Ctrl + +", label: "Aumentar tamaño de letra" },
+    { keys: "Ctrl + -", label: "Reducir tamaño de letra" },
+    { keys: "F11", label: "Pantalla completa" },
   ] as const;
 
 function Preferences(): Component {
   const { isDay } = themes(),
     {
-      myLastModified,
-      myLangLabel,
-      myFontLabel,
+      myFontValue,
       myAlign,
-      myWordCount,
-      mySpacing,
-      myOpacity,
+      myParagraphFocus,
     } = usePreferences(),
     { setItem } = useStorage(),
-    [opacity, setOpacity] = useState<number>(myOpacity()),
-    [spacing, setSpacing] = useState<number>(mySpacing()),
-    [styles] = useSpring(() => ({
-      from: { opacity: 0 },
-      to: { opacity: 1 },
-      config: { duration: 200 },
-    }));
-
-  function getAlignLabel(): string {
-    switch (myAlign()) {
-      case "start":
-        return d.Left;
-      case "center":
-        return d.Centered;
-      case "end":
-        return d.Right;
-      default:
-        return d.Left;
-    }
-  }
-
-  function changeLanguage(value: string): void {
-    setItem("language", value);
-    reload();
-  }
+    [paragraphFocus, setParagraphFocus] = useState<boolean>(myParagraphFocus());
 
   function changeFont(value: string): void {
     setItem("font", value);
-    reload();
-  }
-
-  function changeWordCount(): void {
-    setItem("word-count", String(!myWordCount()));
-    reload();
-  }
-
-  function changeOpacity(val: number): void {
-    setOpacity(val);
-    setItem("opacity", String(val));
-  }
-
-  function changeSpacing(val: number): void {
-    setSpacing(val);
-    setItem("spacing", String(val));
-  }
-
-  function changeLastModified(): void {
-    setItem("last-modified", String(!myLastModified()));
-    reload();
   }
 
   function changeAlign(val: string): void {
     setItem("align-text", val);
   }
 
+  function toggleParagraphFocus(): void {
+    const nextVal = !paragraphFocus;
+    setParagraphFocus(nextVal);
+    setItem("paragraph-focus", JSON.stringify(nextVal));
+  }
+
+  async function openFolder(): Promise<void> {
+    try {
+      const docPath: string = await documentDir();
+      const path: string = await join(docPath, MAIN_FOLDER);
+      await invoke("open_folder", { path });
+    } catch (err: any) {
+      console.error(`catch 'openFolder' ${err?.message || err}`);
+    }
+  }
+
   return (
     <MainContainer>
       <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
-        <animated.div
-          style={styles}
-          className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20"
-        >
-        <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
-              <LanguageIcon size={24} className="sm:w-[30px] sm:h-[30px]" />
-              <p className="text-sm sm:text-md">{d.Language}</p>
+        <div className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20">
+          <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
+            {/* Mis archivos */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <FolderIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
+                <p className="text-sm sm:text-md">Mis archivos</p>
+              </div>
+              <button
+                type="button"
+                onClick={openFolder}
+                className={twMerge(
+                  "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                  isDay
+                    ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
+                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm"
+                )}
+              >
+                <FolderIcon size={16} />
+                <span>Abrir</span>
+              </button>
             </div>
-            <Select
-              className="sm:text-lg text-sm"
-              isSearchable={false}
-              options={langsOptions}
-              placeholder={myLangLabel()}
-              onChange={(e: any) => changeLanguage(e.value)}
-              styles={stylesSelect()}
-            />
-          </div>
 
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
-              <FontIcon size={30} className="sm:w-[38px] sm:h-[38px]" />
-              <p className="text-sm sm:text-md">{d.Font}</p>
+            {/* Fuente */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <FontIcon size={30} className="sm:w-[38px] sm:h-[38px]" />
+                <p className="text-sm sm:text-md">{d.Font}</p>
+              </div>
+              <div className="relative">
+                <select
+                  value={myFontValue()}
+                  onChange={e => changeFont(e.target.value)}
+                  className={twMerge(
+                    "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 pr-8 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
+                    isDay
+                      ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
+                      : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                  )}
+                >
+                  {fontsOptions.map(opt => (
+                    <option
+                      key={opt.value}
+                      value={opt.value}
+                      className={isDay ? "bg-white text-gray-900" : "bg-[#222222] text-zinc-100"}
+                    >
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
+              </div>
             </div>
-            <Select
-              className="sm:text-lg text-sm"
-              isSearchable={false}
-              options={fontsOptions}
-              placeholder={myFontLabel()}
-              onChange={(e: any) => changeFont(e.value)}
-              styles={stylesSelect()}
-            />
-          </div>
 
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-5">
-              <CountIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
-              <p className="text-sm sm:text-md">{d.WordCount}</p>
+            {/* Alineación */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <AlignIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
+                <p className="text-sm sm:text-md">{d.Aligment}</p>
+              </div>
+              <div className="relative">
+                <select
+                  value={myAlign()}
+                  onChange={e => changeAlign(e.target.value)}
+                  className={twMerge(
+                    "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 pr-8 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
+                    isDay
+                      ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
+                      : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                  )}
+                >
+                  {alignsOptions.map(opt => (
+                    <option
+                      key={opt.value}
+                      value={opt.value}
+                      className={isDay ? "bg-white text-gray-900" : "bg-[#222222] text-zinc-100"}
+                    >
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
+              </div>
             </div>
-            <button
-              onClick={changeWordCount}
-              className={twMerge(
-                isDay
-                  ? "bg-white text-gray-900 border-gray-400 shadow-sm hover:bg-gray-50"
-                  : "bg-[#2b2b2b] text-[#d8d8d8] border-[#c0c0c0]",
-                "cursor-pointer w-[140px] md:w-[160px] justify-center items-center flex rounded-md border sm:text-lg text-sm h-10 transition-colors"
-              )}
-            >
-              {myWordCount() ? d.Enabled : d.Disabled}
-            </button>
-          </div>
 
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-5">
-              <CalendarIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
-              <p className="text-sm sm:text-md">{d.LastModified}</p>
+            {/* Enfoque en párrafo */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <FocusIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
+                <p className="text-sm sm:text-md">{d.ParagraphFocus ?? "Enfoque en párrafo"}</p>
+              </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={toggleParagraphFocus}
+                  className={twMerge(
+                    "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                    isDay
+                      ? paragraphFocus
+                        ? "bg-indigo-50 text-indigo-600 border-indigo-300 font-semibold"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                      : paragraphFocus
+                        ? "bg-sky-500/20 text-sky-300 border-sky-400/50 font-semibold"
+                        : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                  )}
+                >
+                  {paragraphFocus ? (d.Enabled ?? "Activado") : (d.Disabled ?? "Desactivado")}
+                </button>
+              </div>
             </div>
-            <button
-              onClick={changeLastModified}
-              className={twMerge(
-                isDay
-                  ? "bg-white text-gray-900 border-gray-400 shadow-sm hover:bg-gray-50"
-                  : "bg-[#2b2b2b] text-[#d8d8d8] border-[#c0c0c0]",
-                "cursor-pointer w-[140px] sm:w-[160px] justify-center items-center flex rounded-md sm:text-lg text-sm h-10 border transition-colors"
-              )}
-            >
-              {myLastModified() ? d.Enabled : d.Disabled}
-            </button>
-          </div>
 
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
-              <OpacityIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
-              <p className="text-sm sm:text-md">{d.TextOpacity}</p>
-            </div>
+            {/* Atajos de teclado */}
             <div
               className={twMerge(
-                isDay ? "border-gray-400 bg-white shadow-sm" : "border-[#c0c0c0] bg-[#2b2b2b]",
-                "flex flex-col justify-center py-0.5 items-center border w-[140px] sm:w-[160px] rounded-md h-10 "
+                "w-full flex flex-col gap-y-2.5 pt-4 border-t",
+                isDay ? "border-neutral-300" : "border-zinc-800"
               )}
             >
-              <input
-                type="range"
-                min={1}
-                max={10}
-                defaultValue={opacity ? (opacity * 10) / 10 : 10}
-                onChange={e => changeOpacity(Number(e.target.value))}
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
-              <AlignIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
-              <p className="text-sm sm:text-md">{d.Aligment}</p>
-            </div>
-            <Select
-              className="sm:text-lg text-sm"
-              isSearchable={false}
-              options={alignsOptions}
-              placeholder={getAlignLabel()}
-              onChange={e => changeAlign(e?.value ?? "start")}
-              styles={stylesSelect()}
-            />
-          </div>
-
-          <div className="flex justify-between items-center w-full gap-x-2">
-            <div className="flex justify-center items-center gap-x-2 sm:gap-x-4">
-              <SpacingIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
-              <p className="text-sm sm:text-md">{d.LetterSpacing}</p>
-            </div>
-            <div
-              className={twMerge(
-                isDay ? "border-gray-400 bg-white shadow-sm" : "border-[#c0c0c0] bg-[#2b2b2b]",
-                "flex flex-col justify-center py-0.5 items-center border w-[140px] sm:w-[160px] rounded-md h-10"
-              )}
-            >
-              <input
-                type="number"
-                value={spacing}
-                className="w-full h-full outline-0 border-0 text-center bg-transparent"
-                min={0}
-                max={10}
-                onChange={e => changeSpacing(Number(e.target.value))}
-              />
+              {shortcutsList.map(sc => (
+                <div key={sc.keys} className="flex items-center justify-between text-xs sm:text-sm">
+                  <span className={isDay ? "text-neutral-700" : "text-neutral-300"}>{sc.label}</span>
+                  <kbd
+                    className={twMerge(
+                      "px-2 py-1 rounded font-mono text-xs font-semibold shadow-xs border",
+                      isDay
+                        ? "bg-white text-neutral-800 border-neutral-300"
+                        : "bg-zinc-800 text-zinc-200 border-zinc-700"
+                    )}
+                  >
+                    {sc.keys}
+                  </kbd>
+                </div>
+              ))}
             </div>
           </div>
         </div>
-      </animated.div>
-    </div>
-  </MainContainer>
-);
+      </div>
+    </MainContainer>
+  );
 }
 
 export default Preferences;

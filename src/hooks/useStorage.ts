@@ -1,20 +1,18 @@
-function useStorage(): Storage {
-  function getItem(key: string, defaultValue: string): string {
+const storageInstance: Storage = {
+  getItem: (key: string, defaultValue: string): string => {
     const item: string = window.localStorage.getItem(key) ?? defaultValue;
     return item;
-  }
+  },
+  setItem: (key: string, value: any): void => {
+    window.localStorage.setItem(key, value);
+  },
+  removeItem: (key: string): void => {
+    window.localStorage.removeItem(key);
+  },
+};
 
-  function setItem(key: string, value: any): void {
-    const item: void = window.localStorage.setItem(key, value);
-    return item;
-  }
-
-  function removeItem(key: string): void {
-    const item: void = window.localStorage.removeItem(key);
-    return item;
-  }
-
-  return { getItem, setItem, removeItem };
+function useStorage(): Storage {
+  return storageInstance;
 }
 
 export default useStorage;

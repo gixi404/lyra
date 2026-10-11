@@ -1,6 +1,6 @@
 import useStorage from "./useStorage";
 import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
-import { LANGS, TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
+import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 
 function usePreferences(): Preferences {
   const { getItem, setItem } = useStorage();
@@ -11,35 +11,25 @@ function usePreferences(): Preferences {
     return readBoolean("last-modified", "true");
   }
 
-  function myLangLabel(): string {
-    return myLangValue() == LANGS.en ? "English" : "Español";
-  }
-
-  function myLangValue(defaultValue?: string): string {
-    if (defaultValue === "nothing") return getItem("language", defaultValue);
-    return getItem("language", LANGS.en);
-  }
-
   function myFontLabel(): string {
-    switch (myFontValue()) {
-      case "font-duo":
-        return "Monospace";
-
-      case "font-sara":
-        return "Sarabun";
-
-      case "font-cursive":
-        return "Cursive";
-
-      case "font-revert":
-        return "Revert";
-
-      case "font-serif":
-        return "Sans serif";
-
-      default:
-        return "Monospace";
-    }
+    const map: Record<string, string> = {
+      "font-duo": "iA Writer Duo",
+      "font-inter": "Inter",
+      "font-fira": "Fira Code",
+      "font-jetbrains": "JetBrains Mono",
+      "font-roboto": "Roboto",
+      "font-lora": "Lora",
+      "font-merriweather": "Merriweather",
+      "font-opensans": "Open Sans",
+      "font-poppins": "Poppins",
+      "font-montserrat": "Montserrat",
+      "font-sourcecode": "Source Code Pro",
+      "font-spacemono": "Space Mono",
+      "font-playfair": "Playfair Display",
+      "font-nunito": "Nunito",
+      "font-cinzel": "Cinzel",
+    };
+    return map[myFontValue()] || "iA Writer Duo";
   }
 
   function myFontValue(): string {
@@ -58,10 +48,6 @@ function usePreferences(): Preferences {
     return Number(getItem("spacing", "0"));
   }
 
-  function myOpacity(): number {
-    return Number(getItem("opacity", "10"));
-  }
-
   function myFontSize(): string {
     return getItem("font-size", TEXT_SIZES.lg);
   }
@@ -75,6 +61,10 @@ function usePreferences(): Preferences {
       return defaultTheme;
     }
     return savedTheme;
+  }
+
+  function myParagraphFocus(): boolean {
+    return readBoolean("paragraph-focus", "false");
   }
 
   function myPaper(files: string[] = []): string[] {
@@ -94,16 +84,14 @@ function usePreferences(): Preferences {
 
   return {
     myLastModified,
-    myLangLabel,
-    myLangValue,
     myFontLabel,
     myFontValue,
     myAlign,
     myWordCount,
     mySpacing,
-    myOpacity,
     myFontSize,
     myTheme,
+    myParagraphFocus,
     myPaper,
     myScroll,
   };
@@ -113,16 +101,14 @@ export default usePreferences;
 
 interface Preferences {
   myLastModified: () => boolean;
-  myLangLabel: () => string;
-  myLangValue: (defaultValue?: string) => string;
   myFontLabel: () => string;
   myFontValue: () => string;
   myAlign: () => string;
   myWordCount: () => boolean;
   mySpacing: () => number;
-  myOpacity: () => number;
   myFontSize: () => string;
   myTheme: () => string;
+  myParagraphFocus: () => boolean;
   myPaper: (files?: string[]) => string[];
   myScroll: (fileName: string) => number;
 }

@@ -2,19 +2,68 @@
 use std::process::Command;
 use tauri::Manager;
 
+fn is_path_allowed(target: &std::path::Path, allowed_base: &std::path::Path) -> bool {
+    if let (Ok(canonical_target), Ok(canonical_base)) = (
+        target.canonicalize(),
+        allowed_base.canonicalize(),
+    ) {
+        canonical_target.starts_with(canonical_base) && canonical_target.is_dir()
+    } else {
+        false
+    }
+}
+
 #[tauri::command]
-fn open_folder(path: String) -> Result<(), String> {
+fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let path_buf = std::path::PathBuf::from(&path);
+    if !path_buf.exists() || !path_buf.is_dir() {
+        return Err("Path does not exist or is not a directory".to_string());
+    }
+
+    let documents_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("Could not resolve documents directory: {e}"))?;
+    let allowed_lyra = documents_dir.join("lyra");
+    let allowed_downloads = app.path().download_dir().ok();
+
+    let is_allowed = is_path_allowed(&path_buf, &allowed_lyra)
+        || allowed_downloads
+            .as_ref()
+            .map(|d| is_path_allowed(&path_buf, d))
+            .unwrap_or(false);
+
+    if !is_allowed {
+        return Err("Access denied: path is outside authorized folders".to_string());
+    }
+
+    let canonical_path = path_buf
+        .canonicalize()
+        .map_err(|e| format!("Could not canonicalize path: {e}"))?;
+
     match std::env::consts::OS {
         "windows" => {
             Command::new("explorer")
-                .arg(path)
+                .arg(&canonical_path)
                 .spawn()
                 .map_err(|e: std::io::Error| e.to_string())?;
             Ok(())
         }
+        "macos" => {
+            let status = Command::new("open")
+                .arg(&canonical_path)
+                .status()
+                .map_err(|e: std::io::Error| e.to_string())?;
+
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("Failed to open folder on macOS (exit status: {status})"))
+            }
+        }
         "linux" => {
             let xdg_status = Command::new("xdg-open")
-                .arg(&path)
+                .arg(&canonical_path)
                 .status()
                 .map_err(|e: std::io::Error| e.to_string())?;
 
@@ -24,7 +73,7 @@ fn open_folder(path: String) -> Result<(), String> {
 
             Command::new("gio")
                 .arg("open")
-                .arg(path)
+                .arg(&canonical_path)
                 .status()
                 .map_err(|e: std::io::Error| e.to_string())
                 .and_then(|status| {
@@ -38,6 +87,92 @@ fn open_folder(path: String) -> Result<(), String> {
                 })
         }
         os => Err(format!("Unsupported OS for open_folder: {os}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_is_path_allowed_valid_subdir() {
+        let temp_base = std::env::temp_dir().join("lyra_test_base");
+        let temp_sub = temp_base.join("notes");
+        let _ = fs::create_dir_all(&temp_sub);
+
+        assert!(is_path_allowed(&temp_base, &temp_base));
+        assert!(is_path_allowed(&temp_sub, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+    }
+
+    #[test]
+    fn test_is_path_allowed_outside() {
+        let temp_base = std::env::temp_dir().join("lyra_test_base2");
+        let temp_outside = std::env::temp_dir().join("lyra_test_outside");
+        let _ = fs::create_dir_all(&temp_base);
+        let _ = fs::create_dir_all(&temp_outside);
+
+        assert!(!is_path_allowed(&temp_outside, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+        let _ = fs::remove_dir_all(&temp_outside);
+    }
+
+    #[test]
+    fn test_is_path_allowed_path_traversal() {
+        let temp_base = std::env::temp_dir().join("lyra_test_traversal");
+        let temp_sub = temp_base.join("notes");
+        let _ = fs::create_dir_all(&temp_sub);
+
+        let escape_path = temp_sub.join("../../..");
+        assert!(!is_path_allowed(&escape_path, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+    }
+
+    #[test]
+    fn test_is_path_allowed_prefix_trick() {
+        let temp_base = std::env::temp_dir().join("lyra_test_pref");
+        let temp_evil = std::env::temp_dir().join("lyra_test_pref_evil");
+        let _ = fs::create_dir_all(&temp_base);
+        let _ = fs::create_dir_all(&temp_evil);
+
+        assert!(!is_path_allowed(&temp_evil, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+        let _ = fs::remove_dir_all(&temp_evil);
+    }
+
+    #[test]
+    fn test_is_path_allowed_file_rejected() {
+        let temp_base = std::env::temp_dir().join("lyra_test_file");
+        let temp_file = temp_base.join("note.txt");
+        let _ = fs::create_dir_all(&temp_base);
+        let _ = fs::write(&temp_file, "content");
+
+        assert!(!is_path_allowed(&temp_file, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_path_allowed_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let temp_base = std::env::temp_dir().join("lyra_test_sym");
+        let temp_outside = std::env::temp_dir().join("lyra_test_sym_out");
+        let _ = fs::create_dir_all(&temp_base);
+        let _ = fs::create_dir_all(&temp_outside);
+
+        let symlink_path = temp_base.join("link_to_outside");
+        let _ = symlink(&temp_outside, &symlink_path);
+
+        assert!(!is_path_allowed(&symlink_path, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+        let _ = fs::remove_dir_all(&temp_outside);
     }
 }
 

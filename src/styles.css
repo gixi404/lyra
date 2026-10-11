@@ -26,8 +26,6 @@
   box-shadow: none !important;
 }
 
-
-
 details summary::-webkit-details-marker {
   @apply hidden;
 }
@@ -41,11 +39,27 @@ details summary {
 }
 
 ::-webkit-scrollbar {
-  @apply w-1.5 bg-transparent;
+  width: 8px;
+  height: 8px;
+  background-color: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-zinc-800 rounded-full;
+  background-color: rgba(156, 163, 175, 0.5);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(107, 114, 128, 0.8);
+}
+
+.auto-hide-ui {
+  transition: opacity 300ms ease-in-out !important;
+}
+
+body.is-typing .auto-hide-ui {
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .normal-opacity {
@@ -64,4 +78,31 @@ details summary {
 
 ::view-transition-new(root) {
   z-index: 9999;
+}
+
+@media print {
+  .no-print, header, button, .search-replace-modal {
+    display: none !important;
+  }
+  body > *:not(#lyra-export-print-container) {
+    display: none !important;
+  }
+  #lyra-export-print-container {
+    display: block !important;
+  }
+  html, body, #root, main {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    opacity: 1 !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  textarea {
+    color: #000000 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
 }

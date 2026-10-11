@@ -1,5 +1,19 @@
 import "@fontsource/ia-writer-duo";
-import "@fontsource/sarabun";
+import "@fontsource/inter";
+import "@fontsource/fira-code";
+import "@fontsource/jetbrains-mono";
+import "@fontsource/roboto";
+import "@fontsource/lora";
+import "@fontsource/merriweather";
+import "@fontsource/open-sans";
+import "@fontsource/poppins";
+import "@fontsource/montserrat";
+import "@fontsource/source-code-pro";
+import "@fontsource/space-mono";
+import "@fontsource/playfair-display";
+import "@fontsource/nunito";
+import "@fontsource/cinzel";
+import { animated, useSpring } from "@react-spring/web";
 import { X } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
 import { twJoin, twMerge } from "tailwind-merge";
@@ -22,12 +36,18 @@ function MainContainer({ children }: PropsWithChildren): Component {
   const { myFontValue } = usePreferences(),
     { isDay } = themes(),
     [isFullscreen, setIsFullscreen] = useState<boolean>(false),
-    [showExitBtn, setShowExitBtn] = useState<boolean>(false);
+    [showExitBtn, setShowExitBtn] = useState<boolean>(false),
+    [pageStyles] = useSpring(() => ({
+      from: { opacity: 0 },
+      to: { opacity: 1 },
+      config: { duration: 200 },
+    }));
 
   useEffect(() => {
     const bg = isDay ? "#e0e0e0" : "#101010";
     (window as any).document.documentElement.style.backgroundColor = bg;
     (window as any).document.body.style.backgroundColor = bg;
+    (window as any).document.documentElement.classList.toggle("dark", !isDay);
   }, [isDay]);
 
   const toggleFullscreen = async (): Promise<void> => {
@@ -64,8 +84,10 @@ function MainContainer({ children }: PropsWithChildren): Component {
   };
 
   useEffect(() => {
+    let isMounted = true;
     const syncFullscreenState = async (): Promise<void> => {
       const full = await checkIsFullscreen();
+      if (!isMounted) return;
       setIsFullscreen(full);
       if (!full) setShowExitBtn(false);
     };
@@ -77,11 +99,15 @@ function MainContainer({ children }: PropsWithChildren): Component {
     };
 
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("resize", handleResize);
+    };
   }, []);
 
   useEffect(() => {
     const preventContextMenu = (e: Event): void => {
+      if (import.meta.env.DEV) return;
       if (e.target instanceof HTMLTextAreaElement) return;
       e.preventDefault();
     };
@@ -120,6 +146,17 @@ function MainContainer({ children }: PropsWithChildren): Component {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, [isFullscreen]);
 
+  useEffect(() => {
+    const handleGlobalMouseMove = (): void => {
+      if (document.body.classList.contains("is-typing")) {
+        document.body.classList.remove("is-typing");
+      }
+    };
+
+    window.addEventListener("mousemove", handleGlobalMouseMove);
+    return () => window.removeEventListener("mousemove", handleGlobalMouseMove);
+  }, []);
+
   return (
     <main
       className={twMerge(
@@ -136,7 +173,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
       {/* Botón flotante para salir de Pantalla Completa al mover cursor arriba */}
       <div
         className={twMerge(
-          "fixed top-3 left-1/2 -translate-x-1/2 z-[99999] transition-all duration-200 ease-out flex items-center justify-center",
+          "auto-hide-ui no-print fixed top-3 left-1/2 -translate-x-1/2 z-[99999] transition-all duration-200 ease-out flex items-center justify-center",
           showExitBtn
             ? "opacity-100 translate-y-0 pointer-events-auto"
             : "opacity-0 -translate-y-4 pointer-events-none"
@@ -158,7 +195,9 @@ function MainContainer({ children }: PropsWithChildren): Component {
       </div>
 
       <Header />
-      {children}
+      <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start">
+        {children}
+      </animated.div>
     </main>
   );
 }

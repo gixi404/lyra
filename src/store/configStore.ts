@@ -1,15 +1,25 @@
 import { create } from "zustand";
-import type { ZustandStore } from "../utils/types";
 
-export const configStore: ZustandStore = create((set: any) => ({
+export interface ConfigState {
+  paperIsOpen: boolean;
+  setPaperIsOpen: () => void;
+  spellCheck: boolean;
+  setSpellCheck: (newState: boolean) => void;
+  showHeader: boolean;
+  setShowHeader: (newState: boolean) => void;
+  themeTick: number;
+  toggleThemeTick: () => void;
+}
+
+export const configStore = create<ConfigState>(set => ({
   paperIsOpen: false,
   setPaperIsOpen: () =>
-    set((state: any) => ({ paperIsOpen: !state.paperIsOpen })),
+    set(state => ({ paperIsOpen: !state.paperIsOpen })),
   spellCheck: false,
   setSpellCheck: (newState: boolean) => set(() => ({ spellCheck: newState })),
   showHeader: true,
   setShowHeader: (newState: boolean) => set(() => ({ showHeader: newState })),
   themeTick: 0,
   toggleThemeTick: () =>
-    set((state: any) => ({ themeTick: state.themeTick + 1 })),
+    set(state => ({ themeTick: state.themeTick + 1 })),
 }));

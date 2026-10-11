@@ -92,48 +92,62 @@ function DefaultHeader(): Component {
 
   return (
     <>
-      {pathIs(PAGES.file) && (
-        <div className="fixed top-4 left-4 sm:left-6 z-50">
+      <div className="auto-hide-ui no-print fixed top-4 left-4 sm:left-6 z-50 flex items-center gap-x-2">
+        {pathIs(PAGES.list) && (
+          <div className="flex items-center gap-x-2.5 select-none opacity-90">
+            <img src="/logo.png" alt="Lyra" className="w-[26px] h-[26px] object-contain" />
+            <span className={`text-base font-bold tracking-tight ${isDay ? "text-neutral-800" : "text-neutral-100"}`}>
+              Lyra
+            </span>
+          </div>
+        )}
+
+        {pathIs(PAGES.file) && (
           <button
             onClick={() => goTo(PAGES.list)}
-            className={`p-2 rounded-xl transition-colors shadow-sm border ${
+            className={`p-2 rounded-xl transition-colors shadow-sm border cursor-pointer ${
               isDay
                 ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
                 : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
             }`}
             aria-label="Volver a la lista"
+            title="Volver a la lista"
           >
             <ArrowLeftIcon size={18} />
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className="fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2">
-        <button
-          type="button"
-          onClick={cycleTheme}
-          className={`p-2 rounded-xl transition-colors shadow-sm border ${
-            isDay
-              ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-              : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-          }`}
-          aria-label="Cambiar tema"
-        >
-          {isDay ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
+      <div className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2">
+        {(pathIs(PAGES.list) || pathIs(PAGES.preferences)) && (
+          <>
+            <button
+              type="button"
+              onClick={cycleTheme}
+              className={`p-2 rounded-xl transition-colors shadow-sm border cursor-pointer ${
+                isDay
+                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              }`}
+              aria-label="Cambiar tema"
+            >
+              {isDay ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
 
-        <button
-          type="button"
-          onClick={handleSettingsClick}
-          className={`p-2 rounded-xl transition-colors shadow-sm border ${
-            isDay
-              ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-              : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-          }`}
-          aria-label={pathIs(PAGES.preferences) ? "Volver a la lista" : "Configuración"}
-        >
-          {pathIs(PAGES.preferences) ? <ArrowLeftIcon size={18} /> : <Settings size={18} />}
-        </button>
+            <button
+              type="button"
+              onClick={handleSettingsClick}
+              className={`p-2 rounded-xl transition-colors shadow-sm border cursor-pointer ${
+                isDay
+                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              }`}
+              aria-label={pathIs(PAGES.preferences) ? "Volver a la lista" : "Configuración"}
+            >
+              {pathIs(PAGES.preferences) ? <ArrowLeftIcon size={18} /> : <Settings size={18} />}
+            </button>
+          </>
+        )}
       </div>
     </>
   );

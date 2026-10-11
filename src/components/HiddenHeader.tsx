@@ -24,26 +24,28 @@ function HiddenHeader(): Component {
       >
         <button
           onClick={() => setShowHeader(true)}
-          className="p-1.5 rounded-full hover:hover:bg-white/10 transition-colors"
+          className={`p-1.5 rounded-xl transition-colors shadow-xs border cursor-pointer ${
+            isDay
+              ? "bg-white/80 border-neutral-300/80 text-neutral-600 hover:text-neutral-900 hover:bg-white"
+              : "bg-zinc-900/80 border-zinc-700/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+          }`}
           aria-label="Ocultar header"
+          title="Ocultar barra de herramientas"
         >
-          <EyeOffIcon
-            size={19}
-            opacity={0.6}
-            color={isDay ? "#1f1f1f9d" : "#ffffff9d"}
-          />
+          <EyeOffIcon size={18} />
         </button>
         {pathIs(PAGES.file) && (
           <button
             onClick={() => goTo(PAGES.list)}
-            className="p-1.5 rounded-full hover:hover:bg-white/10 transition-colors"
+            className={`p-1.5 rounded-xl transition-colors shadow-xs border cursor-pointer ${
+              isDay
+                ? "bg-white/80 border-neutral-300/80 text-neutral-600 hover:text-neutral-900 hover:bg-white"
+                : "bg-zinc-900/80 border-zinc-700/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+            }`}
             aria-label="Volver a la lista"
+            title="Volver a la lista"
           >
-            <ArrowLeftIcon
-              color={isDay ? "#1f1f1f9d" : "#ffffff9d"}
-              size={20}
-              opacity={0.6}
-            />
+            <ArrowLeftIcon size={18} />
           </button>
         )}
       </animated.header>

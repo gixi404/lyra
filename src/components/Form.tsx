@@ -1,6 +1,7 @@
 import translations from "../utils/dictionary";
 import useFile from "../hooks/useFile";
 import Modal from "./Modal";
+import ModalSort from "./ModalSort";
 import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
 import { PAGES } from "../utils/consts";
@@ -8,14 +9,14 @@ import { searchStore } from "../store/searchStore";
 import { twMerge } from "tailwind-merge";
 import {
   Plus as AddIcon,
-  ArrowDownAz,
-  ArrowDownZa,
+  SlidersHorizontal,
   Archive as PaperIcon,
   Search as SearchIcon,
   X as ClearIcon,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import {
+  getEditableFileName,
   nameIsValid,
   navigation,
   notification,
@@ -23,7 +24,7 @@ import {
   themes,
 } from "../utils/helpers";
 import type { Component, File } from "../utils/types";
-import { shallow } from "zustand/shallow";
+import { useShallow } from "zustand/react/shallow";
 
 function Form(): Component {
   const d = translations(),
@@ -31,29 +32,27 @@ function Form(): Component {
     { isDay } = themes(),
     { createFile, resolveDisplayName } = useFile(),
     { paperIsOpen, setPaperIsOpen } = configStore(
-      state => ({
+      useShallow(state => ({
         paperIsOpen: state.paperIsOpen,
         setPaperIsOpen: state.setPaperIsOpen,
-      }),
-      shallow
+      }))
     ),
     [isModalOpen, setIsModalOpen] = useState<boolean>(false),
-    { search, setSearch, order, toggleOrder } = searchStore(
-      state => ({
+    [isSortModalOpen, setIsSortModalOpen] = useState<boolean>(false),
+    { search, setSearch } = searchStore(
+      useShallow(state => ({
         search: state.search,
         setSearch: state.setSearch,
         order: state.order,
         toggleOrder: state.toggleOrder,
-      }),
-      shallow
+      }))
     ),
     { updateListFiles, setSelectedFile, files } = fileStore(
-      state => ({
+      useShallow(state => ({
         updateListFiles: state.updateListFiles,
         setSelectedFile: state.setSelectedFile,
         files: state.files,
-      }),
-      shallow
+      }))
     ),
     isRepeated = (fileName: string): boolean => {
       const nextDisplayName: string = resolveDisplayName(fileName);
@@ -90,7 +89,7 @@ function Form(): Component {
     setIsModalOpen(false);
     const file: File = {
       name: sanitizedName,
-      content: `## ${displayName}\n\n`,
+      content: `## ${getEditableFileName(displayName)}\n\n`,
     };
     void fileManagement(file);
   }
@@ -124,8 +123,8 @@ function Form(): Component {
               type="text"
               className={twMerge(
                 isDay
-                  ? "bg-transparent text-neutral-900 placeholder:text-neutral-400 font-sans text-sm outline-none w-full"
-                  : "bg-transparent text-zinc-100 placeholder:text-zinc-500 font-sans text-sm outline-none w-full"
+                  ? "bg-transparent text-neutral-900 placeholder:text-neutral-400 text-sm outline-none w-full"
+                  : "bg-transparent text-zinc-100 placeholder:text-zinc-500 text-sm outline-none w-full"
               )}
               placeholder={d.Search + "..."}
               value={search}
@@ -150,45 +149,47 @@ function Form(): Component {
           <div className="flex items-center gap-x-3 sm:gap-x-4 shrink-0">
             <button
               type="button"
-              onClick={() => toggleOrder(!order)}
-              className={`p-1.5 transition-colors rounded-lg ${
+              onClick={() => setIsSortModalOpen(true)}
+              title="Ordenar archivos"
+              className={`p-1.5 transition-colors rounded-lg cursor-pointer ${
                 isDay
                   ? "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
                   : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60"
               }`}
             >
-              {order ? (
-                <ArrowDownAz size={18} strokeWidth={2} />
-              ) : (
-                <ArrowDownZa size={18} strokeWidth={2} />
-              )}
+              <SlidersHorizontal size={19} strokeWidth={2} />
             </button>
 
             <button
               type="button"
               onClick={setPaperIsOpen}
               className={twMerge(
-                "p-1.5 transition-colors rounded-lg",
+                "p-1.5 transition-colors rounded-lg cursor-pointer",
                 isDay
-                  ? "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60",
+                  ? "text-neutral-600 hover:text-indigo-600 hover:bg-indigo-50"
+                  : "text-zinc-400 hover:text-sky-400 hover:bg-sky-500/10",
                 paperIsOpen && (isDay ? "text-indigo-600 bg-indigo-50" : "text-sky-400 bg-sky-500/10")
               )}
             >
-              <PaperIcon size={16} strokeWidth={2} />
+              <PaperIcon size={18} strokeWidth={2} />
             </button>
 
             {/* Botón celeste (+) */}
             <button
               type="button"
               onClick={() => setIsModalOpen(true)}
-              className="w-10 h-10 rounded-xl bg-[#00a8ff] hover:bg-[#0096e6] text-black font-semibold flex items-center justify-center shadow-lg shadow-[#00a8ff]/20 transition-transform active:scale-95 ml-1"
+              className="w-10 h-10 rounded-xl bg-[#00a8ff] hover:bg-[#0096e6] text-black font-semibold flex items-center justify-center transition-transform active:scale-95 ml-1 cursor-pointer"
             >
               <AddIcon size={20} strokeWidth={2.5} />
             </button>
           </div>
         </div>
       </form>
+
+      <ModalSort
+        isOpen={isSortModalOpen}
+        onClose={() => setIsSortModalOpen(false)}
+      />
 
       <Modal
         isOpen={isModalOpen}

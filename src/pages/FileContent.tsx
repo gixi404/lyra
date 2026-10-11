@@ -1,11 +1,10 @@
 import MainContainer from "../components/MainContainer";
-import ModifiedFile from "../components/ModifiedFile";
 import useFile from "../hooks/useFile";
 import useStorage from "../hooks/useStorage";
-import WordsFile from "../components/WordsFile";
 import { fileStore } from "../store/fileStore";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { getCompatibleStorageKeys, getDate } from "../utils/helpers";
+import { PAGES } from "../utils/consts";
+import { getCompatibleStorageKeys, getDate, navigation, notification } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
 const AUTOSAVE_DEBOUNCE_MS = 400;
@@ -18,89 +17,107 @@ interface DraftPayload {
   updatedAt: number;
 }
 
+function getDraftKey(fileName: string): string {
+  return `${DRAFT_STORAGE_PREFIX}:${fileName}`;
+}
+
+function readDraft(fileName: string): DraftPayload | null {
+  if (!fileName) return null;
+
+  const draftKeys: string[] = getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX);
+  const rawDraft: string | null = draftKeys.reduce<string | null>((draft, key) => {
+    if (draft !== null) return draft;
+    return window.localStorage.getItem(key);
+  }, null);
+  if (!rawDraft) return null;
+
+  try {
+    const parsed: DraftPayload = JSON.parse(rawDraft);
+    if (typeof parsed.content !== "string" || typeof parsed.updatedAt !== "number") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(fileName: string, draftContent: string): void {
+  if (!fileName) return;
+
+  const payload: DraftPayload = {
+    content: draftContent,
+    updatedAt: Date.now(),
+  };
+  window.localStorage.setItem(getDraftKey(fileName), JSON.stringify(payload));
+}
+
+function clearDraft(fileName: string): void {
+  if (!fileName) return;
+  getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX).forEach(key => {
+    window.localStorage.removeItem(key);
+  });
+}
+
 function FileContent(): Component {
-  const { setItem } = useStorage(),
-    { selectedFile } = fileStore(),
-    { saveFileContent } = useFile(),
-    [content, setContent] = useState<string>(() => selectedFile.content ?? ""),
-    [wordCounts, setWordCounts] = useState<number>(0),
+  const { goTo } = navigation(),
+    { setItem } = useStorage(),
+    selectedFile = fileStore(state => state.selectedFile),
+    { saveFileContent, getFileMtime } = useFile(),
+    initialDraft = readDraft(selectedFile.name),
+    initialStartingContent = initialDraft?.content ?? (selectedFile.content ?? ""),
+    [content, setContent] = useState<string>(initialStartingContent),
     autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
     draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
-    isDirtyRef = useRef<boolean>(false),
-    isSavingRef = useRef<boolean>(false),
+    isDirtyRef = useRef<boolean>(initialDraft ? initialDraft.content !== (selectedFile.content ?? "") : false),
+    saveQueueRef = useRef<Promise<void>>(Promise.resolve()),
+    saveSeqRef = useRef<number>(0),
+    inFlightSeqRef = useRef<number>(0),
     latestPersistedContentRef = useRef<string>(selectedFile.content ?? ""),
-    latestContentRef = useRef<string>(content),
+    latestContentRef = useRef<string>(initialStartingContent),
     latestFileNameRef = useRef<string>(selectedFile.name),
-    initialContentRef = useRef<string>(selectedFile.content ?? "");
+    initialContentRef = useRef<string>(selectedFile.content ?? ""),
+    loadedFileNameRef = useRef<string>("");
 
-  function getDraftKey(fileName: string): string {
-    return `${DRAFT_STORAGE_PREFIX}:${fileName}`;
-  }
-
-  function readDraft(fileName: string): DraftPayload | null {
-    if (!fileName) return null;
-
-    const draftKeys: string[] = getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX);
-    const rawDraft: string | null = draftKeys.reduce<string | null>((draft, key) => {
-      if (draft !== null) return draft;
-      return window.localStorage.getItem(key);
-    }, null);
-    if (!rawDraft) return null;
-
-    try {
-      const parsed: DraftPayload = JSON.parse(rawDraft);
-      if (typeof parsed.content !== "string" || typeof parsed.updatedAt !== "number") return null;
-      return parsed;
-    } catch {
-      return null;
+  useEffect(() => {
+    if (!selectedFile.name) {
+      goTo(PAGES.list);
     }
-  }
+  }, [selectedFile.name, goTo]);
 
-  function writeDraft(fileName: string, draftContent: string): void {
-    if (!fileName) return;
-
-    const payload: DraftPayload = {
-      content: draftContent,
-      updatedAt: Date.now(),
-    };
-    window.localStorage.setItem(getDraftKey(fileName), JSON.stringify(payload));
-  }
-
-  function clearDraft(fileName: string): void {
-    if (!fileName) return;
-    getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX).forEach(key => {
-      window.localStorage.removeItem(key);
-    });
-  }
-
-  async function persistLatestToDisk(): Promise<void> {
-    if (isSavingRef.current) return;
-
-    const fileName: string = latestFileNameRef.current;
-    if (!fileName) return;
+  function persistLatestToDisk(): Promise<void> {
+    const targetFileName: string = latestFileNameRef.current;
+    if (!targetFileName) return Promise.resolve();
 
     const snapshotToPersist: string = latestContentRef.current ?? "";
-    if (!isDirtyRef.current && snapshotToPersist === latestPersistedContentRef.current) return;
-
-    isSavingRef.current = true;
-    try {
-      await saveFileContent(fileName, snapshotToPersist);
-      saveLastModified(initialContentRef.current, snapshotToPersist);
-      latestPersistedContentRef.current = snapshotToPersist;
-
-      if (latestContentRef.current === snapshotToPersist) {
-        isDirtyRef.current = false;
-        clearDraft(fileName);
-      }
-    } catch {
-      writeDraft(fileName, latestContentRef.current ?? snapshotToPersist);
-    } finally {
-      isSavingRef.current = false;
-
-      if (isDirtyRef.current && latestContentRef.current !== latestPersistedContentRef.current) {
-        void persistLatestToDisk();
-      }
+    if (!isDirtyRef.current && snapshotToPersist === latestPersistedContentRef.current) {
+      return Promise.resolve();
     }
+
+    const currentSeq = ++saveSeqRef.current;
+
+    // Encolamiento FIFO estricto mediante cadena de promesas
+    // Evita carreras entre escrituras concurrentes o ráfagas de pulsaciones
+    saveQueueRef.current = saveQueueRef.current.then(async () => {
+      if (currentSeq < inFlightSeqRef.current) return;
+      inFlightSeqRef.current = currentSeq;
+
+      try {
+        await saveFileContent(targetFileName, snapshotToPersist);
+        saveLastModified(targetFileName, initialContentRef.current, snapshotToPersist);
+
+        if (latestFileNameRef.current === targetFileName) {
+          latestPersistedContentRef.current = snapshotToPersist;
+          if (latestContentRef.current === snapshotToPersist) {
+            isDirtyRef.current = false;
+            clearDraft(targetFileName);
+          }
+        }
+      } catch {
+        writeDraft(targetFileName, snapshotToPersist);
+        notification("error", "Error al guardar el archivo en disco. Se ha preservado en borrador local.");
+      }
+    });
+
+    return saveQueueRef.current;
   }
 
   function flushAutosave(): void {
@@ -117,8 +134,11 @@ function FileContent(): Component {
       clearTimeout(draftTimerRef.current);
     }
 
+    const targetFileName = latestFileNameRef.current;
+    if (!targetFileName) return;
+
     draftTimerRef.current = setTimeout(() => {
-      writeDraft(latestFileNameRef.current, nextContent);
+      writeDraft(targetFileName, nextContent);
       draftTimerRef.current = null;
     }, DRAFT_DEBOUNCE_MS);
   }
@@ -129,7 +149,10 @@ function FileContent(): Component {
       draftTimerRef.current = null;
     }
 
-    writeDraft(latestFileNameRef.current, latestContentRef.current ?? "");
+    const targetFileName = latestFileNameRef.current;
+    if (targetFileName) {
+      writeDraft(targetFileName, latestContentRef.current ?? "");
+    }
   }
 
   useEffect(() => {
@@ -157,13 +180,6 @@ function FileContent(): Component {
   }, [content]);
 
   useEffect(() => {
-    return () => {
-      flushDraftPersist();
-      flushAutosave();
-    };
-  }, []);
-
-  useEffect(() => {
     const flushOnLifecycleChange = (): void => {
       flushDraftPersist();
       flushAutosave();
@@ -186,17 +202,59 @@ function FileContent(): Component {
   }, [selectedFile.name]);
 
   useEffect(() => {
+    if (!selectedFile.name) return;
+    if (loadedFileNameRef.current === selectedFile.name) return;
+    loadedFileNameRef.current = selectedFile.name;
+
+    let isCancelled = false;
     const diskContent: string = selectedFile.content ?? "";
     const draft: DraftPayload | null = readDraft(selectedFile.name);
-    const startingContent: string = draft?.content ?? diskContent;
 
-    setContent(startingContent);
-    latestContentRef.current = startingContent;
-    latestFileNameRef.current = selectedFile.name;
     initialContentRef.current = diskContent;
-    latestPersistedContentRef.current = diskContent;
-    isDirtyRef.current = startingContent !== diskContent;
-  }, [selectedFile.name, selectedFile.content]);
+    latestFileNameRef.current = selectedFile.name;
+
+    const initContent = async () => {
+      let startingContent = diskContent;
+      let shouldClearDraft = false;
+
+      if (draft) {
+        if (diskContent === draft.content) {
+          startingContent = diskContent;
+          shouldClearDraft = true;
+        } else {
+          const diskMtime = await getFileMtime(selectedFile.name);
+          if (diskMtime !== null && diskMtime > draft.updatedAt + 1000) {
+            // El archivo en disco fue modificado externamente después de la última edición del borrador
+            startingContent = diskContent;
+            shouldClearDraft = true;
+          } else {
+            // El borrador es más reciente
+            startingContent = draft.content;
+          }
+        }
+      }
+
+      if (isCancelled) return;
+
+      if (shouldClearDraft) {
+        clearDraft(selectedFile.name);
+      }
+
+      // Si el usuario ya comenzó a escribir en este archivo, no sobreescribir su contenido en vivo
+      if (!isDirtyRef.current) {
+        setContent(startingContent);
+        latestContentRef.current = startingContent;
+        latestPersistedContentRef.current = startingContent === diskContent ? diskContent : "";
+        isDirtyRef.current = startingContent !== diskContent;
+      }
+    };
+
+    void initContent();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedFile.name]);
 
 
   function handleContentChange(newContent: string): void {
@@ -206,24 +264,29 @@ function FileContent(): Component {
     setContent(newContent);
   }
 
-  function handleWordCountChange(count: number): void {
-    setWordCounts(count);
-  }
+  function handleWordCountChange(_count: number): void {}
 
-  function saveLastModified(previousContent: string, currentContent: string): void {
-    if (previousContent !== currentContent) {
+  function saveLastModified(fileName: string, previousContent: string, currentContent: string): void {
+    if (fileName && previousContent !== currentContent) {
       const date: string = getDate();
-      const [modifiedKey] = getCompatibleStorageKeys(latestFileNameRef.current, "-modified");
+      const [modifiedKey] = getCompatibleStorageKeys(fileName, "-modified");
       setItem(modifiedKey, date);
     }
   }
 
+  if (!selectedFile.name) {
+    return (
+      <MainContainer>
+        <div className="w-full flex-1" />
+      </MainContainer>
+    );
+  }
+
   return (
     <MainContainer>
-      <WordsFile wordCounts={wordCounts} />
-      <ModifiedFile />
       <Suspense fallback={<div className="w-full flex-1" />}>
         <TinyEditor
+          key={selectedFile.name}
           content={content}
           onContentChange={handleContentChange}
           onWordCountChange={handleWordCountChange}

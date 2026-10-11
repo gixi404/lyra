@@ -19,10 +19,6 @@ function ItemFile({ fileName }: Props): Component {
     return name.replace(/\.(txt|md)$/i, "");
   }
 
-  function getFileTypeLabel(name: string): string {
-    return name.endsWith(".md") ? "MARKDOWN" : "TEXTO";
-  }
-
   async function openFile(): Promise<void> {
     const fileContent: string = await readFile(fileName);
     const newSelectedFile: File = { name: fileName, content: fileContent };
@@ -41,24 +37,15 @@ function ItemFile({ fileName }: Props): Component {
       )}
     >
       <span
-        className="font-sans text-sm sm:text-[15px] truncate pr-4 text-left font-normal"
+        className="text-sm sm:text-[15px] truncate pr-4 text-left font-normal"
         title={getListLabel(fileName)}
       >
         {getListLabel(fileName)}
       </span>
 
-      <div className="flex items-center gap-x-3 shrink-0">
+      <div className="flex items-center gap-x-2 shrink-0">
         {!paperIsOpen && <MenuFile fileName={fileName} />}
         {paperIsOpen && <MenuPaperFile fileName={fileName} />}
-
-        <span
-          className={twMerge(
-            "font-mono text-[11px] tracking-widest uppercase text-right min-w-[70px]",
-            isDay ? "text-neutral-400" : "text-zinc-500"
-          )}
-        >
-          {getFileTypeLabel(fileName)}
-        </span>
       </div>
     </li>
   );
