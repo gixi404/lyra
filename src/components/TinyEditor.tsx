@@ -59,7 +59,11 @@ function TinyEditor({
         mirrorRef.current.remove();
         mirrorRef.current = null;
       }
+      document.documentElement.classList.remove("is-typing");
       document.body.classList.remove("is-typing");
+      if (textareaRef.current) {
+        textareaRef.current.classList.remove("is-typing-editor");
+      }
     };
   }, []);
 
@@ -271,9 +275,18 @@ function TinyEditor({
     }
   }, [updateCaretState]);
 
-  const handleKeyDown = useCallback(() => {
+  const markTyping = useCallback(() => {
+    (window as any).__lastTypingTime = Date.now();
+    document.documentElement.classList.add("is-typing");
     document.body.classList.add("is-typing");
+    if (textareaRef.current && !textareaRef.current.classList.contains("is-typing-editor")) {
+      textareaRef.current.classList.add("is-typing-editor");
+    }
   }, []);
+
+  const handleKeyDown = useCallback(() => {
+    markTyping();
+  }, [markTyping]);
 
   const handleKeyUp = useCallback(() => {
     updateCaretState();
@@ -535,7 +548,7 @@ function TinyEditor({
       }
 
       onContentChange(newVal);
-      document.body.classList.add("is-typing");
+      markTyping();
       updateCaretState();
       keepCaretCentered();
     },
@@ -587,10 +600,14 @@ function TinyEditor({
           background-color: ${isDay ? "rgba(107, 114, 128, 0.8)" : "rgba(161, 161, 170, 0.7)"} !important;
         }
 
-        body.is-typing .editor-textarea {
+        .editor-textarea.is-typing-editor,
+        body.is-typing .editor-textarea,
+        html.is-typing .editor-textarea {
           scrollbar-color: transparent transparent !important;
         }
-        body.is-typing .editor-textarea::-webkit-scrollbar-thumb {
+        .editor-textarea.is-typing-editor::-webkit-scrollbar-thumb,
+        body.is-typing .editor-textarea::-webkit-scrollbar-thumb,
+        html.is-typing .editor-textarea::-webkit-scrollbar-thumb {
           background-color: transparent !important;
         }
 
@@ -667,6 +684,7 @@ function TinyEditor({
         ref={textareaRef}
         value={content}
         onChange={handleChange}
+        onInput={markTyping}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
         onClick={handleInteraction}

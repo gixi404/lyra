@@ -176,9 +176,44 @@ function MainContainer({ children }: PropsWithChildren): Component {
   }, [isFullscreen]);
 
   useEffect(() => {
-    const handleGlobalMouseMove = (): void => {
+    if (pathIs(PAGES.file)) {
+      document.documentElement.classList.add("in-editor");
+    } else {
+      document.documentElement.classList.remove("in-editor");
+    }
+    return () => {
+      document.documentElement.classList.remove("in-editor");
+    };
+  }, []);
+
+  useEffect(() => {
+    let lastMouseX = -1;
+    let lastMouseY = -1;
+
+    const handleGlobalMouseMove = (e: MouseEvent): void => {
+      // Ignorar micro-movimientos de trackpad o eventos sintéticos durante re-render
+      if (lastMouseX !== -1 && lastMouseY !== -1) {
+        const dist = Math.hypot(e.clientX - lastMouseX, e.clientY - lastMouseY);
+        if (dist < 6) return;
+      }
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+
+      // Si el usuario estuvo escribiendo hace menos de 600ms, mantener el modo zen
+      const lastTyping = (window as any).__lastTypingTime || 0;
+      if (Date.now() - lastTyping < 600) {
+        return;
+      }
+
+      if (document.documentElement.classList.contains("is-typing")) {
+        document.documentElement.classList.remove("is-typing");
+      }
       if (document.body.classList.contains("is-typing")) {
         document.body.classList.remove("is-typing");
+      }
+      const editorTa = document.querySelector(".editor-textarea");
+      if (editorTa && editorTa.classList.contains("is-typing-editor")) {
+        editorTa.classList.remove("is-typing-editor");
       }
     };
 
