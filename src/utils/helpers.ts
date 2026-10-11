@@ -2,7 +2,7 @@ import { useToastStore } from "../store/toastStore";
 import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
-import { exists, mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { flushSync } from "react-dom";
 import { join } from "@tauri-apps/api/path";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
@@ -140,6 +140,36 @@ async function verifyMainFolder(): Promise<void> {
       const welcomeExists: boolean = await exists(path, BASE_DIRECTORY);
       if (!welcomeExists) {
         await writeTextFile(path, intro, BASE_DIRECTORY);
+      } else {
+        try {
+          const currentContent = await readTextFile(path, BASE_DIRECTORY);
+          if (
+            currentContent.includes("<p>") ||
+            currentContent.includes("espacio ideal") ||
+            currentContent.includes("&oacute;") ||
+            currentContent.includes("&ntilde;")
+          ) {
+            await writeTextFile(path, intro, BASE_DIRECTORY);
+          }
+        } catch (readErr) {
+          console.warn("Could not inspect welcome file content:", readErr);
+        }
+      }
+    }
+
+    // Purgar borradores obsoletos o residuales con formato HTML de bienvenida en localStorage
+    const localKeys = Object.keys(window.localStorage);
+    for (const key of localKeys) {
+      if (key.toLowerCase().includes("bienvenido") || key.startsWith("lyra-draft:")) {
+        const val = window.localStorage.getItem(key) || "";
+        if (
+          val.includes("<p>") ||
+          val.includes("espacio ideal") ||
+          val.includes("&oacute;") ||
+          val.includes("&ntilde;")
+        ) {
+          window.localStorage.removeItem(key);
+        }
       }
     }
 

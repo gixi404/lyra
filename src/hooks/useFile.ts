@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import useStorage from "./useStorage";
-import { BASE_DIRECTORY, MAIN_FOLDER, PAGES } from "../utils/consts";
+import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, PAGES } from "../utils/consts";
 import { fileStore } from "../store/fileStore";
 import { join } from "@tauri-apps/api/path";
 import {
@@ -140,7 +140,18 @@ function useFile(): Files {
 
   const readFile = useCallback(async (name: string): Promise<string> => {
     const { pathFile } = await getFilePath(name);
-    const content: string = await readTextFile(pathFile, BASE_DIRECTORY);
+    let content: string = await readTextFile(pathFile, BASE_DIRECTORY);
+    if (
+      name.toLowerCase().includes("bienvenido a lyra") &&
+      (content.includes("<p>") || content.includes("espacio ideal") || content.includes("&oacute;") || content.includes("&ntilde;"))
+    ) {
+      content = INTRO_ES;
+      try {
+        await writeTextFile(pathFile, INTRO_ES, BASE_DIRECTORY);
+      } catch (err) {
+        console.warn("Could not overwrite legacy welcome file on disk:", err);
+      }
+    }
     return content;
   }, [getFilePath]);
 

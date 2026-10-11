@@ -3,7 +3,7 @@ import useFile from "../hooks/useFile";
 import useStorage from "../hooks/useStorage";
 import { fileStore } from "../store/fileStore";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { PAGES } from "../utils/consts";
+import { INTRO_ES, PAGES } from "../utils/consts";
 import { getCompatibleStorageKeys, getDate, navigation, notification } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
@@ -34,6 +34,18 @@ function readDraft(fileName: string): DraftPayload | null {
   try {
     const parsed: DraftPayload = JSON.parse(rawDraft);
     if (typeof parsed.content !== "string" || typeof parsed.updatedAt !== "number") return null;
+
+    if (
+      parsed.content.includes("<p>") &&
+      (parsed.content.includes("&oacute;") ||
+        parsed.content.includes("espacio ideal") ||
+        parsed.content.includes("&ntilde;") ||
+        fileName.toLowerCase().includes("bienvenido"))
+    ) {
+      clearDraft(fileName);
+      return null;
+    }
+
     return parsed;
   } catch {
     return null;
@@ -63,7 +75,11 @@ function FileContent(): Component {
     selectedFile = fileStore(state => state.selectedFile),
     { saveFileContent, getFileMtime } = useFile(),
     initialDraft = readDraft(selectedFile.name),
-    initialStartingContent = initialDraft?.content ?? (selectedFile.content ?? ""),
+    rawInitial = initialDraft?.content ?? (selectedFile.content ?? ""),
+    isWelcomeLegacy =
+      selectedFile.name.toLowerCase().includes("bienvenido") &&
+      (rawInitial.includes("<p>") || rawInitial.includes("espacio ideal")),
+    initialStartingContent = isWelcomeLegacy ? INTRO_ES : rawInitial,
     [content, setContent] = useState<string>(initialStartingContent),
     autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
     draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
@@ -217,7 +233,13 @@ function FileContent(): Component {
       let startingContent = diskContent;
       let shouldClearDraft = false;
 
-      if (draft) {
+      if (
+        selectedFile.name.toLowerCase().includes("bienvenido") &&
+        (diskContent.includes("<p>") || diskContent.includes("espacio ideal"))
+      ) {
+        startingContent = INTRO_ES;
+        shouldClearDraft = true;
+      } else if (draft) {
         if (diskContent === draft.content) {
           startingContent = diskContent;
           shouldClearDraft = true;
