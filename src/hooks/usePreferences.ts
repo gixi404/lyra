@@ -1,8 +1,10 @@
 import useStorage from "./useStorage";
 import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
 import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
+import { configStore } from "../store/configStore";
 
 function usePreferences(): Preferences {
+  configStore(state => state.prefTick);
   const { getItem, setItem } = useStorage();
   const readBoolean = (key: string, fallback: string): boolean =>
     JSON.parse(getItem(key, fallback)) as boolean;

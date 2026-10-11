@@ -8,6 +8,11 @@
     min-height: 100vh;
     margin: 0;
     padding: 0;
+    background-color: #e0e0e0;
+  }
+
+  html.dark, html.dark body, html.dark #root {
+    background-color: #101010;
   }
 
   html {
@@ -16,7 +21,7 @@
   }
 
   body {
-    @apply caret-indigo-400 text-zinc-200 flex flex-col justify-start items-stretch overflow-x-hidden select-none antialiased;
+    @apply caret-[#00a8ff] text-zinc-200 flex flex-col justify-start items-stretch overflow-x-hidden select-none antialiased;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 }

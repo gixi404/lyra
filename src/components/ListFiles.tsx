@@ -13,8 +13,10 @@ import { searchStore, type SortOptionId } from "../store/searchStore";
 import { fileStore } from "../store/fileStore";
 import type { Component } from "../utils/types";
 
+const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
+
 const getHash = (str: string): number => {
-  let hash = 0;
+  let hash = SESSION_RANDOM_SALT;
   for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) - hash + str.charCodeAt(i);
     hash |= 0;

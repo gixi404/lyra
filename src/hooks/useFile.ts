@@ -74,11 +74,11 @@ function useFile(): Files {
   async function deleteFile(name: string): Promise<void> {
     if (!name) throw new Error("File name is required");
     const { pathFile } = await getFilePath(name);
+    await remove(pathFile, BASE_DIRECTORY);
     removeCompatibleKeys(name, "", DRAFT_STORAGE_PREFIX);
     removeCompatibleKeys(name, "-modified");
     removeCompatibleKeys(name, "-scroll");
     syncPaperState(name);
-    await remove(pathFile, BASE_DIRECTORY);
   }
 
   const createFile = useCallback(async (name: string, content: string = ""): Promise<string> => {
@@ -106,16 +106,16 @@ function useFile(): Files {
   }, [getFilePath]);
 
   const getFiles = useCallback(async (): Promise<string[]> => {
-    let dir: any[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
-    dir = dir
+    let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
+    return dir
+      .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
       .map((f: DirEntry) => f.name)
       .filter(
         (name): name is string =>
           typeof name === "string" &&
           [".txt", ".md"].some(extension => name.endsWith(extension))
       )
-    dir = dir.sort((a: string, b: string) => a.localeCompare(b));
-    return dir;
+      .sort((a: string, b: string) => a.localeCompare(b));
   }, []);
 
   const fileExists = useCallback(async (name: string): Promise<boolean> => {

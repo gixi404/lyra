@@ -1,7 +1,6 @@
 import { Edit2 as EditIcon, Archive as TrashIcon, MoreVertical, Info, FileDown } from "lucide-react";
 import { type SyntheticEvent, useEffect, useRef, useState } from "react";
 import { twMerge } from "tailwind-merge";
-import { jsPDF } from "jspdf";
 import { downloadDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import useFile from "../hooks/useFile";
@@ -51,6 +50,7 @@ function MenuFile({ fileName }: Props): Component {
     try {
       const content = await readFile(fileName);
       const title = fileName.replace(/\.(txt|md)$/i, "");
+      const { jsPDF } = await import("jspdf");
 
       const doc = new jsPDF({
         orientation: "portrait",

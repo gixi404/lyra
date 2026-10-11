@@ -9,6 +9,8 @@ export interface ConfigState {
   setShowHeader: (newState: boolean) => void;
   themeTick: number;
   toggleThemeTick: () => void;
+  prefTick: number;
+  bumpPrefTick: () => void;
 }
 
 export const configStore = create<ConfigState>(set => ({
@@ -22,4 +24,7 @@ export const configStore = create<ConfigState>(set => ({
   themeTick: 0,
   toggleThemeTick: () =>
     set(state => ({ themeTick: state.themeTick + 1 })),
+  prefTick: 0,
+  bumpPrefTick: () =>
+    set(state => ({ prefTick: state.prefTick + 1 })),
 }));

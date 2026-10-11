@@ -32,6 +32,28 @@ async function checkIsFullscreen(): Promise<boolean> {
   }
 }
 
+let hasShownWindow = false;
+
+async function showAppWindow(): Promise<void> {
+  if (hasShownWindow) return;
+  hasShownWindow = true;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("show_main_window");
+  } catch {
+    try {
+      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const appWindow = getCurrentWebviewWindow();
+      await appWindow.show();
+      await appWindow.setFocus();
+      await appWindow.setResizable(false);
+      await appWindow.setResizable(true);
+    } catch {
+      // Outside Tauri
+    }
+  }
+}
+
 function MainContainer({ children }: PropsWithChildren): Component {
   const { myFontValue } = usePreferences(),
     { isDay } = themes(),
@@ -42,6 +64,13 @@ function MainContainer({ children }: PropsWithChildren): Component {
       to: { opacity: 1 },
       config: { duration: 200 },
     }));
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void showAppWindow();
+    }, 50);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const bg = isDay ? "#e0e0e0" : "#101010";

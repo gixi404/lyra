@@ -1,3 +1,5 @@
+import { configStore } from "../store/configStore";
+
 const storageInstance: Storage = {
   getItem: (key: string, defaultValue: string): string => {
     const item: string = window.localStorage.getItem(key) ?? defaultValue;
@@ -5,9 +7,11 @@ const storageInstance: Storage = {
   },
   setItem: (key: string, value: any): void => {
     window.localStorage.setItem(key, value);
+    configStore.getState().bumpPrefTick();
   },
   removeItem: (key: string): void => {
     window.localStorage.removeItem(key);
+    configStore.getState().bumpPrefTick();
   },
 };
 

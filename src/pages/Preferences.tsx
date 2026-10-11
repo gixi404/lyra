@@ -7,7 +7,6 @@ import {
   Folder as FolderIcon,
   Focus as FocusIcon,
 } from "lucide-react";
-import { useState } from "react";
 import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
 import usePreferences from "../hooks/usePreferences";
@@ -57,7 +56,7 @@ function Preferences(): Component {
       myParagraphFocus,
     } = usePreferences(),
     { setItem } = useStorage(),
-    [paragraphFocus, setParagraphFocus] = useState<boolean>(myParagraphFocus());
+    paragraphFocus = myParagraphFocus();
 
   function changeFont(value: string): void {
     setItem("font", value);
@@ -68,9 +67,7 @@ function Preferences(): Component {
   }
 
   function toggleParagraphFocus(): void {
-    const nextVal = !paragraphFocus;
-    setParagraphFocus(nextVal);
-    setItem("paragraph-focus", JSON.stringify(nextVal));
+    setItem("paragraph-focus", JSON.stringify(!paragraphFocus));
   }
 
   async function openFolder(): Promise<void> {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ChevronUp, ChevronDown, Replace, ReplaceAll, X } from "lucide-react";
+import { ChevronUp, ChevronDown, Replace, ReplaceAll, X, CaseSensitive } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
@@ -8,6 +8,7 @@ export interface SearchState {
   query: string;
   matchIndices: number[];
   currentIndex: number;
+  matchCase?: boolean;
 }
 
 interface SearchReplaceModalProps {
@@ -30,9 +31,11 @@ function SearchReplaceModal({
   const { isDay } = themes();
   const [searchQuery, setSearchQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
+  const [matchCase, setMatchCase] = useState(false);
   const [matchIndices, setMatchIndices] = useState<number[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return () => {
@@ -40,6 +43,31 @@ function SearchReplaceModal({
       onSearchStateChange?.(null);
     };
   }, [onSearchStateChange]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleClickOutside = (e: MouseEvent | TouchEvent): void => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+
+    const handleWindowKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("mousedown", handleClickOutside);
+    window.addEventListener("touchstart", handleClickOutside);
+    window.addEventListener("keydown", handleWindowKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("touchstart", handleClickOutside);
+      window.removeEventListener("keydown", handleWindowKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (isOpen) {
@@ -61,9 +89,10 @@ function SearchReplaceModal({
         query: searchQuery,
         matchIndices,
         currentIndex: currentMatchIndex,
+        matchCase,
       });
     }
-  }, [isOpen, searchQuery, matchIndices, currentMatchIndex, onSearchStateChange]);
+  }, [isOpen, searchQuery, matchIndices, currentMatchIndex, matchCase, onSearchStateChange]);
 
   useEffect(() => {
     if (!searchQuery) {
@@ -73,13 +102,13 @@ function SearchReplaceModal({
     }
 
     const indices: number[] = [];
-    const queryLower = searchQuery.toLowerCase();
-    const contentLower = content.toLowerCase();
-    let idx = contentLower.indexOf(queryLower);
+    const queryStr = matchCase ? searchQuery : searchQuery.toLowerCase();
+    const contentStr = matchCase ? content : content.toLowerCase();
+    let idx = contentStr.indexOf(queryStr);
 
     while (idx !== -1) {
       indices.push(idx);
-      idx = contentLower.indexOf(queryLower, idx + searchQuery.length || 1);
+      idx = contentStr.indexOf(queryStr, idx + searchQuery.length || 1);
     }
 
     setMatchIndices(indices);
@@ -88,7 +117,7 @@ function SearchReplaceModal({
     } else {
       setCurrentMatchIndex(0);
     }
-  }, [searchQuery, content]);
+  }, [searchQuery, content, matchCase]);
 
   const highlightMatch = useCallback(
     (index: number) => {
@@ -170,14 +199,27 @@ function SearchReplaceModal({
     const end = start + searchQuery.length;
 
     const newContent = content.substring(0, start) + replaceQuery + content.substring(end);
+    const newCaretPos = start + replaceQuery.length;
     onContentChange(newContent);
+
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.setSelectionRange(newCaretPos, newCaretPos);
+    }
   }
 
   function handleReplaceAll() {
     if (matchIndices.length === 0 || !searchQuery) return;
-    const regex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-    const newContent = content.replace(regex, replaceQuery);
+    const flags = matchCase ? "g" : "gi";
+    const regex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
+    const newContent = content.replace(regex, () => replaceQuery);
     onContentChange(newContent);
+
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const safePos = Math.min(textarea.selectionStart, newContent.length);
+      textarea.setSelectionRange(safePos, safePos);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -203,9 +245,10 @@ function SearchReplaceModal({
 
   return (
     <div
+      ref={modalRef}
       onKeyDown={handleKeyDown}
       className={twMerge(
-        "search-replace-modal no-print fixed top-4 right-4 z-[9999] p-3 rounded-xl shadow-2xl border backdrop-blur-lg transition-all duration-200 flex flex-col gap-2 w-[320px] sm:w-[360px]",
+        "search-replace-modal no-print fixed top-4 right-4 z-[9999] p-3 rounded-xl shadow-2xl border backdrop-blur-lg transition-all duration-200 flex flex-col gap-2 w-[340px] sm:w-[380px]",
         isDay
           ? "bg-white/95 text-neutral-800 border-neutral-300 shadow-neutral-300/40"
           : "bg-zinc-900/95 text-zinc-100 border-zinc-700/80 shadow-black/50"
@@ -249,9 +292,27 @@ function SearchReplaceModal({
               : "bg-zinc-800 border-zinc-700 focus:border-sky-400 text-zinc-100 placeholder:text-zinc-500"
           )}
         />
-        <span className="text-xs font-mono opacity-70 min-w-[42px] text-center">
+        <span className="text-xs font-mono opacity-70 min-w-[38px] text-center">
           {matchIndices.length > 0 ? `${currentMatchIndex + 1}/${matchIndices.length}` : "0/0"}
         </span>
+        <button
+          type="button"
+          onClick={() => setMatchCase(prev => !prev)}
+          className={twMerge(
+            "p-1.5 rounded-lg border transition-colors cursor-pointer flex items-center justify-center",
+            matchCase
+              ? isDay
+                ? "bg-indigo-50 text-indigo-600 border-indigo-300 font-bold"
+                : "bg-sky-500/20 text-sky-300 border-sky-400/60 font-bold"
+              : isDay
+                ? "bg-white border-neutral-300 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
+                : "bg-zinc-800/80 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+          )}
+          title={matchCase ? "Coincidir mayúsculas y minúsculas: activado" : "Coincidir mayúsculas y minúsculas: desactivado"}
+          aria-label="Coincidir mayúsculas y minúsculas"
+        >
+          <CaseSensitive size={15} strokeWidth={matchCase ? 2.5 : 2} />
+        </button>
         <button
           type="button"
           onClick={handlePrev}

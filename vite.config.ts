@@ -11,4 +11,7 @@ export default defineConfig(async () => ({
   optimizeDeps: {
     include: ["react-select"],
   },
+  build: {
+    chunkSizeWarningLimit: 1000,
+  },
 }));

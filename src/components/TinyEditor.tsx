@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
+import { twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal";
@@ -26,8 +27,10 @@ function TinyEditor({
     rafIdRef = useRef<number | null>(null),
     caretRafRef = useRef<number | null>(null),
     { isDay } = themes(),
-    { myFontSize, myAlign, mySpacing, myParagraphFocus } = usePreferences(),
-    fontSize: string = myFontSize(),
+    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue } = usePreferences(),
+    [fontSizeOverride, setFontSizeOverride] = useState<string | null>(null),
+    fontSize: string = fontSizeOverride ?? myFontSize(),
+    fontClass: string = myFontValue(),
     textAlign: string = myAlign(),
     letterSpacing: number = mySpacing(),
     isParagraphFocus: boolean = myParagraphFocus(),
@@ -164,6 +167,9 @@ function TinyEditor({
     const textarea = textareaRef.current;
     const display = displayRef.current;
     if (!textarea || !display) return;
+    if (textarea.scrollLeft !== 0) {
+      textarea.scrollLeft = 0;
+    }
     display.style.transform = `translate3d(0, ${-textarea.scrollTop}px, 0)`;
   }, []);
 
@@ -174,8 +180,6 @@ function TinyEditor({
     setSelectionEnd(textarea.selectionEnd);
     syncScrollPos();
   }, [syncScrollPos]);
-
-
 
   const keepCaretCentered = useCallback(() => {
     if (caretRafRef.current !== null) {
@@ -261,10 +265,17 @@ function TinyEditor({
 
   const handleInteraction = useCallback(() => {
     updateCaretState();
+    if (!isTypingWordRef.current && textareaRef.current) {
+      lastSnapshotRef.current.caretPos = textareaRef.current.selectionStart;
+      lastSnapshotRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
   }, [updateCaretState]);
 
-  const handleTypingEvent = useCallback(() => {
+  const handleKeyDown = useCallback(() => {
     document.body.classList.add("is-typing");
+  }, []);
+
+  const handleKeyUp = useCallback(() => {
     updateCaretState();
     keepCaretCentered();
   }, [updateCaretState, keepCaretCentered]);
@@ -324,12 +335,15 @@ function TinyEditor({
       if (!el) return;
       const targetCaret = Math.min(targetSnapshot.caretPos, targetSnapshot.content.length);
       el.setSelectionRange(targetCaret, targetCaret);
-      el.scrollTop = targetSnapshot.scrollTop;
+      if (targetSnapshot.scrollTop > 0) {
+        el.scrollTop = targetSnapshot.scrollTop;
+      }
       syncScrollPos();
+      keepCaretCentered();
       setSelectionStart(targetCaret);
       setSelectionEnd(targetCaret);
     });
-  }, [onContentChange, syncScrollPos]);
+  }, [onContentChange, syncScrollPos, keepCaretCentered]);
 
   const handleRedo = useCallback(() => {
     if (wordTimerRef.current) {
@@ -368,12 +382,15 @@ function TinyEditor({
       if (!el) return;
       const targetCaret = Math.min(targetSnapshot.caretPos, targetSnapshot.content.length);
       el.setSelectionRange(targetCaret, targetCaret);
-      el.scrollTop = targetSnapshot.scrollTop;
+      if (targetSnapshot.scrollTop > 0) {
+        el.scrollTop = targetSnapshot.scrollTop;
+      }
       syncScrollPos();
+      keepCaretCentered();
       setSelectionStart(targetCaret);
       setSelectionEnd(targetCaret);
     });
-  }, [onContentChange, syncScrollPos]);
+  }, [onContentChange, syncScrollPos, keepCaretCentered]);
 
   useEffect(() => {
     const handleShortcutsKeyDown = (e: KeyboardEvent): void => {
@@ -417,16 +434,16 @@ function TinyEditor({
 
       if (isZoomIn) {
         e.preventDefault();
-        const currentSizeNum = parseInt(myFontSize(), 10) || 18;
+        const currentSizeNum = parseInt(fontSize, 10) || 18;
         const newSize = `${Math.min(48, currentSizeNum + 2)}px`;
+        setFontSizeOverride(newSize);
         setItem("font-size", newSize);
-        handleInteraction();
       } else if (isZoomOut) {
         e.preventDefault();
-        const currentSizeNum = parseInt(myFontSize(), 10) || 18;
+        const currentSizeNum = parseInt(fontSize, 10) || 18;
         const newSize = `${Math.max(12, currentSizeNum - 2)}px`;
+        setFontSizeOverride(newSize);
         setItem("font-size", newSize);
-        handleInteraction();
       }
     };
 
@@ -434,7 +451,7 @@ function TinyEditor({
     return () => {
       window.removeEventListener("keydown", handleShortcutsKeyDown);
     };
-  }, [myFontSize, setItem, handleInteraction, handleUndo, handleRedo]);
+  }, [fontSize, setItem, handleUndo, handleRedo]);
 
   useEffect(() => {
     const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
@@ -518,34 +535,65 @@ function TinyEditor({
       }
 
       onContentChange(newVal);
-      handleTypingEvent();
+      document.body.classList.add("is-typing");
+      updateCaretState();
+      keepCaretCentered();
     },
-    [content, onContentChange, handleTypingEvent]
+    [content, onContentChange, updateCaretState, keepCaretCentered]
   );
 
+  const isSearchActive = searchState !== null && searchState.query.trim().length > 0;
+  const needsDisplayLayer = isParagraphFocus || isSearchActive;
+
   return (
-    <div className="relative w-full h-screen overflow-hidden">
+    <div className={twMerge("relative w-full h-screen overflow-hidden", fontClass)}>
       <style>{`
-        .editor-display-layer,
-        .editor-textarea {
+        .editor-display-layer {
+          overflow-y: scroll !important;
           scrollbar-width: none !important;
           -ms-overflow-style: none !important;
-          font-variant-ligatures: none !important;
-          font-feature-settings: "liga" 0, "clig" 0, "calt" 0 !important;
         }
-        .editor-display-layer::-webkit-scrollbar,
-        .editor-textarea::-webkit-scrollbar {
-          display: none !important;
-          width: 0 !important;
-          height: 0 !important;
+        .editor-display-layer::-webkit-scrollbar {
+          width: 8px !important;
+          display: block !important;
           background: transparent !important;
         }
+        .editor-display-layer::-webkit-scrollbar-thumb {
+          background: transparent !important;
+        }
+
         .editor-textarea {
+          overflow-y: scroll !important;
+          scrollbar-width: thin !important;
+          scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
           -webkit-appearance: none !important;
           appearance: none !important;
-          color: transparent !important;
-          -webkit-text-fill-color: transparent !important;
+          caret-color: #00a8ff !important;
         }
+        .editor-textarea::-webkit-scrollbar {
+          width: 8px !important;
+          display: block !important;
+          background: transparent !important;
+        }
+        .editor-textarea::-webkit-scrollbar-track {
+          background: transparent !important;
+        }
+        .editor-textarea::-webkit-scrollbar-thumb {
+          background-color: ${isDay ? "rgba(156, 163, 175, 0.5)" : "rgba(113, 113, 122, 0.45)"} !important;
+          border-radius: 9999px !important;
+          transition: background-color 300ms ease-in-out !important;
+        }
+        .editor-textarea::-webkit-scrollbar-thumb:hover {
+          background-color: ${isDay ? "rgba(107, 114, 128, 0.8)" : "rgba(161, 161, 170, 0.7)"} !important;
+        }
+
+        body.is-typing .editor-textarea {
+          scrollbar-color: transparent transparent !important;
+        }
+        body.is-typing .editor-textarea::-webkit-scrollbar-thumb {
+          background-color: transparent !important;
+        }
+
         .editor-textarea::selection {
           background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
           color: transparent !important;
@@ -567,16 +615,19 @@ function TinyEditor({
         onSearchStateChange={setSearchState}
       />
 
-      {/* Capa de fondo para el modo foco por párrafo */}
+      {/* Capa de fondo para el modo foco por párrafo o búsqueda */}
       <div
         ref={displayRef}
         aria-hidden="true"
-        className="editor-display-layer pointer-events-none absolute left-0 right-0 top-0 z-0 no-print select-none"
+        className={twMerge(
+          "editor-display-layer pointer-events-none absolute left-0 right-0 top-0 z-0 no-print select-none",
+          fontClass
+        )}
         style={{
           boxSizing: "border-box",
           fontSize,
           textAlign: textAlign as CSSProperties["textAlign"],
-          letterSpacing: `${letterSpacing}px`,
+          letterSpacing: letterSpacing === 0 ? "normal" : `${letterSpacing}px`,
           color: isDay ? "#1f2937" : "#e5e7eb",
           paddingTop: "70px",
           paddingBottom: "70px",
@@ -591,10 +642,11 @@ function TinyEditor({
           wordBreak: "break-word",
           overflowWrap: "break-word",
           willChange: "transform",
+          opacity: needsDisplayLayer ? 1 : 0,
+          visibility: needsDisplayLayer ? "visible" : "hidden",
         }}
       >
         {paragraphs.map((p, i) => {
-          const isSearchActive = searchState !== null && searchState.query.trim().length > 0;
           const isActive = isSearchActive ? true : (isParagraphFocus ? (i >= startIdx && i <= endIdx) : true);
           const renderedContent = renderParagraphContent(p, paragraphStartIndices[i] || 0);
           return (
@@ -615,26 +667,29 @@ function TinyEditor({
         ref={textareaRef}
         value={content}
         onChange={handleChange}
-        onKeyDown={handleTypingEvent}
-        onKeyUp={handleTypingEvent}
+        onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
         onClick={handleInteraction}
         onSelect={handleInteraction}
         onFocus={handleInteraction}
         onScroll={syncScrollPos}
         placeholder="..."
         spellCheck
-        className="editor-textarea block h-screen w-full resize-none bg-transparent focus:outline-none overflow-y-scroll relative z-10"
+        className={twMerge(
+          "editor-textarea block h-screen w-full resize-none bg-transparent focus:outline-none overflow-x-hidden overflow-y-scroll relative z-10",
+          fontClass
+        )}
         style={{
           boxSizing: "border-box",
           height: "100vh",
           maxHeight: "100vh",
           fontSize,
           textAlign: textAlign as CSSProperties["textAlign"],
-          letterSpacing: `${letterSpacing}px`,
+          letterSpacing: letterSpacing === 0 ? "normal" : `${letterSpacing}px`,
           backgroundColor: "transparent",
-          color: "transparent",
-          WebkitTextFillColor: "transparent",
-          caretColor: isDay ? "#1f2937" : "#e5e7eb",
+          color: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
+          WebkitTextFillColor: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
+          caretColor: "#00a8ff",
           paddingTop: "70px",
           paddingBottom: "70px",
           paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
@@ -649,6 +704,7 @@ function TinyEditor({
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           overflowWrap: "break-word",
+          overflowX: "hidden",
           overflowY: "scroll",
         }}
       />

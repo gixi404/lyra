@@ -68,8 +68,9 @@
         "decorations": true,
         "center": true,
         "focus": true,
-        "visible": true,
-        "useHttpsScheme": true
+        "visible": false,
+        "useHttpsScheme": true,
+        "backgroundColor": "#e0e0e0"
       }
     ],
     "security": {

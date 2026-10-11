@@ -176,6 +176,20 @@ mod tests {
     }
 }
 
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        {
+            let _ = window.set_resizable(false);
+            let _ = window.set_resizable(true);
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -185,10 +199,41 @@ fn main() {
                 if let Some(icon) = app.default_window_icon() {
                     let _ = window.set_icon(icon.clone());
                 }
+
+                #[cfg(target_os = "linux")]
+                {
+                    let window_clone = window.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::Focused(true) = event {
+                            let _ = window_clone.set_resizable(false);
+                            let _ = window_clone.set_resizable(true);
+                        }
+                    });
+                }
             }
+
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                let handle = app_handle.clone();
+                let _ = app_handle.run_on_main_thread(move || {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        if !window.is_visible().unwrap_or(true) {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            #[cfg(target_os = "linux")]
+                            {
+                                let _ = window.set_resizable(false);
+                                let _ = window.set_resizable(true);
+                            }
+                        }
+                    }
+                });
+            });
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_folder])
+        .invoke_handler(tauri::generate_handler![open_folder, show_main_window])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

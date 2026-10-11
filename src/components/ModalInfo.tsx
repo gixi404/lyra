@@ -292,14 +292,14 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
                           }`}
                         >
                           <Calendar size={14} />
-                          <span>Fecha de creación</span>
+                          <span>Última edición</span>
                         </span>
                         <span
                           className={`font-medium ${
                             isDay ? "text-neutral-900" : "text-zinc-100"
                           }`}
                         >
-                          {stats.createdAt}
+                          {stats.modifiedAt}
                         </span>
                       </div>
 
@@ -310,14 +310,14 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
                           }`}
                         >
                           <Calendar size={14} />
-                          <span>Última edición</span>
+                          <span>Fecha de creación</span>
                         </span>
                         <span
                           className={`font-medium ${
                             isDay ? "text-neutral-900" : "text-zinc-100"
                           }`}
                         >
-                          {stats.modifiedAt}
+                          {stats.createdAt}
                         </span>
                       </div>
                     </div>
