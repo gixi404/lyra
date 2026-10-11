@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import {
-  getEditableFileName,
   nameIsValid,
   navigation,
   notification,
@@ -70,7 +69,6 @@ function Form(): Component {
   function handleCreateConfirm(value?: string): void {
     if (!value) return;
     const sanitizedName: string = sanitizeFileName(value);
-    const displayName: string = resolveDisplayName(sanitizedName);
 
     if (paperIsOpen) {
       setIsModalOpen(false);
@@ -89,7 +87,7 @@ function Form(): Component {
     setIsModalOpen(false);
     const file: File = {
       name: sanitizedName,
-      content: `## ${getEditableFileName(displayName)}\n\n`,
+      content: "",
     };
     void fileManagement(file);
   }

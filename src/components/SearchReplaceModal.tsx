@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { animated, useTransition } from "@react-spring/web";
 import { ChevronUp, ChevronDown, Replace, ReplaceAll, X, CaseSensitive } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { themes } from "../utils/helpers";
@@ -36,6 +37,13 @@ function SearchReplaceModal({
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+
+  const transitions = useTransition(isOpen, {
+    from: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
+    enter: { opacity: 1, transform: "scale(1) translateY(0px)" },
+    leave: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
+    config: { duration: 150 },
+  });
 
   useEffect(() => {
     return () => {
@@ -241,19 +249,26 @@ function SearchReplaceModal({
     }
   }
 
-  if (!isOpen) return null;
-
   return (
-    <div
-      ref={modalRef}
-      onKeyDown={handleKeyDown}
-      className={twMerge(
-        "search-replace-modal no-print fixed top-4 right-4 z-[9999] p-3 rounded-xl shadow-2xl border backdrop-blur-lg transition-all duration-200 flex flex-col gap-2 w-[340px] sm:w-[380px]",
-        isDay
-          ? "bg-white/95 text-neutral-800 border-neutral-300 shadow-neutral-300/40"
-          : "bg-zinc-900/95 text-zinc-100 border-zinc-700/80 shadow-black/50"
-      )}
-    >
+    <>
+      {transitions(
+        (styles, item) =>
+          item && (
+            <animated.div
+              ref={modalRef}
+              style={{
+                opacity: styles.opacity,
+                transform: styles.transform,
+                transformOrigin: "top right",
+              }}
+              onKeyDown={handleKeyDown}
+              className={twMerge(
+                "search-replace-modal no-print fixed top-4 right-4 z-[9999] p-3 rounded-xl shadow-2xl border backdrop-blur-lg flex flex-col gap-2 w-[340px] sm:w-[380px]",
+                isDay
+                  ? "bg-white/95 text-neutral-800 border-neutral-300 shadow-neutral-300/40"
+                  : "bg-zinc-900/95 text-zinc-100 border-zinc-700/80 shadow-black/50"
+              )}
+            >
       <div
         className={twMerge(
           "flex items-center justify-between gap-2 border-b pb-2",
@@ -385,8 +400,11 @@ function SearchReplaceModal({
           <ReplaceAll size={14} />
         </button>
       </div>
-    </div>
-  );
+        </animated.div>
+      )
+  )}
+</>
+);
 }
 
 export default SearchReplaceModal;

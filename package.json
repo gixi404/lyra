@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "NO_STRIP=1 tauri"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@fontsource/cinzel": "^5.3.0",

@@ -129,18 +129,35 @@ async function verifyMainFolder(): Promise<void> {
   const welcome: string = WELCOME_ES,
     intro: string = INTRO_ES;
 
-  while (true) {
+  try {
     const mainFolderExists: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
     const path: string = await join(MAIN_FOLDER, welcome);
+
     if (!mainFolderExists) {
-      mkdir(MAIN_FOLDER, BASE_DIRECTORY)
-        .then(() => writeTextFile(path, intro, BASE_DIRECTORY))
-        .catch((e: unknown) => {
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          console.error(`catch 'verifyMainFolder' ${errorMessage}`);
-        });
-      break;
-    } else break;
+      await mkdir(MAIN_FOLDER, BASE_DIRECTORY);
+      await writeTextFile(path, intro, BASE_DIRECTORY);
+    } else {
+      const welcomeExists: boolean = await exists(path, BASE_DIRECTORY);
+      if (!welcomeExists) {
+        await writeTextFile(path, intro, BASE_DIRECTORY);
+      }
+    }
+
+    // Asegurarse de que en la primera instalación el archivo de bienvenida nunca esté en archivados
+    const isInit = window.localStorage.getItem("lyra_initialized");
+    if (!isInit) {
+      window.localStorage.setItem("lyra_initialized", "true");
+      const rawPaper = JSON.parse(window.localStorage.getItem("paper") || "[]");
+      if (Array.isArray(rawPaper)) {
+        const cleanPaper = rawPaper.filter(
+          (name: string) => !name.toLowerCase().includes("bienvenido a lyra")
+        );
+        window.localStorage.setItem("paper", JSON.stringify(cleanPaper));
+      }
+    }
+  } catch (e: unknown) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    console.error(`catch 'verifyMainFolder' ${errorMessage}`);
   }
 }
 

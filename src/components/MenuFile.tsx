@@ -1,5 +1,6 @@
 import { Edit2 as EditIcon, Archive as TrashIcon, MoreVertical, Info, FileDown } from "lucide-react";
 import { type SyntheticEvent, useEffect, useRef, useState } from "react";
+import { animated, useTransition } from "@react-spring/web";
 import { twMerge } from "tailwind-merge";
 import { downloadDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
@@ -35,6 +36,13 @@ function MenuFile({ fileName }: Props): Component {
     [isEditOpen, setIsEditOpen] = useState<boolean>(false),
     [isTrashOpen, setIsTrashOpen] = useState<boolean>(false),
     menuRef = useRef<HTMLDivElement>(null);
+
+  const menuTransitions = useTransition(menuOpen, {
+    from: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
+    enter: { opacity: 1, transform: "scale(1) translateY(0px)" },
+    leave: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
+    config: { duration: 150 },
+  });
 
   function sanitizePdfText(text: string): string {
     return text
@@ -168,16 +176,23 @@ function MenuFile({ fileName }: Props): Component {
         <MoreVertical size={16} />
       </button>
 
-      {menuOpen && (
-        <div
-          onClick={(e: SyntheticEvent) => e.stopPropagation()}
-          className={twMerge(
-            "absolute right-0 top-full mt-1 w-44 rounded-xl border shadow-xl py-1 z-50 flex flex-col text-xs font-medium animate-in fade-in duration-100",
-            isDay
-              ? "bg-white/95 border-neutral-200 text-neutral-700 shadow-neutral-300/40 backdrop-blur-md"
-              : "bg-zinc-900/95 border-zinc-700/80 text-zinc-200 shadow-black/50 backdrop-blur-md"
-          )}
-        >
+      {menuTransitions(
+        (styles, item) =>
+          item && (
+            <animated.div
+              style={{
+                opacity: styles.opacity,
+                transform: styles.transform,
+                transformOrigin: "top right",
+              }}
+              onClick={(e: SyntheticEvent) => e.stopPropagation()}
+              className={twMerge(
+                "absolute right-0 top-full mt-1 w-44 rounded-xl border shadow-xl py-1 z-50 flex flex-col text-xs font-medium",
+                isDay
+                  ? "bg-white/95 border-neutral-200 text-neutral-700 shadow-neutral-300/40 backdrop-blur-md"
+                  : "bg-zinc-900/95 border-zinc-700/80 text-zinc-200 shadow-black/50 backdrop-blur-md"
+              )}
+            >
           <button
             type="button"
             onClick={(e: SyntheticEvent) => {
@@ -270,8 +285,9 @@ function MenuFile({ fileName }: Props): Component {
             <TrashIcon size={14} />
             <span>{d.MoveToTrashLabel ?? "Archivar"}</span>
           </button>
-        </div>
-      )}
+        </animated.div>
+      )
+  )}
 
       <ModalInfo
         isOpen={isInfoOpen}
