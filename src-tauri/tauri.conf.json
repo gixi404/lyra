@@ -7,22 +7,23 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "msi",
-      "deb",
-      "rpm",
-      "appimage"
-    ],
+    "targets": "all",
     "windows": {
       "wix": {
         "language": "es-ES",
-        "dialogImagePath": "./assets/dialog.webp",
-        "bannerPath": "./assets/banner.webp"
+        "dialogImagePath": "./assets/dialog.bmp",
+        "bannerPath": "./assets/banner.bmp"
+      },
+      "nsis": {
+        "languages": ["Spanish"]
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
         "silent": true
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
     },
     "publisher": "Lyra",
     "shortDescription": "Lyra",
