@@ -78,7 +78,7 @@ function FileContent(): Component {
     rawInitial = initialDraft?.content ?? (selectedFile.content ?? ""),
     isWelcomeLegacy =
       selectedFile.name.toLowerCase().includes("bienvenido") &&
-      (rawInitial.includes("<p>") || rawInitial.includes("espacio ideal")),
+      rawInitial.includes("<p>"),
     initialStartingContent = isWelcomeLegacy ? INTRO_ES : rawInitial,
     [content, setContent] = useState<string>(initialStartingContent),
     autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
@@ -286,8 +286,6 @@ function FileContent(): Component {
     setContent(newContent);
   }
 
-  function handleWordCountChange(_count: number): void {}
-
   function saveLastModified(fileName: string, previousContent: string, currentContent: string): void {
     if (fileName && previousContent !== currentContent) {
       const date: string = getDate();
@@ -311,7 +309,6 @@ function FileContent(): Component {
           key={selectedFile.name}
           content={content}
           onContentChange={handleContentChange}
-          onWordCountChange={handleWordCountChange}
         />
       </Suspense>
     </MainContainer>

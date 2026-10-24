@@ -8,9 +8,6 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
   },
-  optimizeDeps: {
-    include: ["react-select"],
-  },
   build: {
     chunkSizeWarningLimit: 1000,
   },

@@ -4,21 +4,65 @@ import { twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal";
+// Descomentar para activar el HUD de debug en pantalla:
+// import EditorDebugHUD from "./EditorDebugHUD";
+import { editorDebug } from "../utils/editorDebug";
 import { themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 
 interface TinyEditorProps {
   content: string;
   onContentChange: (content: string) => void;
-  onWordCountChange: (count: number) => void;
 }
 
-const WORD_COUNT_DEBOUNCE_MS = 250;
+function getParagraphRange(
+  text: string,
+  selStart: number,
+  selEnd: number
+): { startIdx: number; endIdx: number } {
+  if (!text) return { startIdx: 0, endIdx: 0 };
+
+  const selMin = Math.min(selStart, selEnd);
+  const selMax = Math.max(selStart, selEnd);
+  const selEndChar = selMax > selMin ? selMax - 1 : selMin;
+
+  let sIdx = 0;
+  let eIdx = 0;
+  let charCounter = 0;
+
+  const paras = text.split("\n");
+  const lastParaIdx = paras.length - 1;
+
+  for (let i = 0; i < paras.length; i++) {
+    const isLast = i === lastParaIdx;
+    const paraLen = paras[i].length;
+    const lenWithNewline = isLast ? paraLen : paraLen + 1;
+
+    if (
+      selMin >= charCounter &&
+      (isLast ? selMin <= charCounter + paraLen : selMin < charCounter + lenWithNewline)
+    ) {
+      sIdx = i;
+    }
+    if (
+      selEndChar >= charCounter &&
+      (isLast ? selEndChar <= charCounter + paraLen : selEndChar < charCounter + lenWithNewline)
+    ) {
+      eIdx = i;
+    }
+
+    charCounter += lenWithNewline;
+  }
+
+  return {
+    startIdx: Math.max(0, Math.min(sIdx, lastParaIdx)),
+    endIdx: Math.max(0, Math.min(eIdx, lastParaIdx)),
+  };
+}
 
 function TinyEditor({
   content,
   onContentChange,
-  onWordCountChange,
 }: TinyEditorProps): Component {
   const textareaRef = useRef<HTMLTextAreaElement>(null),
     displayRef = useRef<HTMLDivElement>(null),
@@ -34,8 +78,10 @@ function TinyEditor({
     textAlign: string = myAlign(),
     letterSpacing: number = mySpacing(),
     isParagraphFocus: boolean = myParagraphFocus(),
-    [selectionStart, setSelectionStart] = useState<number>(0),
-    [selectionEnd, setSelectionEnd] = useState<number>(0),
+    [{ startIdx, endIdx }, setActiveParaRange] = useState<{
+      startIdx: number;
+      endIdx: number;
+    }>({ startIdx: 0, endIdx: 0 }),
     [isSearchOpen, setIsSearchOpen] = useState<boolean>(false),
     [searchState, setSearchState] = useState<SearchState | null>(null);
 
@@ -142,31 +188,6 @@ function TinyEditor({
     [isDay, searchState]
   );
 
-  const { startIdx, endIdx } = useMemo(() => {
-    let charCounter = 0;
-    let sIdx = 0;
-    let eIdx = 0;
-    const selMin = Math.min(selectionStart, selectionEnd);
-    const selMax = Math.max(selectionStart, selectionEnd);
-
-    for (let i = 0; i < paragraphs.length; i++) {
-      const len = paragraphs[i].length + 1;
-      if (selMin >= charCounter && selMin < charCounter + len) {
-        sIdx = i;
-      }
-      if (selMax >= charCounter && selMax < charCounter + len) {
-        eIdx = i;
-      }
-      charCounter += len;
-    }
-
-    if (selMax >= content.length) {
-      eIdx = Math.max(0, paragraphs.length - 1);
-    }
-
-    return { startIdx: sIdx, endIdx: eIdx };
-  }, [content.length, paragraphs, selectionStart, selectionEnd]);
-
   const syncScrollPos = useCallback(() => {
     const textarea = textareaRef.current;
     const display = displayRef.current;
@@ -174,14 +195,29 @@ function TinyEditor({
     if (textarea.scrollLeft !== 0) {
       textarea.scrollLeft = 0;
     }
-    display.style.transform = `translate3d(0, ${-textarea.scrollTop}px, 0)`;
+    if (display.scrollTop !== textarea.scrollTop) {
+      display.scrollTop = textarea.scrollTop;
+    }
   }, []);
 
   const updateCaretState = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    setSelectionStart(textarea.selectionStart);
-    setSelectionEnd(textarea.selectionEnd);
+    const nextRange = getParagraphRange(
+      textarea.value,
+      textarea.selectionStart,
+      textarea.selectionEnd
+    );
+    editorDebug.log("STATE", "updateCaretState", {
+      selStart: textarea.selectionStart,
+      selEnd: textarea.selectionEnd,
+      nextRange,
+    });
+    setActiveParaRange((prev) =>
+      prev.startIdx === nextRange.startIdx && prev.endIdx === nextRange.endIdx
+        ? prev
+        : nextRange
+    );
     syncScrollPos();
   }, [syncScrollPos]);
 
@@ -197,6 +233,9 @@ function TinyEditor({
 
       const position = textarea.selectionStart;
       const style = window.getComputedStyle(textarea);
+      const lineHeight =
+        parseFloat(style.lineHeight) ||
+        parseFloat(style.fontSize) * 1.9;
 
       let mirror = mirrorRef.current;
       if (!mirror) {
@@ -215,8 +254,10 @@ function TinyEditor({
       mirror.style.overflowWrap = "break-word";
       mirror.style.fontVariantLigatures = "none";
       mirror.style.fontFeatureSettings = '"liga" 0, "clig" 0, "calt" 0';
-      mirror.style.boxSizing = style.boxSizing;
-      mirror.style.width = style.width;
+      mirror.style.boxSizing = "border-box";
+      // Use clientWidth so the mirror matches the textarea's actual content
+      // area (excluding the scrollbar gutter) and wraps text identically.
+      mirror.style.width = `${textarea.clientWidth}px`;
       mirror.style.fontFamily = style.fontFamily;
       mirror.style.fontSize = style.fontSize;
       mirror.style.lineHeight = style.lineHeight;
@@ -234,14 +275,26 @@ function TinyEditor({
 
       const caretTopInTextarea = caretSpan.offsetTop;
       const caretViewportY = caretTopInTextarea - textarea.scrollTop;
-      const minViewportY = 70;
-      const maxViewportY = textarea.clientHeight * 0.65;
 
-      if (caretViewportY > maxViewportY) {
-        textarea.scrollTop = caretTopInTextarea - maxViewportY;
-      } else if (caretViewportY < minViewportY) {
-        textarea.scrollTop = Math.max(0, caretTopInTextarea - minViewportY);
+      // Only scroll when the caret is truly outside the visible viewport.
+      // Top boundary: one line-height from the top edge keeps the caret from
+      // hiding behind any fixed header / padding area.
+      // Bottom boundary: one line-height from the bottom edge gives room
+      // before the caret disappears below the fold.
+      const topBoundary = lineHeight;
+      const bottomBoundary = textarea.clientHeight - lineHeight;
+
+      if (caretViewportY > bottomBoundary) {
+        // Caret fell below the visible area → centre it at 50 %
+        textarea.scrollTop = caretTopInTextarea - textarea.clientHeight * 0.5;
+      } else if (caretViewportY < topBoundary) {
+        // Caret went above the visible area → centre it at 50 %
+        textarea.scrollTop = Math.max(
+          0,
+          caretTopInTextarea - textarea.clientHeight * 0.5,
+        );
       }
+      // Otherwise the caret is still on-screen — don't touch scrollTop.
 
       syncScrollPos();
     });
@@ -252,8 +305,8 @@ function TinyEditor({
     if (!el) return;
 
     const handleScroll = () => {
-      if (displayRef.current) {
-        displayRef.current.style.transform = `translate3d(0, ${-el.scrollTop}px, 0)`;
+      if (displayRef.current && displayRef.current.scrollTop !== el.scrollTop) {
+        displayRef.current.scrollTop = el.scrollTop;
       }
     };
 
@@ -267,6 +320,46 @@ function TinyEditor({
     };
   }, []);
 
+  useEffect(() => {
+    const display = displayRef.current;
+    if (!display) return;
+
+    const onTransRun = (e: TransitionEvent) => {
+      editorDebug.log("TRANSITION", `run: ${(e.target as HTMLElement)?.className?.slice(0, 25)}`, {
+        prop: e.propertyName,
+        elapsed: e.elapsedTime,
+      });
+    };
+    const onTransStart = (e: TransitionEvent) => {
+      editorDebug.log("TRANSITION", `start: ${(e.target as HTMLElement)?.className?.slice(0, 25)}`, {
+        prop: e.propertyName,
+      });
+    };
+    const onTransCancel = (e: TransitionEvent) => {
+      editorDebug.log("TRANSITION", `CANCEL: ${(e.target as HTMLElement)?.className?.slice(0, 25)}`, {
+        prop: e.propertyName,
+        elapsed: e.elapsedTime,
+      });
+    };
+    const onTransEnd = (e: TransitionEvent) => {
+      editorDebug.log("TRANSITION", `end: ${(e.target as HTMLElement)?.className?.slice(0, 25)}`, {
+        prop: e.propertyName,
+      });
+    };
+
+    display.addEventListener("transitionrun", onTransRun);
+    display.addEventListener("transitionstart", onTransStart);
+    display.addEventListener("transitioncancel", onTransCancel);
+    display.addEventListener("transitionend", onTransEnd);
+
+    return () => {
+      display.removeEventListener("transitionrun", onTransRun);
+      display.removeEventListener("transitionstart", onTransStart);
+      display.removeEventListener("transitioncancel", onTransCancel);
+      display.removeEventListener("transitionend", onTransEnd);
+    };
+  }, []);
+
   const handleInteraction = useCallback(() => {
     updateCaretState();
     if (!isTypingWordRef.current && textareaRef.current) {
@@ -274,6 +367,17 @@ function TinyEditor({
       lastSnapshotRef.current.scrollTop = textareaRef.current.scrollTop;
     }
   }, [updateCaretState]);
+
+  const handleInteractionWithDebug = useCallback(
+    (e: React.SyntheticEvent) => {
+      editorDebug.log("EVENT", e.type, {
+        selStart: textareaRef.current?.selectionStart,
+        selEnd: textareaRef.current?.selectionEnd,
+      });
+      handleInteraction();
+    },
+    [handleInteraction]
+  );
 
   const markTyping = useCallback(() => {
     (window as any).__lastTypingTime = Date.now();
@@ -353,8 +457,7 @@ function TinyEditor({
       }
       syncScrollPos();
       keepCaretCentered();
-      setSelectionStart(targetCaret);
-      setSelectionEnd(targetCaret);
+      setActiveParaRange(getParagraphRange(targetSnapshot.content, targetCaret, targetCaret));
     });
   }, [onContentChange, syncScrollPos, keepCaretCentered]);
 
@@ -400,8 +503,7 @@ function TinyEditor({
       }
       syncScrollPos();
       keepCaretCentered();
-      setSelectionStart(targetCaret);
-      setSelectionEnd(targetCaret);
+      setActiveParaRange(getParagraphRange(targetSnapshot.content, targetCaret, targetCaret));
     });
   }, [onContentChange, syncScrollPos, keepCaretCentered]);
 
@@ -465,28 +567,6 @@ function TinyEditor({
       window.removeEventListener("keydown", handleShortcutsKeyDown);
     };
   }, [fontSize, setItem, handleUndo, handleRedo]);
-
-  useEffect(() => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
-      if (!textareaRef.current) {
-        onWordCountChange(0);
-        return;
-      }
-
-      const normalizedText: string = textareaRef.current.value.trim();
-      if (normalizedText.length === 0) {
-        onWordCountChange(0);
-        return;
-      }
-
-      const words: string[] = normalizedText.split(/\s+/);
-      onWordCountChange(words.length);
-    }, WORD_COUNT_DEBOUNCE_MS);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [content, onWordCountChange]);
 
   const handleChange = useCallback(
     (e: ChangeEvent<HTMLTextAreaElement>): void => {
@@ -558,70 +638,101 @@ function TinyEditor({
   const isSearchActive = searchState !== null && searchState.query.trim().length > 0;
   const needsDisplayLayer = isParagraphFocus || isSearchActive;
 
+  const editorStyles = useMemo(
+    () => `
+      .editor-display-layer,
+      .editor-textarea,
+      .editor-para {
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
+      }
+
+      .editor-display-layer {
+        overflow-y: scroll !important;
+        scrollbar-width: thin !important;
+        scrollbar-color: transparent transparent !important;
+        -ms-overflow-style: none !important;
+      }
+      .editor-display-layer::-webkit-scrollbar {
+        width: 8px !important;
+        display: block !important;
+        background: transparent !important;
+      }
+      .editor-display-layer::-webkit-scrollbar-track {
+        background: transparent !important;
+      }
+      .editor-display-layer::-webkit-scrollbar-thumb {
+        background-color: transparent !important;
+      }
+
+      .editor-para {
+        transition: color 220ms ease-out;
+      }
+      .editor-para-active {
+        color: ${isDay ? "rgba(31, 41, 55, 1) !important" : "rgba(229, 231, 235, 1) !important"};
+      }
+      .editor-para-inactive {
+        color: ${isDay ? "rgba(31, 41, 55, 0.28) !important" : "rgba(229, 231, 235, 0.28) !important"};
+      }
+
+      .editor-textarea {
+        overflow-y: scroll !important;
+        scrollbar-width: thin !important;
+        scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        caret-color: #00a8ff !important;
+        color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
+        -webkit-text-fill-color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
+      }
+      .editor-textarea::-webkit-scrollbar {
+        width: 8px !important;
+        display: block !important;
+        background: transparent !important;
+      }
+      .editor-textarea::-webkit-scrollbar-track {
+        background: transparent !important;
+      }
+      .editor-textarea::-webkit-scrollbar-thumb {
+        background-color: ${isDay ? "rgba(156, 163, 175, 0.5)" : "rgba(113, 113, 122, 0.45)"} !important;
+        border-radius: 9999px !important;
+        transition: background-color 300ms ease-in-out !important;
+      }
+      .editor-textarea::-webkit-scrollbar-thumb:hover {
+        background-color: ${isDay ? "rgba(107, 114, 128, 0.8)" : "rgba(161, 161, 170, 0.7)"} !important;
+      }
+
+      .editor-textarea.is-typing-editor,
+      body.is-typing .editor-textarea,
+      html.is-typing .editor-textarea {
+        scrollbar-color: transparent transparent !important;
+      }
+      .editor-textarea.is-typing-editor::-webkit-scrollbar-thumb,
+      body.is-typing .editor-textarea::-webkit-scrollbar-thumb,
+      html.is-typing .editor-textarea::-webkit-scrollbar-thumb {
+        background-color: transparent !important;
+      }
+
+      .editor-textarea::selection {
+        background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
+        color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
+        -webkit-text-fill-color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
+      }
+      .editor-textarea::-moz-selection {
+        background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
+        color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
+        -webkit-text-fill-color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
+      }
+    `,
+    [isDay, needsDisplayLayer]
+  );
+
+  const effectiveStart = Math.min(startIdx, Math.max(0, paragraphs.length - 1));
+  const effectiveEnd = Math.min(endIdx, Math.max(0, paragraphs.length - 1));
+
   return (
     <div className={twMerge("relative w-full h-screen overflow-hidden", fontClass)}>
-      <style>{`
-        .editor-display-layer {
-          overflow-y: scroll !important;
-          scrollbar-width: none !important;
-          -ms-overflow-style: none !important;
-        }
-        .editor-display-layer::-webkit-scrollbar {
-          width: 8px !important;
-          display: block !important;
-          background: transparent !important;
-        }
-        .editor-display-layer::-webkit-scrollbar-thumb {
-          background: transparent !important;
-        }
-
-        .editor-textarea {
-          overflow-y: scroll !important;
-          scrollbar-width: thin !important;
-          scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
-          -webkit-appearance: none !important;
-          appearance: none !important;
-          caret-color: #00a8ff !important;
-        }
-        .editor-textarea::-webkit-scrollbar {
-          width: 8px !important;
-          display: block !important;
-          background: transparent !important;
-        }
-        .editor-textarea::-webkit-scrollbar-track {
-          background: transparent !important;
-        }
-        .editor-textarea::-webkit-scrollbar-thumb {
-          background-color: ${isDay ? "rgba(156, 163, 175, 0.5)" : "rgba(113, 113, 122, 0.45)"} !important;
-          border-radius: 9999px !important;
-          transition: background-color 300ms ease-in-out !important;
-        }
-        .editor-textarea::-webkit-scrollbar-thumb:hover {
-          background-color: ${isDay ? "rgba(107, 114, 128, 0.8)" : "rgba(161, 161, 170, 0.7)"} !important;
-        }
-
-        .editor-textarea.is-typing-editor,
-        body.is-typing .editor-textarea,
-        html.is-typing .editor-textarea {
-          scrollbar-color: transparent transparent !important;
-        }
-        .editor-textarea.is-typing-editor::-webkit-scrollbar-thumb,
-        body.is-typing .editor-textarea::-webkit-scrollbar-thumb,
-        html.is-typing .editor-textarea::-webkit-scrollbar-thumb {
-          background-color: transparent !important;
-        }
-
-        .editor-textarea::selection {
-          background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
-          color: transparent !important;
-          -webkit-text-fill-color: transparent !important;
-        }
-        .editor-textarea::-moz-selection {
-          background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
-          color: transparent !important;
-          -webkit-text-fill-color: transparent !important;
-        }
-      `}</style>
+      <style>{editorStyles}</style>
 
       <SearchReplaceModal
         isOpen={isSearchOpen}
@@ -632,7 +743,7 @@ function TinyEditor({
         onSearchStateChange={setSearchState}
       />
 
-      {/* Capa de fondo para el modo foco por párrafo o búsqueda */}
+      {/* Capa de fondo para el modo foco por párrafo o búsqueda (Réplica continua 1:1) */}
       <div
         ref={displayRef}
         aria-hidden="true"
@@ -642,10 +753,11 @@ function TinyEditor({
         )}
         style={{
           boxSizing: "border-box",
+          height: "100vh",
+          maxHeight: "100vh",
           fontSize,
           textAlign: textAlign as CSSProperties["textAlign"],
           letterSpacing: letterSpacing === 0 ? "normal" : `${letterSpacing}px`,
-          color: isDay ? "#1f2937" : "#e5e7eb",
           paddingTop: "70px",
           paddingBottom: "70px",
           paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
@@ -658,26 +770,57 @@ function TinyEditor({
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           overflowWrap: "break-word",
-          willChange: "transform",
+          overflowX: "hidden",
+          overflowY: "scroll",
+          fontVariantLigatures: "none",
+          fontFeatureSettings: '"liga" 0, "clig" 0, "calt" 0',
           opacity: needsDisplayLayer ? 1 : 0,
           visibility: needsDisplayLayer ? "visible" : "hidden",
         }}
       >
         {paragraphs.map((p, i) => {
-          const isActive = isSearchActive ? true : (isParagraphFocus ? (i >= startIdx && i <= endIdx) : true);
+          const isActive = isSearchActive
+            ? true
+            : isParagraphFocus
+            ? i >= effectiveStart && i <= effectiveEnd
+            : true;
           const renderedContent = renderParagraphContent(p, paragraphStartIndices[i] || 0);
+          const isLast = i === paragraphs.length - 1;
+
+          // Si el párrafo está vacío o termina en espacios, usamos \u200B (espacio de ancho cero)
+          // para garantizar que WebKit nunca colapse la altura de la línea (line-height)
+          const safeContent =
+            p.length === 0
+              ? "\u200B"
+              : p.endsWith(" ")
+              ? (
+                  <>
+                    {renderedContent}
+                    {"\u200B"}
+                  </>
+                )
+              : renderedContent;
+
+          const activeColor = isDay ? "rgba(31, 41, 55, 1)" : "rgba(229, 231, 235, 1)";
+          const inactiveColor = isDay ? "rgba(31, 41, 55, 0.28)" : "rgba(229, 231, 235, 0.28)";
+
           return (
-            <div
+            <span
               key={i}
+              className={`editor-para ${
+                isActive ? "editor-para-active" : "editor-para-inactive"
+              }`}
               style={{
-                opacity: isActive ? 1 : 0.6,
-                minHeight: "1.9em",
+                color: isActive ? activeColor : inactiveColor,
+                transition: "color 220ms ease-out",
               }}
             >
-              {p.length === 0 ? <br /> : renderedContent}
-            </div>
+              {safeContent}
+              {!isLast && "\n"}
+            </span>
           );
         })}
+        {content.endsWith("\n") && <br aria-hidden="true" />}
       </div>
 
       <textarea
@@ -687,14 +830,30 @@ function TinyEditor({
         onInput={markTyping}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
-        onClick={handleInteraction}
-        onSelect={handleInteraction}
-        onFocus={handleInteraction}
+        onMouseDown={(e) =>
+          editorDebug.log("EVENT", "mousedown", {
+            target: (e.target as HTMLElement)?.tagName,
+            selStart: textareaRef.current?.selectionStart,
+            selEnd: textareaRef.current?.selectionEnd,
+          })
+        }
+        onMouseUp={(e) => {
+          editorDebug.log("EVENT", "mouseup", {
+            target: (e.target as HTMLElement)?.tagName,
+            selStart: textareaRef.current?.selectionStart,
+            selEnd: textareaRef.current?.selectionEnd,
+          });
+          handleInteraction();
+        }}
+        onClick={handleInteractionWithDebug}
+        onSelect={handleInteractionWithDebug}
+        onFocus={handleInteractionWithDebug}
         onScroll={syncScrollPos}
         placeholder="..."
         spellCheck
         className={twMerge(
           "editor-textarea block h-screen w-full resize-none bg-transparent focus:outline-none overflow-x-hidden overflow-y-scroll relative z-10",
+          needsDisplayLayer && "editor-textarea-transparent",
           fontClass
         )}
         style={{
@@ -724,8 +883,17 @@ function TinyEditor({
           overflowWrap: "break-word",
           overflowX: "hidden",
           overflowY: "scroll",
+          fontVariantLigatures: "none",
+          fontFeatureSettings: '"liga" 0, "clig" 0, "calt" 0',
         }}
       />
+
+      {/* Descomentar para activar el HUD visual de debug en pantalla: */}
+      {/* <EditorDebugHUD
+        startIdx={effectiveStart}
+        endIdx={effectiveEnd}
+        textareaRef={textareaRef}
+      /> */}
     </div>
   );
 }

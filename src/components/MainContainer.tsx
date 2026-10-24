@@ -1,19 +1,35 @@
-import "@fontsource/ia-writer-duo";
-import "@fontsource/inter";
-import "@fontsource/fira-code";
-import "@fontsource/jetbrains-mono";
-import "@fontsource/roboto";
-import "@fontsource/lora";
-import "@fontsource/merriweather";
-import "@fontsource/open-sans";
-import "@fontsource/poppins";
-import "@fontsource/montserrat";
-import "@fontsource/source-code-pro";
-import "@fontsource/space-mono";
-import "@fontsource/playfair-display";
-import "@fontsource/nunito";
-import "@fontsource/cinzel";
+import "@fontsource/ia-writer-duo/latin.css";
+import "@fontsource/inter/latin.css";
+import "@fontsource/inter/latin-ext.css";
+import "@fontsource/fira-code/latin.css";
+import "@fontsource/fira-code/latin-ext.css";
+import "@fontsource/jetbrains-mono/latin.css";
+import "@fontsource/jetbrains-mono/latin-ext.css";
+import "@fontsource/roboto/latin.css";
+import "@fontsource/roboto/latin-ext.css";
+import "@fontsource/lora/latin.css";
+import "@fontsource/lora/latin-ext.css";
+import "@fontsource/merriweather/latin.css";
+import "@fontsource/merriweather/latin-ext.css";
+import "@fontsource/open-sans/latin.css";
+import "@fontsource/open-sans/latin-ext.css";
+import "@fontsource/poppins/latin.css";
+import "@fontsource/poppins/latin-ext.css";
+import "@fontsource/montserrat/latin.css";
+import "@fontsource/montserrat/latin-ext.css";
+import "@fontsource/source-code-pro/latin.css";
+import "@fontsource/source-code-pro/latin-ext.css";
+import "@fontsource/space-mono/latin.css";
+import "@fontsource/space-mono/latin-ext.css";
+import "@fontsource/playfair-display/latin.css";
+import "@fontsource/playfair-display/latin-ext.css";
+import "@fontsource/nunito/latin.css";
+import "@fontsource/nunito/latin-ext.css";
+import "@fontsource/cinzel/latin.css";
+import "@fontsource/cinzel/latin-ext.css";
 import { animated, useSpring } from "@react-spring/web";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
 import { twJoin, twMerge } from "tailwind-merge";
@@ -25,7 +41,6 @@ import Header from "./Header";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {
-    const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     return await getCurrentWebviewWindow().isFullscreen();
   } catch {
     return !!document.fullscreenElement;
@@ -38,11 +53,9 @@ async function showAppWindow(): Promise<void> {
   if (hasShownWindow) return;
   hasShownWindow = true;
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
     await invoke("show_main_window");
   } catch {
     try {
-      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
       const appWindow = getCurrentWebviewWindow();
       await appWindow.show();
       await appWindow.setFocus();
@@ -74,9 +87,9 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
   useEffect(() => {
     const bg = isDay ? "#e0e0e0" : "#101010";
-    (window as any).document.documentElement.style.backgroundColor = bg;
-    (window as any).document.body.style.backgroundColor = bg;
-    (window as any).document.documentElement.classList.toggle("dark", !isDay);
+    document.documentElement.style.backgroundColor = bg;
+    document.body.style.backgroundColor = bg;
+    document.documentElement.classList.toggle("dark", !isDay);
   }, [isDay]);
 
   const toggleFullscreen = async (): Promise<void> => {

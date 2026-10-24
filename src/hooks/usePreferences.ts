@@ -6,8 +6,16 @@ import { configStore } from "../store/configStore";
 function usePreferences(): Preferences {
   configStore(state => state.prefTick);
   const { getItem, setItem } = useStorage();
-  const readBoolean = (key: string, fallback: string): boolean =>
-    JSON.parse(getItem(key, fallback)) as boolean;
+  const readBoolean = (key: string, fallback: string): boolean => {
+    try {
+      const val = getItem(key, fallback);
+      if (val === "true" || val === "1") return true;
+      if (val === "false" || val === "0") return false;
+      return JSON.parse(val) as boolean;
+    } catch {
+      return fallback === "true";
+    }
+  };
 
   function myLastModified(): boolean {
     return readBoolean("last-modified", "true");

@@ -143,7 +143,7 @@ function useFile(): Files {
     let content: string = await readTextFile(pathFile, BASE_DIRECTORY);
     if (
       name.toLowerCase().includes("bienvenido a lyra") &&
-      (content.includes("<p>") || content.includes("espacio ideal") || content.includes("&oacute;") || content.includes("&ntilde;"))
+      (content.includes("<p>") || (content.includes("&oacute;") && content.includes("&ntilde;")))
     ) {
       content = INTRO_ES;
       try {

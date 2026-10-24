@@ -36,8 +36,9 @@ function notification(type: "success" | "error", msg: string): void {
 function nameIsValid(name: string): boolean {
   const d = translations(),
     regex: RegExp = /[\\/:*"<>|]/,
+    hasControlChars: boolean = /[\x00-\x1f]/.test(name),
     nameLong: boolean = len(name) > 60,
-    invalidSymbols: boolean = regex.test(name),
+    invalidSymbols: boolean = regex.test(name) || hasControlChars,
     invalidStartEnd: boolean = /^[ .]|[ .]$/.test(name);
 
   if (nameLong) {
@@ -46,6 +47,18 @@ function nameIsValid(name: string): boolean {
   }
 
   if (invalidSymbols || invalidStartEnd) {
+    notification("error", d.NoSpecialCharacters);
+    return false;
+  }
+
+  const baseName = name.replace(/\.(txt|md)$/i, "").trim().toUpperCase();
+  const reservedWindowsNames = new Set([
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+  ]);
+
+  if (reservedWindowsNames.has(baseName)) {
     notification("error", d.NoSpecialCharacters);
     return false;
   }
@@ -145,9 +158,7 @@ async function verifyMainFolder(): Promise<void> {
           const currentContent = await readTextFile(path, BASE_DIRECTORY);
           if (
             currentContent.includes("<p>") ||
-            currentContent.includes("espacio ideal") ||
-            currentContent.includes("&oacute;") ||
-            currentContent.includes("&ntilde;")
+            (currentContent.includes("&oacute;") && currentContent.includes("&ntilde;"))
           ) {
             await writeTextFile(path, intro, BASE_DIRECTORY);
           }
@@ -164,9 +175,7 @@ async function verifyMainFolder(): Promise<void> {
         const val = window.localStorage.getItem(key) || "";
         if (
           val.includes("<p>") ||
-          val.includes("espacio ideal") ||
-          val.includes("&oacute;") ||
-          val.includes("&ntilde;")
+          (val.includes("&oacute;") && val.includes("&ntilde;"))
         ) {
           window.localStorage.removeItem(key);
         }

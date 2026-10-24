@@ -155,8 +155,8 @@ function SearchReplaceModal({
       mirror.style.whiteSpace = "pre-wrap";
       mirror.style.wordWrap = "break-word";
       mirror.style.overflowWrap = "break-word";
-      mirror.style.boxSizing = style.boxSizing;
-      mirror.style.width = style.width;
+      mirror.style.boxSizing = "border-box";
+      mirror.style.width = `${textarea.clientWidth}px`;
       mirror.style.fontFamily = style.fontFamily;
       mirror.style.fontSize = style.fontSize;
       mirror.style.lineHeight = style.lineHeight;

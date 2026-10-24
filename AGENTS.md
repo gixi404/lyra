@@ -2,7 +2,7 @@
 
 ## What matters here
 
-- This is a Tauri v1 + React 18 + TypeScript + Tailwind app. The UI boots from `src/main.tsx`; routes live in `src/pages/*`.
+- This is a Tauri v2 + React 18 + TypeScript + Tailwind app. The UI boots from `src/main.tsx`; routes live in `src/pages/*`.
 - Persistent app files live in `~/Documents/lyra/`. `verifyMainFolder()` creates the folder and a welcome file on first run.
 - `pnpm run build` is the repo’s verification gate; it is the only TypeScript type-check path defined here. There is no separate test script.
 - `pnpm run dev` starts Vite on port `1420`; Tauri expects that port.
@@ -45,6 +45,15 @@ pnpm run tauri dev      # desarrollo con hot-reload
 - React components in this repo commonly use default inline function exports.
 - Shared UI/app logic is split across `src/components/`, `src/hooks/`, `src/store/`, and `src/utils/`.
 - Existing repo guidance also lives in `CLAUDE.md`; trust package/config files over prose when they disagree.
+
+## Editor Debugging & Diagnostics System
+
+- **Módulo logger**: `src/utils/editorDebug.ts` implementa `editorDebug`, un logger de alta resolución (`performance.now()`) para eventos (`EVENT`), cambios de selección (`STATE`), renders (`RENDER`) y transiciones (`TRANSITION`).
+- **HUD visual**: `src/components/EditorDebugHUD.tsx` es un panel flotante que permite inspeccionar la selección y estado en vivo, además de guardar logs a disco con un clic.
+- **Cómo activarlo**: En `src/components/TinyEditor.tsx`, descomentar las dos líneas señaladas:
+  1. `// import EditorDebugHUD from "./EditorDebugHUD";`
+  2. `{/* <EditorDebugHUD ... /> */}`
+- **Exportación de logs**: Al presionar "Guardar Log" (o invocar `window.__lyraDebug.saveToFile()`), se genera el archivo `~/Documents/lyra/editor_debug.log`.
 
 ---
 

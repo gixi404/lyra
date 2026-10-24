@@ -35,6 +35,11 @@
   box-shadow: none !important;
 }
 
+.editor-textarea-transparent {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
 details summary::-webkit-details-marker {
   @apply hidden;
 }

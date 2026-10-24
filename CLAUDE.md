@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Lyra is a focused writing application built with Tauri v1, React 18, TypeScript, and Tailwind CSS. It's a distraction-free text editor that stores files locally in the user's Documents folder (`Documents/lyra/`). The app works offline and supports bilingual content (Spanish/English).
+Lyra is a focused writing application built with Tauri v2, React 18, TypeScript, and Tailwind CSS. It's a distraction-free text editor that stores files locally in the user's Documents folder (`Documents/lyra/`). The app works offline and supports bilingual content (Spanish/English).
 
 ## Build & Development Commands
 
@@ -31,30 +31,31 @@ Creates MSI installer for Windows with Spanish language support.
 ### Frontend Structure
 
 **State Management (Zustand):**
-- `configStore.ts`: UI configuration (paper menu, spellcheck, header visibility)
+- `configStore.ts`: UI configuration (paper menu, spellcheck, header visibility, theme ticks)
 - `fileStore.ts`: File management (file list, selected file, edit state)
-- `searchStore.ts`: Search/filter functionality
+- `searchStore.ts`: Search, sort and filter functionality
+- `toastStore.ts`: In-app notification toast alerts
 
 **Core Hooks:**
-- `useFile.ts`: File operations via Tauri APIs (CRUD operations on `.txt` files)
-- `useStorage.ts`: LocalStorage wrapper for user preferences
-- `usePreferences.ts`: Manages theme, language, font, and alignment settings
-- `useLoading.ts`: Loading state management
+- `useFile.ts`: File operations via Tauri APIs (CRUD operations on `.txt` and `.md` files)
+- `useStorage.ts`: LocalStorage wrapper for user preferences and reactivity
+- `usePreferences.ts`: Manages theme, font, alignment, and display settings
 
 **Pages:**
-- `Presentation.tsx`: Landing page, initializes main folder
-- `List.tsx`: File list view with search/filter
-- `FileContent.tsx`: Plain text editor view with auto-save and draft recovery
-- `Preferences.tsx`: Settings (theme, language, font, alignment)
-- `Support.tsx`: Help and support information
-- `MyFiles.tsx`: Opens system folder containing user files
+- `List.tsx`: File list view with search, sort, and modal actions
+- `FileContent.tsx`: Plain text editor view with auto-save, FIFO write queue, and draft recovery
+- `Preferences.tsx`: Settings (theme, font, alignment, paragraph focus, open documents folder)
 
 **Key Components:**
-- `TinyEditor.tsx`: Minimal controlled textarea editor component with word count updates
+- `TinyEditor.tsx`: Controlled textarea editor component with Zen-mode auto-hide, search/replace, and caret scrolling
+- `EditorDebugHUD.tsx`: Floating on-screen diagnostic HUD for inspecting events, selection, and paragraph focus transitions (commented out by default in `TinyEditor.tsx`)
+- `SearchReplaceModal.tsx`: In-editor search and replace modal with case-sensitivity matching
+- `ModalInfo.tsx`: Document statistics modal (word count, reading time, characters, dates)
+- `ModalSort.tsx`: File sorting options modal
 
 **Key Utilities:**
-- `commands.ts`: Keyboard shortcuts and UI commands
-- `helpers.ts`: File validation, theme management, system language detection, main folder initialization
+- `editorDebug.ts`: High-resolution telemetry logger (`editorDebug`), attaches to `window.__lyraDebug` and exports logs to `~/Documents/lyra/editor_debug.log`
+- `helpers.ts`: File validation, reserved names protection, theme management, main folder initialization
 - `consts.ts`: Application constants (pages, themes, text sizes, base directory)
 - `dictionary.ts`: Bilingual translations (ES/EN)
 
@@ -109,7 +110,7 @@ export default function ComponentName(): Component {
 All file operations use `BASE_DIRECTORY.Document` and work with relative paths inside `MAIN_FOLDER` constant. Files are automatically suffixed with `.txt`.
 
 **Keyboard Shortcuts:**
-Implemented with Mousetrap library, bound globally. Commands include fullscreen toggle, text size adjustment, and spellcheck toggle.
+Implemented with native window keyboard event listeners. Commands include fullscreen toggle, text size adjustment, undo/redo, and search.
 
 **Error Handling:**
 The `verifyMainFolder()` function in `helpers.ts` initializes the main folder and creates a welcome file on first run. Errors must be typed as `unknown` and checked with `instanceof Error`.
@@ -143,13 +144,20 @@ notification("success", "Message"); // or "error"
 **Vite:**
 - Dev server on port 1420 (strict)
 - React plugin with automatic JSX transform
-- Optimizes react-select dependency
 
 **Tauri Bundle:**
 - Target: MSI installer (Windows)
 - Spanish language for installer
 - Custom dialog/banner images in `src-tauri/assets/`
 - Includes silent webview installation
+
+## Editor Diagnostics & Debugging
+
+The repository includes a telemetry and live HUD system for diagnosing cursor, caret, and paragraph focus behaviors:
+- **Module**: `src/utils/editorDebug.ts` records `[EVENT]`, `[STATE]`, `[RENDER]`, and `[TRANSITION]` with millisecond timestamps.
+- **HUD Component**: `src/components/EditorDebugHUD.tsx` renders an on-screen collapsible HUD with live metrics and file export.
+- **Enabling HUD**: In `src/components/TinyEditor.tsx`, uncomment the import `// import EditorDebugHUD from "./EditorDebugHUD";` and the JSX `<EditorDebugHUD ... />`.
+- **Exporting Logs**: Click "Guardar Log" in the HUD, or execute `window.__lyraDebug.saveToFile()` in the browser devtools. The log file is written directly to `~/Documents/lyra/editor_debug.log`.
 
 **Rust Release Profile:**
 Optimized for size: LTO enabled, panic=abort, opt-level="z", symbols stripped.

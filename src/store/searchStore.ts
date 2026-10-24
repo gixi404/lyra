@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import type { ZustandStore } from "../utils/types";
 
 export type SortOptionId = "mtime" | "az" | "za" | "recent" | "oldest" | "random";
 
@@ -15,7 +14,19 @@ const getInitialSortOption = (): SortOptionId => {
 
 const initialSort = getInitialSortOption();
 
-export const searchStore: ZustandStore = create((set: any) => ({
+export interface SearchStoreState {
+  search: string;
+  setSearch: (search: string) => void;
+  resetSearch: () => void;
+  order: boolean;
+  toggleOrder: (newOrder: boolean) => void;
+  sortOption: SortOptionId;
+  sortOptions: SortOptionId[];
+  setSortOption: (id: SortOptionId) => void;
+  toggleSortOption: (id: SortOptionId) => void;
+}
+
+export const searchStore = create<SearchStoreState>(set => ({
   search: "",
   setSearch: (search: string) => set({ search }),
   resetSearch: () => set({ search: "" }),
