@@ -62,10 +62,11 @@ pnpm run tauri dev      # desarrollo con hot-reload
 - **Clave privada**: `~/.tauri/lyra.key`.
 - **Script todo-en-uno de release**:
   ```bash
-  pnpm newversion         # Incrementa patch (2.0.1 -> 2.0.2), compila, firma, taggea y publica en GitHub
-  pnpm newversion minor   # Incrementa minor (2.0.1 -> 2.1.0)
-  pnpm newversion major   # Incrementa major (2.0.1 -> 3.0.0)
-  pnpm newversion 2.0.5   # Versión explícita
+  pnpm newversion              # Incrementa patch (2.0.1 -> 2.0.2), compila, firma, taggea y publica en GitHub
+  pnpm newversion minor        # Incrementa minor (2.0.1 -> 2.1.0)
+  pnpm newversion major        # Incrementa major (2.0.1 -> 3.0.0)
+  pnpm newversion 2.0.5        # Versión explícita
+  pnpm newversion --no-build   # Bump y tag rápido delegando la compilación a GitHub Actions
   ```
 - **Compilar release manual con firma**:
   ```bash
