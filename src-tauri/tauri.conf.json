@@ -8,6 +8,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "windows": {
       "wix": {
         "language": "es-ES",
@@ -15,7 +16,9 @@
         "bannerPath": "./assets/banner.bmp"
       },
       "nsis": {
-        "languages": ["Spanish"]
+        "languages": [
+          "Spanish"
+        ]
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
@@ -48,11 +51,17 @@
   },
   "productName": "Lyra",
   "mainBinaryName": "Lyra",
-  "version": "2.0.1",
+  "version": "2.0.3",
   "identifier": "com.lyra.dev",
   "plugins": {
     "shell": {
       "open": "^https?://.*$"
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQxQ0FBQzcxQkUwQjQ3NUIKUldSYlJ3dStjYXpLMFN4ejREUHQwaXlsT2FjejhITHRaRzVpR3pwN204cmM0WWdQaytIWGZZY3kK",
+      "endpoints": [
+        "https://github.com/gixi404/lyra/releases/latest/download/latest.json"
+      ]
     }
   },
   "app": {
@@ -75,7 +84,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self';"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' blob:;"
     }
   }
 }

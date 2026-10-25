@@ -28,7 +28,6 @@ import "@fontsource/nunito/latin-ext.css";
 import "@fontsource/cinzel/latin.css";
 import "@fontsource/cinzel/latin-ext.css";
 import { animated, useSpring } from "@react-spring/web";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
@@ -38,32 +37,13 @@ import { PAGES } from "../utils/consts";
 import { pathIs, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import Header from "./Header";
+import { triggerWindowReady } from "../utils/window";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {
     return await getCurrentWebviewWindow().isFullscreen();
   } catch {
     return !!document.fullscreenElement;
-  }
-}
-
-let hasShownWindow = false;
-
-async function showAppWindow(): Promise<void> {
-  if (hasShownWindow) return;
-  hasShownWindow = true;
-  try {
-    await invoke("show_main_window");
-  } catch {
-    try {
-      const appWindow = getCurrentWebviewWindow();
-      await appWindow.show();
-      await appWindow.setFocus();
-      await appWindow.setResizable(false);
-      await appWindow.setResizable(true);
-    } catch {
-      // Outside Tauri
-    }
   }
 }
 
@@ -79,10 +59,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
     }));
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void showAppWindow();
-    }, 50);
-    return () => clearTimeout(timer);
+    triggerWindowReady();
   }, []);
 
   useEffect(() => {
@@ -94,7 +71,6 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
   const toggleFullscreen = async (): Promise<void> => {
     try {
-      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
       const appWindow = getCurrentWebviewWindow();
       const isFull = await appWindow.isFullscreen();
       await appWindow.setFullscreen(!isFull);
@@ -113,7 +89,6 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
   const handleExitFullscreen = async (): Promise<void> => {
     try {
-      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
       const appWindow = getCurrentWebviewWindow();
       await appWindow.setFullscreen(false);
     } catch {

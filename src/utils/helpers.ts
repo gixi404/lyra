@@ -17,25 +17,33 @@ import {
 const DEFAULT_FILE_EXTENSION = ".txt";
 const SUPPORTED_FILE_EXTENSIONS = [".txt", ".md"] as const;
 
-const reload = (): void => window.location.reload();
-
 function navigation(): Navigation {
   const navigate: NavigateFunction = useNavigate();
 
   function goTo(path: string): void {
-    document.startViewTransition(() => flushSync(() => navigate(path)));
+    if ("startViewTransition" in document) {
+      (document as any).startViewTransition(() => flushSync(() => navigate(path)));
+    } else {
+      navigate(path);
+    }
   }
 
   return { goTo };
 }
 
-function notification(type: "success" | "error", msg: string): void {
+function notification(type: "success" | "error" | "info", msg: string): void {
   useToastStore.getState().addToast(type, msg);
 }
 
 function nameIsValid(name: string): boolean {
-  const d = translations(),
-    regex: RegExp = /[\\/:*"<>|]/,
+  const d = translations();
+
+  if (!name || name.trim().length === 0) {
+    notification("error", d.InvalidName);
+    return false;
+  }
+
+  const regex: RegExp = /[\\/:*?"<>|]/,
     hasControlChars: boolean = /[\x00-\x1f]/.test(name),
     nameLong: boolean = len(name) > 60,
     invalidSymbols: boolean = regex.test(name) || hasControlChars,
@@ -200,12 +208,6 @@ async function verifyMainFolder(): Promise<void> {
   }
 }
 
-function copyText(text: string): void {
-  const d = translations();
-  navigator.clipboard.writeText(text);
-  notification("success", d.CopiedToClipboard);
-}
-
 function getDate(): string {
   const d = translations(),
     date = new Date(),
@@ -220,7 +222,7 @@ function getDate(): string {
 
 function pathIs(path: string): boolean {
   const currentPath: string = window.location.pathname;
-  return currentPath == path;
+  return currentPath === path;
 }
 
 const normalize = (text: string): string =>
@@ -233,7 +235,6 @@ const normalize = (text: string): string =>
 const len = (val: string | any[]): number => val.length;
 
 export {
-  copyText,
   getDate,
   getEditableFileName,
   len,
@@ -242,7 +243,6 @@ export {
   normalize,
   notification,
   pathIs,
-  reload,
   resolveDisplayFileName,
   resolveStoredFileName,
   normalizeStoredFileNames,

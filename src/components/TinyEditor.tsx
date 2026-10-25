@@ -505,6 +505,7 @@ function TinyEditor({
   }, [syncScrollPos]);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     const display = displayRef.current;
     if (!display) return;
 

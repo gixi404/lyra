@@ -24,7 +24,15 @@ IMPORTANT: This is the ONLY way to type-check TypeScript in this environment. Do
 ```bash
 cd lyra && pnpm run tauri build
 ```
-Creates MSI installer for Windows with Spanish language support.
+Creates installers/bundles for the target platform.
+
+**Automated Release & Auto-Update:**
+```bash
+pnpm newversion         # Bumps patch (2.0.1 -> 2.0.2), builds, signs, tags, and creates GitHub Release
+pnpm newversion minor   # Bumps minor (2.0.1 -> 2.1.0)
+pnpm newversion major   # Bumps major (2.0.1 -> 3.0.0)
+pnpm newversion 2.0.5   # Specific version
+```
 
 ## Architecture
 
@@ -54,6 +62,7 @@ Creates MSI installer for Windows with Spanish language support.
 - `ModalSort.tsx`: File sorting options modal
 
 **Key Utilities:**
+- `updater.ts`: Handles automatic background and manual update checks via `@tauri-apps/plugin-updater` and `@tauri-apps/plugin-process`.
 - `editorDebug.ts`: High-resolution telemetry logger (`editorDebug`), attaches to `window.__lyraDebug` and exports logs to `~/Documents/lyra/editor_debug.log`
 - `helpers.ts`: File validation, reserved names protection, theme management, main folder initialization
 - `consts.ts`: Application constants (pages, themes, text sizes, base directory)
@@ -150,6 +159,22 @@ notification("success", "Message"); // or "error"
 - Spanish language for installer
 - Custom dialog/banner images in `src-tauri/assets/`
 - Includes silent webview installation
+
+## Auto-Updates (Tauri Updater)
+
+Lyra uses the official Tauri v2 Updater (`tauri-plugin-updater` and `@tauri-apps/plugin-updater`):
+- **Endpoint**: `https://github.com/gixi404/lyra/releases/latest/download/latest.json`
+- **Signing Key**: Public key configured in `src-tauri/tauri.conf.json`. Private key generated at `~/.tauri/lyra.key`.
+- **Workflow**:
+  - Silent automatic check 3s after startup in `src/main.tsx`.
+  - Manual button in `src/pages/Preferences.tsx`.
+  - Updates download in the background and notify the user before restarting with `@tauri-apps/plugin-process`.
+- **Building signed releases**:
+  ```bash
+  export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/lyra.key)"
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+  pnpm run tauri build
+  ```
 
 ## Editor Diagnostics & Debugging
 

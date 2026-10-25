@@ -33,22 +33,26 @@ function DefaultHeader(): Component {
         updateThemeState();
       });
 
-      transition.ready.then(() => {
-        const clipPath = [
-          `circle(0px at ${x}px ${y}px)`,
-          `circle(${endRadius}px at ${x}px ${y}px)`,
-        ];
-        ((window as any).document as Document).documentElement.animate(
-          {
-            clipPath: clipPath,
-          },
-          {
-            duration: 450,
-            easing: "ease-in-out",
-            pseudoElement: "::view-transition-new(root)",
-          }
-        );
-      });
+      transition.ready
+        .then(() => {
+          const clipPath = [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${endRadius}px at ${x}px ${y}px)`,
+          ];
+          ((window as any).document as Document).documentElement.animate(
+            {
+              clipPath: clipPath,
+            },
+            {
+              duration: 450,
+              easing: "ease-in-out",
+              pseudoElement: "::view-transition-new(root)",
+            }
+          );
+        })
+        .catch(() => {
+          // Ignorar si la animación fue abortada o saltada por un nuevo cambio de tema
+        });
     } else {
       const doc = (window as any).document as Document;
       const ripple = doc.createElement("div");

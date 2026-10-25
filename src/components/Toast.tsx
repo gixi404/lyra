@@ -1,5 +1,5 @@
 import { useToastStore } from "../store/toastStore";
-import { CheckCircle2, AlertCircle } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 import { themes } from "../utils/helpers";
 
 function Toast(): JSX.Element | null {
@@ -19,10 +19,14 @@ function Toast(): JSX.Element | null {
               : "bg-zinc-900/95 text-zinc-100 border-zinc-700/80 shadow-black/50 backdrop-blur-md"
           }`}
         >
-          {t.type === "success" ? (
+          {t.type === "success" && (
             <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-          ) : (
+          )}
+          {t.type === "error" && (
             <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+          )}
+          {t.type === "info" && (
+            <Info className="w-4 h-4 text-sky-500 shrink-0" />
           )}
           <span>{t.msg}</span>
         </div>

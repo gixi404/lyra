@@ -55,6 +55,26 @@ pnpm run tauri dev      # desarrollo con hot-reload
   2. `{/* <EditorDebugHUD ... /> */}`
 - **Exportación de logs**: Al presionar "Guardar Log" (o invocar `window.__lyraDebug.saveToFile()`), se genera el archivo `~/Documents/lyra/editor_debug.log`.
 
+## Auto-Updates (Tauri Updater)
+
+- **Plugins**: `tauri-plugin-updater` y `tauri-plugin-process` en Cargo y NPM.
+- **Clave pública**: Registrada en `src-tauri/tauri.conf.json`.
+- **Clave privada**: `~/.tauri/lyra.key`.
+- **Script todo-en-uno de release**:
+  ```bash
+  pnpm newversion         # Incrementa patch (2.0.1 -> 2.0.2), compila, firma, taggea y publica en GitHub
+  pnpm newversion minor   # Incrementa minor (2.0.1 -> 2.1.0)
+  pnpm newversion major   # Incrementa major (2.0.1 -> 3.0.0)
+  pnpm newversion 2.0.5   # Versión explícita
+  ```
+- **Compilar release manual con firma**:
+  ```bash
+  export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/lyra.key)"
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+  pnpm run tauri build
+  ```
+- **Publicación**: Subir el archivo `latest.json` generado en `src-tauri/target/release/bundle/` junto con los artefactos a GitHub Releases (`https://github.com/gixi404/lyra/releases/latest/download/latest.json`).
+
 ---
 
 ## Post-Task: Auto-Doc Sync

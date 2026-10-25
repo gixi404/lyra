@@ -130,12 +130,16 @@ function MenuFile({ fileName }: Props): Component {
 
   function handleEditConfirm(value?: string): void {
     if (!value) return notification("error", d.InvalidName);
-    if (!nameIsValid(value)) return;
-
     const sanitizedName: string = sanitizeFileName(getEditableFileName(value));
-    const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
+    if (!nameIsValid(sanitizedName)) return;
 
-    if (nextDisplayName !== fileName && files.includes(nextDisplayName)) {
+    const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
+    if (nextDisplayName === fileName) {
+      setIsEditOpen(false);
+      return;
+    }
+
+    if (files.includes(nextDisplayName)) {
       notification("error", d.NameAlreadyExists);
       return;
     }

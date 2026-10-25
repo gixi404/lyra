@@ -3,7 +3,7 @@ import MenuPaperFile from "./MenuPaperFile";
 import useFile from "../hooks/useFile";
 import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
-import { navigation, themes } from "../utils/helpers";
+import { navigation, notification, themes } from "../utils/helpers";
 import { PAGES } from "../utils/consts";
 import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types";
@@ -20,10 +20,14 @@ function ItemFile({ fileName }: Props): Component {
   }
 
   async function openFile(): Promise<void> {
-    const fileContent: string = await readFile(fileName);
-    const newSelectedFile: File = { name: fileName, content: fileContent };
-    setSelectedFile(newSelectedFile);
-    goTo(PAGES.file);
+    try {
+      const fileContent: string = await readFile(fileName);
+      const newSelectedFile: File = { name: fileName, content: fileContent };
+      setSelectedFile(newSelectedFile);
+      goTo(PAGES.file);
+    } catch {
+      notification("error", "No se pudo abrir el archivo");
+    }
   }
 
   return (

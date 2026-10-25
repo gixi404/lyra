@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import useStorage from "./useStorage";
 import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, PAGES } from "../utils/consts";
-import { fileStore } from "../store/fileStore";
+import { fileStore, type FileItemStats } from "../store/fileStore";
 import { join } from "@tauri-apps/api/path";
 import {
   getCompatibleStorageKeys,
@@ -117,6 +117,39 @@ function useFile(): Files {
       )
       .sort((a: string, b: string) => a.localeCompare(b));
   }, []);
+
+  const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats> }> => {
+    let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
+    const validNames = dir
+      .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
+      .map((f: DirEntry) => f.name)
+      .filter(
+        (name): name is string =>
+          typeof name === "string" &&
+          [".txt", ".md"].some(extension => name.endsWith(extension))
+      );
+
+    const statsResults = await Promise.all(
+      validNames.map(async name => {
+        try {
+          const { pathFile } = await getFilePath(name);
+          const st = await stat(pathFile, BASE_DIRECTORY);
+          const mtime = st.mtime ? new Date(st.mtime).getTime() : 0;
+          const birthtime = st.birthtime ? new Date(st.birthtime).getTime() : mtime;
+          return { name, mtime, birthtime };
+        } catch {
+          return { name, mtime: 0, birthtime: 0 };
+        }
+      })
+    );
+
+    const stats: Record<string, FileItemStats> = {};
+    for (const item of statsResults) {
+      stats[item.name] = { mtime: item.mtime, birthtime: item.birthtime };
+    }
+
+    return { files: validNames, stats };
+  }, [getFilePath]);
 
   const fileExists = useCallback(async (name: string): Promise<boolean> => {
     const { pathFile } = await getFilePath(name);
@@ -281,6 +314,7 @@ function useFile(): Files {
     deleteFile,
     createFile,
     getFiles,
+    getFilesWithStats,
     saveFileContent,
     fileExists,
     getFilePath,
@@ -310,6 +344,7 @@ interface Files {
   deleteFile: (name: string) => Promise<void>;
   createFile: (name: string, content?: string) => Promise<string>;
   getFiles: () => Promise<string[]>;
+  getFilesWithStats: () => Promise<{ files: string[]; stats: Record<string, FileItemStats> }>;
   fileExists: (name: string) => Promise<boolean>;
   saveFileContent: (name: string, content: string) => Promise<void>;
   getFilePath: (fileName: string) => Promise<{ pathFile: string }>;

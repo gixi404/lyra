@@ -59,11 +59,15 @@ function Form(): Component {
     };
 
   async function fileManagement(file: File): Promise<void> {
-    const displayName: string = await createFile(file.name, file.content);
-    const nextFile: File = { ...file, name: displayName };
-    updateListFiles(displayName);
-    setSelectedFile(nextFile);
-    goTo(PAGES.file);
+    try {
+      const displayName: string = await createFile(file.name, file.content);
+      const nextFile: File = { ...file, name: displayName };
+      updateListFiles(displayName);
+      setSelectedFile(nextFile);
+      goTo(PAGES.file);
+    } catch {
+      notification("error", "Error al crear el archivo");
+    }
   }
 
   function handleCreateConfirm(value?: string): void {
@@ -75,12 +79,12 @@ function Form(): Component {
       return;
     }
 
-    if (isRepeated(sanitizedName)) {
-      notification("error", d.RepeatedItem);
+    if (!nameIsValid(sanitizedName)) {
       return;
     }
 
-    if (!nameIsValid(sanitizedName)) {
+    if (isRepeated(sanitizedName)) {
+      notification("error", d.RepeatedItem);
       return;
     }
 

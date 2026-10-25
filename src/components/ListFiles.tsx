@@ -2,12 +2,9 @@ import ItemFile from "./ItemFile";
 import NoFiles from "./NoFiles";
 import NoMatches from "./NoMatches";
 import usePreferences from "../hooks/usePreferences";
-import useFile from "../hooks/useFile";
 import { configStore } from "../store/configStore";
 import { len, normalize, themes } from "../utils/helpers";
-import { BASE_DIRECTORY } from "../utils/consts";
-import { stat } from "@tauri-apps/plugin-fs";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { searchStore, type SortOptionId } from "../store/searchStore";
 import { fileStore } from "../store/fileStore";
@@ -27,7 +24,6 @@ const getHash = (str: string): number => {
 const ListFiles = memo(({ arr }: Props): Component => {
   const { myPaper } = usePreferences(),
     { isDay } = themes(),
-    { getFilePath } = useFile(),
     { search, resetSearch, sortOption } = searchStore(
       useShallow(state => ({
         search: state.search,
@@ -35,51 +31,19 @@ const ListFiles = memo(({ arr }: Props): Component => {
         sortOption: (state.sortOption || state.sortOptions?.[0] || "mtime") as SortOptionId,
       }))
     ),
+    { statsMap, isInitialized } = fileStore(
+      useShallow(state => ({
+        statsMap: state.statsMap,
+        isInitialized: state.isInitialized,
+      }))
+    ),
     paperIsOpen = configStore(state => state.paperIsOpen),
     fileIsEdited = fileStore(state => state.fileIsEdited),
     normalizedSearch = useMemo(() => normalize(search), [search]),
     paperFiles = useMemo(() => myPaper(arr), [arr, fileIsEdited]),
-    paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
-    [statsMap, setStatsMap] = useState<Record<string, { mtime: number; birthtime: number }>>({}),
-    [statsLoaded, setStatsLoaded] = useState<boolean>(false);
+    paperSet = useMemo(() => new Set(paperFiles), [paperFiles]);
 
-  useEffect(() => {
-    let isMounted = true;
-    if (!arr || arr.length === 0) {
-      setStatsLoaded(true);
-      return;
-    }
-    setStatsLoaded(false);
-
-    Promise.all(
-      arr.map(async name => {
-        try {
-          const { pathFile } = await getFilePath(name);
-          const st = await stat(pathFile, BASE_DIRECTORY);
-          const mtime = st.mtime ? new Date(st.mtime).getTime() : 0;
-          const birthtime = st.birthtime ? new Date(st.birthtime).getTime() : mtime;
-          return { name, mtime, birthtime };
-        } catch {
-          return { name, mtime: 0, birthtime: 0 };
-        }
-      })
-    ).then(results => {
-      if (!isMounted) return;
-      const map: Record<string, { mtime: number; birthtime: number }> = {};
-      results.forEach(item => {
-        map[item.name] = { mtime: item.mtime, birthtime: item.birthtime };
-      });
-      setStatsMap(map);
-      setStatsLoaded(true);
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [arr, fileIsEdited]);
-
-  const isStatsNeeded = sortOption === "mtime" || sortOption === "recent" || sortOption === "oldest";
-  const isReady = !isStatsNeeded || statsLoaded;
+  const isReady = isInitialized;
 
   const files = useMemo(() => {
     const source = paperIsOpen ? paperFiles : arr.filter(f => !paperSet.has(f));

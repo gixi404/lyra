@@ -9,10 +9,10 @@ import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 
 function List(): Component {
-  const { getFiles } = useFile(),
-    { setFiles, fileIsEdited, files } = fileStore(
+  const { getFilesWithStats } = useFile(),
+    { setFilesWithStats, fileIsEdited, files } = fileStore(
       useShallow(state => ({
-        setFiles: state.setFiles,
+        setFilesWithStats: state.setFilesWithStats,
         fileIsEdited: state.fileIsEdited,
         files: state.files,
       }))
@@ -21,8 +21,8 @@ function List(): Component {
   useEffect(() => {
     async function init() {
       await verifyMainFolder();
-      const filesList = await getFiles();
-      setFiles(filesList);
+      const { files: filesList, stats } = await getFilesWithStats();
+      setFilesWithStats(filesList, stats);
     }
     init();
   }, [fileIsEdited]);

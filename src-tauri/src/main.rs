@@ -3,10 +3,9 @@ use std::process::Command;
 use tauri::Manager;
 
 fn is_path_allowed(target: &std::path::Path, allowed_base: &std::path::Path) -> bool {
-    if let (Ok(canonical_target), Ok(canonical_base)) = (
-        target.canonicalize(),
-        allowed_base.canonicalize(),
-    ) {
+    if let (Ok(canonical_target), Ok(canonical_base)) =
+        (target.canonicalize(), allowed_base.canonicalize())
+    {
         canonical_target.starts_with(canonical_base) && canonical_target.is_dir()
     } else {
         false
@@ -58,33 +57,25 @@ fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
             if status.success() {
                 Ok(())
             } else {
-                Err(format!("Failed to open folder on macOS (exit status: {status})"))
+                Err(format!(
+                    "Failed to open folder on macOS (exit status: {status})"
+                ))
             }
         }
         "linux" => {
-            let xdg_status = Command::new("xdg-open")
-                .arg(&canonical_path)
-                .status()
-                .map_err(|e: std::io::Error| e.to_string())?;
-
-            if xdg_status.success() {
-                return Ok(());
+            if let Ok(xdg_status) = Command::new("xdg-open").arg(&canonical_path).status() {
+                if xdg_status.success() {
+                    return Ok(());
+                }
             }
 
-            Command::new("gio")
-                .arg("open")
-                .arg(&canonical_path)
-                .status()
-                .map_err(|e: std::io::Error| e.to_string())
-                .and_then(|status| {
-                    if status.success() {
-                        Ok(())
-                    } else {
-                        Err(format!(
-                            "Failed to open folder with Linux desktop opener (xdg-open exit status: {xdg_status}; gio open exit status: {status})"
-                        ))
-                    }
-                })
+            match Command::new("gio").arg("open").arg(&canonical_path).status() {
+                Ok(gio_status) if gio_status.success() => Ok(()),
+                Ok(gio_status) => Err(format!(
+                    "Failed to open folder on Linux (gio open exit status: {gio_status})"
+                )),
+                Err(e) => Err(format!("Failed to open folder on Linux: {e}")),
+            }
         }
         os => Err(format!("Unsupported OS for open_folder: {os}")),
     }
@@ -174,6 +165,17 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_base);
         let _ = fs::remove_dir_all(&temp_outside);
     }
+
+    #[test]
+    fn test_is_path_allowed_nonexistent() {
+        let temp_base = std::env::temp_dir().join("lyra_test_nonexistent_base");
+        let temp_fake = temp_base.join("fake_dir_12345");
+        let _ = fs::create_dir_all(&temp_base);
+
+        assert!(!is_path_allowed(&temp_fake, &temp_base));
+
+        let _ = fs::remove_dir_all(&temp_base);
+    }
 }
 
 #[tauri::command]
@@ -181,17 +183,14 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
-        #[cfg(target_os = "linux")]
-        {
-            let _ = window.set_resizable(false);
-            let _ = window.set_resizable(true);
-        }
     }
     Ok(())
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -199,33 +198,19 @@ fn main() {
                 if let Some(icon) = app.default_window_icon() {
                     let _ = window.set_icon(icon.clone());
                 }
-
-                #[cfg(target_os = "linux")]
-                {
-                    let window_clone = window.clone();
-                    window.on_window_event(move |event| {
-                        if let tauri::WindowEvent::Focused(true) = event {
-                            let _ = window_clone.set_resizable(false);
-                            let _ = window_clone.set_resizable(true);
-                        }
-                    });
-                }
             }
 
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(1000));
+                // Fallback de seguridad: si el frontend no solicita mostrar la ventana,
+                // forzar visibilidad tras 3 segundos para evitar que la app quede oculta.
+                std::thread::sleep(std::time::Duration::from_millis(3000));
                 let handle = app_handle.clone();
                 let _ = app_handle.run_on_main_thread(move || {
                     if let Some(window) = handle.get_webview_window("main") {
                         if !window.is_visible().unwrap_or(true) {
                             let _ = window.show();
                             let _ = window.set_focus();
-                            #[cfg(target_os = "linux")]
-                            {
-                                let _ = window.set_resizable(false);
-                                let _ = window.set_resizable(true);
-                            }
                         }
                     }
                 });

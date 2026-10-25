@@ -6,6 +6,7 @@ import "./styles.css";
 import ListPage from "./pages/List";
 import { type Container, createRoot } from "react-dom/client";
 import type { LazyCmp } from "./utils/types";
+import { checkAndApplyUpdate } from "./utils/updater";
 
 const root = document.getElementById("root") as Container,
   FilePage: LazyCmp = lazy(() => import("./pages/FileContent")),
@@ -49,3 +50,8 @@ createRoot(root).render(
     <Toast />
   </StrictMode>
 );
+
+// Comprobación silenciosa de actualizaciones en segundo plano al iniciar
+setTimeout(() => {
+  void checkAndApplyUpdate(false);
+}, 3000);

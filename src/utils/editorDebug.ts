@@ -43,6 +43,10 @@ class EditorDebugger {
     name: string,
     details?: Record<string, unknown>
   ): void {
+    if (!import.meta.env.DEV && this.listeners.length === 0) {
+      return;
+    }
+
     const now = performance.now();
     const date = new Date();
     const timeStr = `${date.toTimeString().split(" ")[0]}.${date.getMilliseconds().toString().padStart(3, "0")}`;
