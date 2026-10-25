@@ -274,6 +274,29 @@ function Preferences(): Component {
             </div>
 
 
+            {/* Novedades / Cambios recientes */}
+            <div
+              id="novedades-section"
+              className={twMerge(
+                "w-full flex flex-col gap-y-3 pt-5 border-t",
+                isDay ? "border-neutral-300" : "border-zinc-800"
+              )}
+            >
+              <div className="flex items-center gap-x-2">
+                <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
+                <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-800" : "text-zinc-100")}>
+                  Novedades de la versión {currentVersion}
+                </h3>
+              </div>
+              <ul className={twMerge("flex flex-col gap-y-1.5 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-600" : "text-neutral-300")}>
+                {releaseNotes.map((item, idx) => (
+                  <li key={idx} className="leading-relaxed">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             {/* Atajos de teclado */}
             <div
               className={twMerge(
@@ -296,29 +319,6 @@ function Preferences(): Component {
                   </kbd>
                 </div>
               ))}
-            </div>
-
-            {/* Novedades / Cambios recientes */}
-            <div
-              id="novedades-section"
-              className={twMerge(
-                "w-full flex flex-col gap-y-3 pt-5 border-t",
-                isDay ? "border-neutral-300" : "border-zinc-800"
-              )}
-            >
-              <div className="flex items-center gap-x-2">
-                <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
-                <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-800" : "text-zinc-100")}>
-                  Novedades de la versión {currentVersion}
-                </h3>
-              </div>
-              <ul className={twMerge("flex flex-col gap-y-1.5 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-600" : "text-neutral-300")}>
-                {releaseNotes.map((item, idx) => (
-                  <li key={idx} className="leading-relaxed">
-                    {item}
-                  </li>
-                ))}
-              </ul>
             </div>
           </div>
         </div>
