@@ -17,7 +17,7 @@ import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { MAIN_FOLDER } from "../utils/consts";
 import translations from "../utils/dictionary";
-import { themes } from "../utils/helpers";
+import { scrollToNovedades, themes } from "../utils/helpers";
 import { checkAndApplyUpdate } from "../utils/updater";
 import type { Component } from "../utils/types";
 import packageJson from "../../package.json";
@@ -95,9 +95,7 @@ function Preferences(): Component {
     try {
       if (window.sessionStorage.getItem("scroll_to_novedades") === "true") {
         window.sessionStorage.removeItem("scroll_to_novedades");
-        setTimeout(() => {
-          document.getElementById("novedades-section")?.scrollIntoView({ behavior: "smooth" });
-        }, 150);
+        scrollToNovedades();
       }
     } catch {}
   }, []);
@@ -280,7 +278,7 @@ function Preferences(): Component {
               <div
                 id="novedades-section"
                 className={twMerge(
-                  "w-full flex flex-col gap-y-2.5 pt-4 border-t",
+                  "scroll-mt-20 w-full flex flex-col gap-y-2.5 pt-4 border-t",
                   isDay ? "border-neutral-300" : "border-zinc-800"
                 )}
               >

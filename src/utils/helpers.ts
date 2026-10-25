@@ -40,6 +40,19 @@ function notification(
   useToastStore.getState().addToast(type, msg, action, durationMs);
 }
 
+export function scrollToNovedades(): void {
+  const tryScroll = (attempts = 0) => {
+    const el = document.getElementById("novedades-section");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (attempts < 25) {
+      setTimeout(() => tryScroll(attempts + 1), 60);
+    }
+  };
+
+  tryScroll();
+}
+
 function nameIsValid(name: string): boolean {
   const d = translations();
 

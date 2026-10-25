@@ -1,5 +1,5 @@
 import { check } from "@tauri-apps/plugin-updater";
-import { notification } from "./helpers";
+import { notification, scrollToNovedades } from "./helpers";
 import { navigateTo } from "../router";
 import { PAGES } from "./consts";
 
@@ -52,9 +52,10 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
             window.sessionStorage.setItem("scroll_to_novedades", "true");
           } catch {}
           navigateTo(PAGES.preferences);
+          scrollToNovedades();
         },
       },
-      10000
+      12000
     );
   } catch (error: any) {
     const errorMsg = String(error?.message || error || "");
