@@ -103,6 +103,8 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
   useEffect(() => {
     let isMounted = true;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
     const syncFullscreenState = async (): Promise<void> => {
       const full = await checkIsFullscreen();
       if (!isMounted) return;
@@ -113,12 +115,16 @@ function MainContainer({ children }: PropsWithChildren): Component {
     void syncFullscreenState();
 
     const handleResize = (): void => {
-      void syncFullscreenState();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        void syncFullscreenState();
+      }, 100);
     };
 
     window.addEventListener("resize", handleResize);
     return () => {
       isMounted = false;
+      if (resizeTimer) clearTimeout(resizeTimer);
       window.removeEventListener("resize", handleResize);
     };
   }, []);

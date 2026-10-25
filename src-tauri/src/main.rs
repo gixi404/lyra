@@ -188,6 +188,17 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    {
+        // En Wayland/WebKitGTK, el renderizador DMA-BUF provoca que al redimensionar,
+        // arrastrar o poner la ventana en pantalla completa, el compositor estire el buffer
+        // antiguo durante unos milisegundos produciendo parpadeo y contenido deformado.
+        // Desactivar el renderizador DMA-BUF fuerza el uso del buffer sincronizado de GTK.
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
