@@ -173,6 +173,37 @@ function searchArtifacts(dir, version) {
 
 if (!skipBuild) {
   artifacts.push(...searchArtifacts(bundleDir, nextVersion));
+
+  // Generar latest.json inicial para Linux si existe la firma de AppImage
+  const appImageSig = artifacts.find(a => a.endsWith(".AppImage.sig"));
+  const appImage = artifacts.find(a => a.endsWith(".AppImage"));
+  if (appImage && appImageSig) {
+    const sigContent = fs.readFileSync(appImageSig, "utf8").trim();
+    const appImageBasename = path.basename(appImage);
+    const downloadUrl = `https://github.com/gixi404/lyra/releases/download/v${nextVersion}/${appImageBasename}`;
+    const latestJson = {
+      version: nextVersion,
+      notes: `Lyra v${nextVersion}`,
+      pub_date: new Date().toISOString(),
+      platforms: {
+        "linux-x86_64": {
+          signature: sigContent,
+          url: downloadUrl,
+        },
+        "linux-x86_64-appimage": {
+          signature: sigContent,
+          url: downloadUrl,
+        },
+      },
+    };
+    const latestJsonPath = path.join(bundleDir, "latest.json");
+    fs.writeFileSync(latestJsonPath, JSON.stringify(latestJson, null, 2), "utf8");
+    if (!artifacts.includes(latestJsonPath)) {
+      artifacts.push(latestJsonPath);
+    }
+    success("Generado latest.json inicial para Linux");
+  }
+
   if (artifacts.length > 0) {
     log(`Artefactos locales encontrados para v${nextVersion} (${artifacts.length}):`);
     for (const art of artifacts) {
