@@ -49,8 +49,20 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
       if (isNotFound) {
         notification("info", "Lyra está en la última versión disponible.");
       } else {
-        console.error("Error al comprobar actualizaciones:", error);
-        notification("error", "No se pudo comprobar la actualización.");
+        console.error("Error al comprobar/instalar actualización:", error);
+        const isPermission =
+          errorMsg.includes("os error 13") ||
+          errorMsg.includes("Permission denied") ||
+          errorMsg.includes("permission denied");
+
+        if (isPermission) {
+          notification(
+            "error",
+            "Sin permisos para sobrescribir el ejecutable del sistema (/usr/bin). Actualiza vía DNF o usa la versión AppImage."
+          );
+        } else {
+          notification("error", `Error al actualizar: ${errorMsg}`);
+        }
       }
     }
   } finally {
