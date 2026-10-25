@@ -200,38 +200,66 @@ function MainContainer({ children }: PropsWithChildren): Component {
   }, []);
 
   useEffect(() => {
+    if (!pathIs(PAGES.file)) {
+      document.body.classList.remove("is-typing");
+      return;
+    }
+
     let lastMouseX = -1;
     let lastMouseY = -1;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      // "o sin mover el mouse": si no se mueve el mouse por 2.5s, activar modo zen
+      idleTimer = setTimeout(() => {
+        if (!document.body.classList.contains("is-typing")) {
+          document.body.classList.add("is-typing");
+        }
+      }, 2500);
+    };
 
     const handleGlobalMouseMove = (e: MouseEvent): void => {
-      // Ignorar micro-movimientos de trackpad o eventos sintéticos durante re-render
-      if (lastMouseX !== -1 && lastMouseY !== -1) {
-        const dist = Math.hypot(e.clientX - lastMouseX, e.clientY - lastMouseY);
-        if (dist < 6) return;
-      }
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
-
-      // Si el usuario estuvo escribiendo hace menos de 600ms, mantener el modo zen
-      const lastTyping = (window as any).__lastTypingTime || 0;
-      if (Date.now() - lastTyping < 600) {
+      // Registrar la posición inicial del ratón sin despertar la UI erróneamente
+      if (lastMouseX === -1 || lastMouseY === -1) {
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        resetIdleTimer();
         return;
       }
 
-      if (document.documentElement.classList.contains("is-typing")) {
-        document.documentElement.classList.remove("is-typing");
+      // Si las coordenadas no cambiaron, es un evento sintético de scroll/render: ignorar
+      if (e.clientX === lastMouseX && e.clientY === lastMouseY) {
+        return;
       }
+
+      const dist = Math.hypot(e.clientX - lastMouseX, e.clientY - lastMouseY);
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+
+      // Si el usuario está escribiendo activamente (< 400ms), ignorar
+      // micro-movimientos de vibración de teclado o roce involuntario de touchpad (< 8px)
+      const lastTyping = (window as any).__lastTypingTime || 0;
+      const isActivelyTyping = Date.now() - lastTyping < 400;
+      if (isActivelyTyping && dist < 8) {
+        return;
+      }
+
+      // "apenas se mueve el cursor": despertar de inmediato la interfaz con la transición
       if (document.body.classList.contains("is-typing")) {
         document.body.classList.remove("is-typing");
       }
-      const editorTa = document.querySelector(".editor-textarea");
-      if (editorTa && editorTa.classList.contains("is-typing-editor")) {
-        editorTa.classList.remove("is-typing-editor");
-      }
+
+      resetIdleTimer();
     };
 
-    window.addEventListener("mousemove", handleGlobalMouseMove);
-    return () => window.removeEventListener("mousemove", handleGlobalMouseMove);
+    resetIdleTimer();
+
+    window.addEventListener("mousemove", handleGlobalMouseMove, { passive: true });
+    return () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      window.removeEventListener("mousemove", handleGlobalMouseMove);
+    };
   }, []);
 
   return (
@@ -250,7 +278,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
       {/* Botón flotante para salir de Pantalla Completa al mover cursor arriba */}
       <div
         className={twMerge(
-          "auto-hide-ui no-print fixed top-3 left-1/2 -translate-x-1/2 z-[99999] transition-all duration-200 ease-out flex items-center justify-center",
+          "no-print fixed top-3 left-1/2 -translate-x-1/2 z-[99999] transition-all duration-200 ease-out flex items-center justify-center",
           showExitBtn
             ? "opacity-100 translate-y-0 pointer-events-auto"
             : "opacity-0 -translate-y-4 pointer-events-none"

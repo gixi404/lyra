@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, useMemo } from "react";
+import { useRef, useEffect, useCallback, useState, useMemo, memo } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import { twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
@@ -70,6 +70,13 @@ function TinyEditor({
     contentRef = useRef<string>(content),
     rafIdRef = useRef<number | null>(null),
     caretRafRef = useRef<number | null>(null),
+    scrollThumbRef = useRef<HTMLDivElement | null>(null),
+    scrollTrackRef = useRef<HTMLDivElement | null>(null),
+    targetScrollTopRef = useRef<number>(0),
+    smoothScrollRafRef = useRef<number | null>(null),
+    isDraggingThumbRef = useRef<boolean>(false),
+    dragStartYRef = useRef<number>(0),
+    dragStartScrollTopRef = useRef<number>(0),
     { isDay } = themes(),
     { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue } = usePreferences(),
     [fontSizeOverride, setFontSizeOverride] = useState<string | null>(null),
@@ -87,6 +94,13 @@ function TinyEditor({
 
   contentRef.current = content;
 
+  const stopSmoothScroll = useCallback(() => {
+    if (smoothScrollRafRef.current !== null) {
+      cancelAnimationFrame(smoothScrollRafRef.current);
+      smoothScrollRafRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       if (wordTimerRef.current) {
@@ -101,15 +115,15 @@ function TinyEditor({
         cancelAnimationFrame(caretRafRef.current);
         caretRafRef.current = null;
       }
+      if (smoothScrollRafRef.current !== null) {
+        cancelAnimationFrame(smoothScrollRafRef.current);
+        smoothScrollRafRef.current = null;
+      }
       if (mirrorRef.current) {
         mirrorRef.current.remove();
         mirrorRef.current = null;
       }
-      document.documentElement.classList.remove("is-typing");
       document.body.classList.remove("is-typing");
-      if (textareaRef.current) {
-        textareaRef.current.classList.remove("is-typing-editor");
-      }
     };
   }, []);
 
@@ -188,6 +202,34 @@ function TinyEditor({
     [isDay, searchState]
   );
 
+  const updateScrollThumb = useCallback(() => {
+    const textarea = textareaRef.current;
+    const thumb = scrollThumbRef.current;
+    if (!textarea || !thumb) return;
+
+    const clientH = textarea.clientHeight;
+    const scrollH = textarea.scrollHeight;
+
+    if (scrollH <= clientH + 2) {
+      thumb.style.opacity = "0";
+      thumb.style.pointerEvents = "none";
+      return;
+    }
+
+    thumb.style.opacity = "";
+    thumb.style.pointerEvents = "auto";
+    const rawHeight = (clientH / scrollH) * clientH;
+    const thumbHeight = Math.max(36, Math.min(clientH - 20, rawHeight));
+    const maxScroll = scrollH - clientH;
+    const ratio = maxScroll > 0 ? textarea.scrollTop / maxScroll : 0;
+    const clampedRatio = Math.max(0, Math.min(1, ratio));
+    const maxThumbTop = clientH - thumbHeight - 8;
+    const thumbTop = 4 + clampedRatio * maxThumbTop;
+
+    thumb.style.height = `${thumbHeight}px`;
+    thumb.style.transform = `translate3d(0, ${thumbTop}px, 0)`;
+  }, []);
+
   const syncScrollPos = useCallback(() => {
     const textarea = textareaRef.current;
     const display = displayRef.current;
@@ -198,7 +240,83 @@ function TinyEditor({
     if (display.scrollTop !== textarea.scrollTop) {
       display.scrollTop = textarea.scrollTop;
     }
+    updateScrollThumb();
+  }, [updateScrollThumb]);
+
+  useEffect(() => {
+    updateScrollThumb();
+    window.addEventListener("resize", updateScrollThumb);
+    return () => window.removeEventListener("resize", updateScrollThumb);
+  }, [updateScrollThumb, content]);
+
+  const handleThumbPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    stopSmoothScroll();
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    isDraggingThumbRef.current = true;
+    dragStartYRef.current = e.clientY;
+    dragStartScrollTopRef.current = textarea.scrollTop;
+    e.currentTarget.setPointerCapture(e.pointerId);
   }, []);
+
+  const handleThumbPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingThumbRef.current) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const clientH = textarea.clientHeight;
+    const scrollH = textarea.scrollHeight;
+    const maxScroll = scrollH - clientH;
+    if (maxScroll <= 0) return;
+
+    const rawHeight = (clientH / scrollH) * clientH;
+    const thumbHeight = Math.max(36, Math.min(clientH - 20, rawHeight));
+    const maxThumbTop = clientH - thumbHeight - 8;
+    if (maxThumbTop <= 0) return;
+
+    const deltaY = e.clientY - dragStartYRef.current;
+    const scrollDelta = deltaY * (maxScroll / maxThumbTop);
+    textarea.scrollTop = Math.max(0, Math.min(maxScroll, dragStartScrollTopRef.current + scrollDelta));
+    syncScrollPos();
+  }, [syncScrollPos]);
+
+  const handleThumbPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (isDraggingThumbRef.current) {
+      isDraggingThumbRef.current = false;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  const handleTrackClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === scrollThumbRef.current) return;
+    stopSmoothScroll();
+    const textarea = textareaRef.current;
+    const track = scrollTrackRef.current;
+    if (!textarea || !track) return;
+
+    const rect = track.getBoundingClientRect();
+    const clickY = e.clientY - rect.top;
+    const clientH = textarea.clientHeight;
+    const scrollH = textarea.scrollHeight;
+    const maxScroll = scrollH - clientH;
+    if (maxScroll <= 0) return;
+
+    const rawHeight = (clientH / scrollH) * clientH;
+    const thumbHeight = Math.max(36, Math.min(clientH - 20, rawHeight));
+    const targetTop = clickY - thumbHeight / 2;
+    const maxThumbTop = clientH - thumbHeight - 8;
+    const ratio = Math.max(0, Math.min(1, targetTop / maxThumbTop));
+
+    textarea.scrollTop = ratio * maxScroll;
+    syncScrollPos();
+  }, [syncScrollPos]);
 
   const updateCaretState = useCallback(() => {
     const textarea = textareaRef.current;
@@ -231,7 +349,10 @@ function TinyEditor({
       const textarea = textareaRef.current;
       if (!textarea) return;
 
-      const position = textarea.selectionStart;
+      const position =
+        textarea.selectionDirection === "backward"
+          ? textarea.selectionStart
+          : textarea.selectionEnd;
       const style = window.getComputedStyle(textarea);
       const lineHeight =
         parseFloat(style.lineHeight) ||
@@ -262,6 +383,7 @@ function TinyEditor({
       mirror.style.fontSize = style.fontSize;
       mirror.style.lineHeight = style.lineHeight;
       mirror.style.letterSpacing = style.letterSpacing;
+      mirror.style.textAlign = style.textAlign;
       mirror.style.paddingLeft = style.paddingLeft;
       mirror.style.paddingRight = style.paddingRight;
       mirror.style.paddingTop = style.paddingTop;
@@ -274,31 +396,21 @@ function TinyEditor({
       mirror.appendChild(caretSpan);
 
       const caretTopInTextarea = caretSpan.offsetTop;
-      const caretViewportY = caretTopInTextarea - textarea.scrollTop;
+      const targetCenterY = (textarea.clientHeight - lineHeight) / 2;
+      const targetScrollTop = Math.max(
+        0,
+        Math.round(caretTopInTextarea - targetCenterY)
+      );
 
-      // Only scroll when the caret is truly outside the visible viewport.
-      // Top boundary: one line-height from the top edge keeps the caret from
-      // hiding behind any fixed header / padding area.
-      // Bottom boundary: one line-height from the bottom edge gives room
-      // before the caret disappears below the fold.
-      const topBoundary = lineHeight;
-      const bottomBoundary = textarea.clientHeight - lineHeight;
-
-      if (caretViewportY > bottomBoundary) {
-        // Caret fell below the visible area → centre it at 50 %
-        textarea.scrollTop = caretTopInTextarea - textarea.clientHeight * 0.5;
-      } else if (caretViewportY < topBoundary) {
-        // Caret went above the visible area → centre it at 50 %
-        textarea.scrollTop = Math.max(
-          0,
-          caretTopInTextarea - textarea.clientHeight * 0.5,
-        );
+      if (Math.abs(textarea.scrollTop - targetScrollTop) > 1) {
+        stopSmoothScroll();
+        targetScrollTopRef.current = targetScrollTop;
+        textarea.scrollTop = targetScrollTop;
       }
-      // Otherwise the caret is still on-screen — don't touch scrollTop.
 
       syncScrollPos();
     });
-  }, [syncScrollPos]);
+  }, [syncScrollPos, stopSmoothScroll]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -319,6 +431,78 @@ function TinyEditor({
       window.removeEventListener("resize", handleScroll);
     };
   }, []);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+
+    targetScrollTopRef.current = el.scrollTop;
+
+    const handleWheel = (e: WheelEvent) => {
+      const maxScroll = el.scrollHeight - el.clientHeight;
+      if (maxScroll <= 0) return;
+
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) {
+        delta *= 65; // Modo líneas: ~2 líneas de texto por muesca
+      } else if (e.deltaMode === 2) {
+        delta *= el.clientHeight * 0.8;
+      } else {
+        delta *= 2.0; // Modo píxeles: ritmo ágil y estándar de navegación
+      }
+
+      // Si ya está en los topes y se gira en esa dirección, permitir comportamiento nativo
+      if ((el.scrollTop <= 0 && delta < 0) || (el.scrollTop >= maxScroll && delta > 0)) {
+        return;
+      }
+
+      e.preventDefault();
+
+      // Sincronizar si hubo saltos externos
+      if (Math.abs(targetScrollTopRef.current - el.scrollTop) > 80) {
+        targetScrollTopRef.current = el.scrollTop;
+      }
+
+      targetScrollTopRef.current = Math.max(0, Math.min(maxScroll, targetScrollTopRef.current + delta));
+
+      if (smoothScrollRafRef.current === null) {
+        const step = () => {
+          const textarea = textareaRef.current;
+          if (!textarea) {
+            smoothScrollRafRef.current = null;
+            return;
+          }
+
+          const diff = targetScrollTopRef.current - textarea.scrollTop;
+
+          if (Math.abs(diff) < 0.5) {
+            textarea.scrollTop = targetScrollTopRef.current;
+            syncScrollPos();
+            smoothScrollRafRef.current = null;
+            return;
+          }
+
+          // Interpolación suave y más ágil (lerp factor 0.22)
+          textarea.scrollTop += diff * 0.22;
+          syncScrollPos();
+
+          smoothScrollRafRef.current = requestAnimationFrame(step);
+        };
+
+        smoothScrollRafRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      el.removeEventListener("wheel", handleWheel);
+      if (smoothScrollRafRef.current !== null) {
+        cancelAnimationFrame(smoothScrollRafRef.current);
+        smoothScrollRafRef.current = null;
+      }
+    };
+  }, [syncScrollPos]);
 
   useEffect(() => {
     const display = displayRef.current;
@@ -381,10 +565,8 @@ function TinyEditor({
 
   const markTyping = useCallback(() => {
     (window as any).__lastTypingTime = Date.now();
-    document.documentElement.classList.add("is-typing");
-    document.body.classList.add("is-typing");
-    if (textareaRef.current && !textareaRef.current.classList.contains("is-typing-editor")) {
-      textareaRef.current.classList.add("is-typing-editor");
+    if (!document.body.classList.contains("is-typing")) {
+      document.body.classList.add("is-typing");
     }
   }, []);
 
@@ -393,9 +575,10 @@ function TinyEditor({
   }, [markTyping]);
 
   const handleKeyUp = useCallback(() => {
+    markTyping();
     updateCaretState();
     keepCaretCentered();
-  }, [updateCaretState, keepCaretCentered]);
+  }, [markTyping, updateCaretState, keepCaretCentered]);
 
   const { setItem } = useStorage();
 
@@ -453,13 +636,15 @@ function TinyEditor({
       const targetCaret = Math.min(targetSnapshot.caretPos, targetSnapshot.content.length);
       el.setSelectionRange(targetCaret, targetCaret);
       if (targetSnapshot.scrollTop > 0) {
+        stopSmoothScroll();
+        targetScrollTopRef.current = targetSnapshot.scrollTop;
         el.scrollTop = targetSnapshot.scrollTop;
       }
       syncScrollPos();
       keepCaretCentered();
       setActiveParaRange(getParagraphRange(targetSnapshot.content, targetCaret, targetCaret));
     });
-  }, [onContentChange, syncScrollPos, keepCaretCentered]);
+  }, [onContentChange, syncScrollPos, keepCaretCentered, stopSmoothScroll]);
 
   const handleRedo = useCallback(() => {
     if (wordTimerRef.current) {
@@ -499,13 +684,15 @@ function TinyEditor({
       const targetCaret = Math.min(targetSnapshot.caretPos, targetSnapshot.content.length);
       el.setSelectionRange(targetCaret, targetCaret);
       if (targetSnapshot.scrollTop > 0) {
+        stopSmoothScroll();
+        targetScrollTopRef.current = targetSnapshot.scrollTop;
         el.scrollTop = targetSnapshot.scrollTop;
       }
       syncScrollPos();
       keepCaretCentered();
       setActiveParaRange(getParagraphRange(targetSnapshot.content, targetCaret, targetCaret));
     });
-  }, [onContentChange, syncScrollPos, keepCaretCentered]);
+  }, [onContentChange, syncScrollPos, keepCaretCentered, stopSmoothScroll]);
 
   useEffect(() => {
     const handleShortcutsKeyDown = (e: KeyboardEvent): void => {
@@ -647,22 +834,28 @@ function TinyEditor({
         -moz-osx-font-smoothing: grayscale !important;
       }
 
-      .editor-display-layer {
+      .editor-display-layer,
+      .editor-textarea {
         overflow-y: scroll !important;
-        scrollbar-width: thin !important;
-        scrollbar-color: transparent transparent !important;
+        scrollbar-width: none !important;
         -ms-overflow-style: none !important;
       }
-      .editor-display-layer::-webkit-scrollbar {
-        width: 8px !important;
-        display: block !important;
+      .editor-display-layer::-webkit-scrollbar,
+      .editor-textarea::-webkit-scrollbar {
+        width: 0 !important;
+        height: 0 !important;
+        display: none !important;
         background: transparent !important;
       }
-      .editor-display-layer::-webkit-scrollbar-track {
+      .editor-display-layer::-webkit-scrollbar-track,
+      .editor-textarea::-webkit-scrollbar-track {
         background: transparent !important;
+        border: none !important;
       }
-      .editor-display-layer::-webkit-scrollbar-thumb {
+      .editor-display-layer::-webkit-scrollbar-thumb,
+      .editor-textarea::-webkit-scrollbar-thumb {
         background-color: transparent !important;
+        border: none !important;
       }
 
       .editor-para {
@@ -676,41 +869,11 @@ function TinyEditor({
       }
 
       .editor-textarea {
-        overflow-y: scroll !important;
-        scrollbar-width: thin !important;
-        scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
         -webkit-appearance: none !important;
         appearance: none !important;
         caret-color: #00a8ff !important;
         color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
         -webkit-text-fill-color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
-      }
-      .editor-textarea::-webkit-scrollbar {
-        width: 8px !important;
-        display: block !important;
-        background: transparent !important;
-      }
-      .editor-textarea::-webkit-scrollbar-track {
-        background: transparent !important;
-      }
-      .editor-textarea::-webkit-scrollbar-thumb {
-        background-color: ${isDay ? "rgba(156, 163, 175, 0.5)" : "rgba(113, 113, 122, 0.45)"} !important;
-        border-radius: 9999px !important;
-        transition: background-color 300ms ease-in-out !important;
-      }
-      .editor-textarea::-webkit-scrollbar-thumb:hover {
-        background-color: ${isDay ? "rgba(107, 114, 128, 0.8)" : "rgba(161, 161, 170, 0.7)"} !important;
-      }
-
-      .editor-textarea.is-typing-editor,
-      body.is-typing .editor-textarea,
-      html.is-typing .editor-textarea {
-        scrollbar-color: transparent transparent !important;
-      }
-      .editor-textarea.is-typing-editor::-webkit-scrollbar-thumb,
-      body.is-typing .editor-textarea::-webkit-scrollbar-thumb,
-      html.is-typing .editor-textarea::-webkit-scrollbar-thumb {
-        background-color: transparent !important;
       }
 
       .editor-textarea::selection {
@@ -759,7 +922,7 @@ function TinyEditor({
           textAlign: textAlign as CSSProperties["textAlign"],
           letterSpacing: letterSpacing === 0 ? "normal" : `${letterSpacing}px`,
           paddingTop: "70px",
-          paddingBottom: "70px",
+          paddingBottom: "50vh",
           paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
           paddingRight: "clamp(1.5rem, calc(50% - 374px), 50%)",
           width: "100%",
@@ -868,7 +1031,7 @@ function TinyEditor({
           WebkitTextFillColor: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
           caretColor: "#00a8ff",
           paddingTop: "70px",
-          paddingBottom: "70px",
+          paddingBottom: "50vh",
           paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
           paddingRight: "clamp(1.5rem, calc(50% - 374px), 50%)",
           width: "100%",
@@ -888,6 +1051,17 @@ function TinyEditor({
         }}
       />
 
+      {/* Barra de desplazamiento con transición de opacidad sutil en modo Zen */}
+      <EditorScrollbar
+        isDay={isDay}
+        scrollTrackRef={scrollTrackRef}
+        scrollThumbRef={scrollThumbRef}
+        onTrackClick={handleTrackClick}
+        onThumbPointerDown={handleThumbPointerDown}
+        onThumbPointerMove={handleThumbPointerMove}
+        onThumbPointerUp={handleThumbPointerUp}
+      />
+
       {/* Descomentar para activar el HUD visual de debug en pantalla: */}
       {/* <EditorDebugHUD
         startIdx={effectiveStart}
@@ -897,5 +1071,61 @@ function TinyEditor({
     </div>
   );
 }
+
+interface EditorScrollbarProps {
+  isDay: boolean;
+  scrollTrackRef: React.RefObject<HTMLDivElement>;
+  scrollThumbRef: React.RefObject<HTMLDivElement>;
+  onTrackClick: (e: React.MouseEvent<HTMLDivElement>) => void;
+  onThumbPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onThumbPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onThumbPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
+}
+
+const EditorScrollbar = memo(function EditorScrollbar({
+  isDay,
+  scrollTrackRef,
+  scrollThumbRef,
+  onTrackClick,
+  onThumbPointerDown,
+  onThumbPointerMove,
+  onThumbPointerUp,
+}: EditorScrollbarProps) {
+  return (
+    <div
+      ref={scrollTrackRef}
+      onClick={onTrackClick}
+      aria-hidden="true"
+      className="auto-hide-ui absolute right-0 top-0 bottom-0 w-3 z-30 pointer-events-auto cursor-pointer select-none"
+      style={{
+        transform: "translateZ(0)",
+        WebkitBackfaceVisibility: "hidden",
+        backfaceVisibility: "hidden",
+      }}
+    >
+      <div
+        ref={scrollThumbRef}
+        onPointerDown={onThumbPointerDown}
+        onPointerMove={onThumbPointerMove}
+        onPointerUp={onThumbPointerUp}
+        onPointerCancel={onThumbPointerUp}
+        className={twMerge(
+          "absolute right-1 w-1.5 rounded-full touch-none select-none",
+          isDay
+            ? "bg-gray-400/60 hover:bg-gray-500/80 active:bg-gray-600/90"
+            : "bg-zinc-500/50 hover:bg-zinc-400/80 active:bg-zinc-300/90"
+        )}
+        style={{
+          top: 0,
+          willChange: "transform",
+          transform: "translateZ(0)",
+          WebkitBackfaceVisibility: "hidden",
+          backfaceVisibility: "hidden",
+          transition: "background-color 150ms ease-out",
+        }}
+      />
+    </div>
+  );
+});
 
 export default TinyEditor;

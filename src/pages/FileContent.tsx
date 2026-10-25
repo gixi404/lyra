@@ -1,6 +1,5 @@
 import MainContainer from "../components/MainContainer";
 import useFile from "../hooks/useFile";
-import useStorage from "../hooks/useStorage";
 import { fileStore } from "../store/fileStore";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { INTRO_ES, PAGES } from "../utils/consts";
@@ -71,7 +70,6 @@ function clearDraft(fileName: string): void {
 
 function FileContent(): Component {
   const { goTo } = navigation(),
-    { setItem } = useStorage(),
     selectedFile = fileStore(state => state.selectedFile),
     { saveFileContent, getFileMtime } = useFile(),
     initialDraft = readDraft(selectedFile.name),
@@ -290,7 +288,7 @@ function FileContent(): Component {
     if (fileName && previousContent !== currentContent) {
       const date: string = getDate();
       const [modifiedKey] = getCompatibleStorageKeys(fileName, "-modified");
-      setItem(modifiedKey, date);
+      window.localStorage.setItem(modifiedKey, date);
     }
   }
 

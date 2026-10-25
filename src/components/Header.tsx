@@ -1,3 +1,4 @@
+import { memo } from "react";
 import DefaultHeader from "./DefaultHeader";
 import HiddenHeader from "./HiddenHeader";
 import { configStore } from "../store/configStore";
@@ -10,4 +11,4 @@ function Header(): Component {
   return <HiddenHeader />;
 }
 
-export default Header;
+export default memo(Header);

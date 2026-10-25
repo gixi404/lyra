@@ -4,7 +4,7 @@ import { navigation, pathIs, themes } from "../utils/helpers";
 import { PAGES, THEMES } from "../utils/consts";
 import { configStore } from "../store/configStore";
 import type { Component } from "../utils/types";
-import type { MouseEvent } from "react";
+import { memo, type MouseEvent } from "react";
 
 function DefaultHeader(): Component {
   const { isDay } = themes(),
@@ -92,7 +92,14 @@ function DefaultHeader(): Component {
 
   return (
     <>
-      <div className="auto-hide-ui no-print fixed top-4 left-4 sm:left-6 z-50 flex items-center gap-x-2">
+      <div
+        className="auto-hide-ui no-print fixed top-4 left-4 sm:left-6 z-50 flex items-center gap-x-2"
+        style={{
+          transform: "translateZ(0)",
+          WebkitBackfaceVisibility: "hidden",
+          backfaceVisibility: "hidden",
+        }}
+      >
         {pathIs(PAGES.list) && (
           <div className="flex items-center gap-x-2.5 select-none opacity-90">
             <img src="/logo.png" alt="Lyra" className="w-[26px] h-[26px] object-contain" />
@@ -118,7 +125,14 @@ function DefaultHeader(): Component {
         )}
       </div>
 
-      <div className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2">
+      <div
+        className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2"
+        style={{
+          transform: "translateZ(0)",
+          WebkitBackfaceVisibility: "hidden",
+          backfaceVisibility: "hidden",
+        }}
+      >
         {(pathIs(PAGES.list) || pathIs(PAGES.preferences)) && (
           <>
             <button
@@ -153,4 +167,4 @@ function DefaultHeader(): Component {
   );
 }
 
-export default DefaultHeader;
+export default memo(DefaultHeader);
