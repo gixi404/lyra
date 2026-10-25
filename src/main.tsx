@@ -1,30 +1,12 @@
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
-import { lazy, StrictMode, Suspense } from "react";
-import { PAGES } from "./utils/consts";
+import { RouterProvider } from "react-router-dom";
+import { StrictMode, Suspense } from "react";
 import Toast from "./components/Toast";
 import "./styles.css";
-import ListPage from "./pages/List";
 import { type Container, createRoot } from "react-dom/client";
-import type { LazyCmp } from "./utils/types";
 import { checkAndApplyUpdate } from "./utils/updater";
+import { router } from "./router";
 
-const root = document.getElementById("root") as Container,
-  FilePage: LazyCmp = lazy(() => import("./pages/FileContent")),
-  PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences")),
-  router = createBrowserRouter([
-    {
-      path: PAGES.list,
-      element: <ListPage />,
-    },
-    {
-      path: PAGES.file,
-      element: <FilePage />,
-    },
-    {
-      path: PAGES.preferences,
-      element: <PreferencesPage />,
-    },
-  ]);
+const root = document.getElementById("root") as Container;
 
 try {
   const savedTheme = window.localStorage.getItem("theme");
@@ -51,7 +33,15 @@ createRoot(root).render(
   </StrictMode>
 );
 
-// Comprobación silenciosa de actualizaciones en segundo plano al iniciar
-setTimeout(() => {
-  void checkAndApplyUpdate(false);
-}, 3000);
+// Comprobación de actualizaciones al iniciar si hay conexión a internet
+if (typeof navigator !== "undefined" && navigator.onLine) {
+  setTimeout(() => {
+    void checkAndApplyUpdate(false);
+  }, 2000);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    void checkAndApplyUpdate(false);
+  });
+}

@@ -9,6 +9,7 @@ import {
   Folder as FolderIcon,
   Focus as FocusIcon,
   RefreshCw as RefreshCwIcon,
+  Sparkles,
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
@@ -51,6 +52,14 @@ const d = translations(),
     { keys: "Ctrl + +", label: "Aumentar tamaño de letra" },
     { keys: "Ctrl + -", label: "Reducir tamaño de letra" },
     { keys: "F11", label: "Pantalla completa" },
+  ] as const,
+  defaultChangelog = [
+    "Actualizaciones automáticas transparentes al iniciar el programa.",
+    "Acceso directo y clicable a las novedades desde la notificación de actualización.",
+    "Nuevo botón de comprobación manual con estado en vivo en Preferencias.",
+    "Sincronización instantánea del ordenamiento de archivos en la lista.",
+    "Arranque de ventana optimizado sin destellos blancos con tema oscuro nativo.",
+    "Soporte y empaquetado multiplataforma oficial para Windows, macOS y Linux.",
   ] as const;
 
 function Preferences(): Component {
@@ -63,10 +72,34 @@ function Preferences(): Component {
     { setItem } = useStorage(),
     paragraphFocus = myParagraphFocus(),
     [currentVersion, setCurrentVersion] = useState<string>(packageJson.version),
-    [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
+    [checkingUpdate, setCheckingUpdate] = useState<boolean>(false),
+    [releaseNotes] = useState<readonly string[]>(() => {
+      try {
+        const raw = window.localStorage.getItem("lyra_release_notes");
+        if (raw) {
+          const parsed = raw
+            .split("\n")
+            .map(line => line.trim())
+            .filter(line => line.startsWith("- ") || line.startsWith("* "))
+            .map(line => line.replace(/^[-*]\s+/, ""));
+          if (parsed.length > 0) return parsed;
+        }
+      } catch {}
+      return defaultChangelog;
+    });
 
   useEffect(() => {
     void getVersion().then(setCurrentVersion).catch(() => {});
+
+    // Scroll suave automático si se navega desde la notificación de novedades
+    try {
+      if (window.sessionStorage.getItem("scroll_to_novedades") === "true") {
+        window.sessionStorage.removeItem("scroll_to_novedades");
+        setTimeout(() => {
+          document.getElementById("novedades-section")?.scrollIntoView({ behavior: "smooth" });
+        }, 150);
+      }
+    } catch {}
   }, []);
 
   async function handleCheckUpdate(): Promise<void> {
@@ -263,6 +296,29 @@ function Preferences(): Component {
                   </kbd>
                 </div>
               ))}
+            </div>
+
+            {/* Novedades / Cambios recientes */}
+            <div
+              id="novedades-section"
+              className={twMerge(
+                "w-full flex flex-col gap-y-3 pt-5 border-t",
+                isDay ? "border-neutral-300" : "border-zinc-800"
+              )}
+            >
+              <div className="flex items-center gap-x-2">
+                <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
+                <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-800" : "text-zinc-100")}>
+                  Novedades de la versión {currentVersion}
+                </h3>
+              </div>
+              <ul className={twMerge("flex flex-col gap-y-1.5 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-600" : "text-neutral-300")}>
+                {releaseNotes.map((item, idx) => (
+                  <li key={idx} className="leading-relaxed">
+                    {item}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         </div>

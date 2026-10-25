@@ -4,6 +4,7 @@ import { themes } from "../utils/helpers";
 
 function Toast(): JSX.Element | null {
   const toasts = useToastStore(state => state.toasts);
+  const removeToast = useToastStore(state => state.removeToast);
   const { isDay } = themes();
 
   if (toasts.length === 0) return null;
@@ -29,6 +30,18 @@ function Toast(): JSX.Element | null {
             <Info className="w-4 h-4 text-sky-500 shrink-0" />
           )}
           <span>{t.msg}</span>
+          {t.action && (
+            <button
+              type="button"
+              onClick={() => {
+                t.action?.onClick();
+                removeToast(t.id);
+              }}
+              className="ml-1 text-sky-400 hover:text-sky-300 underline font-semibold cursor-pointer transition-colors outline-none"
+            >
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

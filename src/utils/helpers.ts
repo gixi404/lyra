@@ -1,4 +1,4 @@
-import { useToastStore } from "../store/toastStore";
+import { type ToastAction, useToastStore } from "../store/toastStore";
 import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
@@ -31,8 +31,13 @@ function navigation(): Navigation {
   return { goTo };
 }
 
-function notification(type: "success" | "error" | "info", msg: string): void {
-  useToastStore.getState().addToast(type, msg);
+function notification(
+  type: "success" | "error" | "info",
+  msg: string,
+  action?: ToastAction,
+  durationMs?: number
+): void {
+  useToastStore.getState().addToast(type, msg, action, durationMs);
 }
 
 function nameIsValid(name: string): boolean {

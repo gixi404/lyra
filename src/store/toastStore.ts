@@ -1,25 +1,36 @@
 import { create } from "zustand";
 
-interface ToastMessage {
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+export interface ToastMessage {
   id: string;
   type: "success" | "error" | "info";
   msg: string;
+  action?: ToastAction;
 }
 
 interface ToastStore {
   toasts: ToastMessage[];
-  addToast: (type: "success" | "error" | "info", msg: string) => void;
+  addToast: (
+    type: "success" | "error" | "info",
+    msg: string,
+    action?: ToastAction,
+    durationMs?: number
+  ) => void;
   removeToast: (id: string) => void;
 }
 
 export const useToastStore = create<ToastStore>(set => ({
   toasts: [],
-  addToast: (type, msg) => {
+  addToast: (type, msg, action, durationMs = 2500) => {
     const id = Math.random().toString(36).substring(2, 9);
-    set(state => ({ toasts: [...state.toasts, { id, type, msg }] }));
+    set(state => ({ toasts: [...state.toasts, { id, type, msg, action }] }));
     setTimeout(() => {
       set(state => ({ toasts: state.toasts.filter(t => t.id !== id) }));
-    }, 2500);
+    }, durationMs);
   },
   removeToast: id =>
     set(state => ({ toasts: state.toasts.filter(t => t.id !== id) })),
