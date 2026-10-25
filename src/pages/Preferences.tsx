@@ -274,51 +274,54 @@ function Preferences(): Component {
             </div>
 
 
-            {/* Novedades / Cambios recientes */}
-            <div
-              id="novedades-section"
-              className={twMerge(
-                "w-full flex flex-col gap-y-3 pt-5 border-t",
-                isDay ? "border-neutral-300" : "border-zinc-800"
-              )}
-            >
-              <div className="flex items-center gap-x-2">
-                <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
-                <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-800" : "text-zinc-100")}>
-                  Novedades de la versión {currentVersion}
-                </h3>
-              </div>
-              <ul className={twMerge("flex flex-col gap-y-1.5 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-600" : "text-neutral-300")}>
-                {releaseNotes.map((item, idx) => (
-                  <li key={idx} className="leading-relaxed">
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Atajos de teclado */}
-            <div
-              className={twMerge(
-                "w-full flex flex-col gap-y-2.5 pt-4 border-t",
-                isDay ? "border-neutral-300" : "border-zinc-800"
-              )}
-            >
-              {shortcutsList.map(sc => (
-                <div key={sc.keys} className="flex items-center justify-between text-xs sm:text-sm">
-                  <span className={isDay ? "text-neutral-700" : "text-neutral-300"}>{sc.label}</span>
-                  <kbd
-                    className={twMerge(
-                      "px-2 py-1 rounded font-mono text-xs font-semibold shadow-xs border",
-                      isDay
-                        ? "bg-white text-neutral-800 border-neutral-300"
-                        : "bg-zinc-800 text-zinc-200 border-zinc-700"
-                    )}
-                  >
-                    {sc.keys}
-                  </kbd>
+            {/* Bloque inferior: Novedades y Atajos */}
+            <div className="w-full flex flex-col gap-y-4">
+              {/* Novedades / Cambios recientes */}
+              <div
+                id="novedades-section"
+                className={twMerge(
+                  "w-full flex flex-col gap-y-2.5 pt-4 border-t",
+                  isDay ? "border-neutral-300" : "border-zinc-800"
+                )}
+              >
+                <div className="flex items-center gap-x-2">
+                  <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
+                  <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-800" : "text-zinc-100")}>
+                    Novedades de la versión {currentVersion}
+                  </h3>
                 </div>
-              ))}
+                <ul className={twMerge("flex flex-col gap-y-1 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-600" : "text-neutral-300")}>
+                  {releaseNotes.map((item, idx) => (
+                    <li key={idx} className="leading-relaxed">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Atajos de teclado */}
+              <div
+                className={twMerge(
+                  "w-full flex flex-col gap-y-2.5 pt-4 border-t",
+                  isDay ? "border-neutral-300" : "border-zinc-800"
+                )}
+              >
+                {shortcutsList.map(sc => (
+                  <div key={sc.keys} className="flex items-center justify-between text-xs sm:text-sm">
+                    <span className={isDay ? "text-neutral-700" : "text-neutral-300"}>{sc.label}</span>
+                    <kbd
+                      className={twMerge(
+                        "px-2 py-1 rounded font-mono text-xs font-semibold shadow-xs border",
+                        isDay
+                          ? "bg-white text-neutral-800 border-neutral-300"
+                          : "bg-zinc-800 text-zinc-200 border-zinc-700"
+                      )}
+                    >
+                      {sc.keys}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
