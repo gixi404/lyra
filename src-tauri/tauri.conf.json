@@ -80,7 +80,7 @@
         "focus": true,
         "visible": false,
         "useHttpsScheme": true,
-        "backgroundColor": "#e0e0e0"
+        "backgroundColor": "#101010"
       }
     ],
     "security": {

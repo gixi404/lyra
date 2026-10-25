@@ -203,8 +203,8 @@ fn main() {
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 // Fallback de seguridad: si el frontend no solicita mostrar la ventana,
-                // forzar visibilidad tras 3 segundos para evitar que la app quede oculta.
-                std::thread::sleep(std::time::Duration::from_millis(3000));
+                // forzar visibilidad tras 800ms para evitar que la app quede oculta.
+                std::thread::sleep(std::time::Duration::from_millis(800));
                 let handle = app_handle.clone();
                 let _ = app_handle.run_on_main_thread(move || {
                     if let Some(window) = handle.get_webview_window("main") {

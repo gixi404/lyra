@@ -67,6 +67,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
     document.documentElement.style.backgroundColor = bg;
     document.body.style.backgroundColor = bg;
     document.documentElement.classList.toggle("dark", !isDay);
+    document.documentElement.classList.toggle("light", isDay);
   }, [isDay]);
 
   const toggleFullscreen = async (): Promise<void> => {

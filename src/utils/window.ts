@@ -20,9 +20,10 @@ export async function showAppWindow(): Promise<void> {
 }
 
 export function triggerWindowReady(): void {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      void showAppWindow();
-    });
-  });
+  // En WebKitGTK / Wayland, requestAnimationFrame se pausa si la ventana no es visible.
+  // setTimeout se ejecuta puntualmente, permitiendo que la ventana se muestre en cuanto
+  // React monta el DOM, evitando esperas innecesarias o el fallback por timeout.
+  setTimeout(() => {
+    void showAppWindow();
+  }, 10);
 }

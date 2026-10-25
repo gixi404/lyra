@@ -8,6 +8,10 @@
     min-height: 100vh;
     margin: 0;
     padding: 0;
+    background-color: #101010;
+  }
+
+  html.light, html.light body, html.light #root {
     background-color: #e0e0e0;
   }
 
