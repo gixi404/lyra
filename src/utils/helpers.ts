@@ -3,7 +3,6 @@ import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
 import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { flushSync } from "react-dom";
 import { join } from "@tauri-apps/api/path";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
@@ -21,11 +20,7 @@ function navigation(): Navigation {
   const navigate: NavigateFunction = useNavigate();
 
   function goTo(path: string): void {
-    if ("startViewTransition" in document) {
-      (document as any).startViewTransition(() => flushSync(() => navigate(path)));
-    } else {
-      navigate(path);
-    }
+    navigate(path);
   }
 
   return { goTo };

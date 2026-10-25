@@ -23,11 +23,5 @@ export const router = createBrowserRouter([
 ]);
 
 export function navigateTo(path: string): void {
-  if (typeof document !== "undefined" && "startViewTransition" in document) {
-    (document as any).startViewTransition(() => {
-      void router.navigate(path);
-    });
-  } else {
-    void router.navigate(path);
-  }
+  void router.navigate(path);
 }

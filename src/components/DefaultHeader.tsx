@@ -28,62 +28,38 @@ function DefaultHeader(): Component {
       toggleThemeTick();
     };
 
-    if ("startViewTransition" in (window as any).document) {
-      const transition = (window.document as any).startViewTransition(() => {
-        updateThemeState();
-      });
+    const doc = (window as any).document as Document;
+    doc.querySelectorAll(".lyra-theme-ripple").forEach(el => el.remove());
 
-      transition.ready
-        .then(() => {
-          const clipPath = [
-            `circle(0px at ${x}px ${y}px)`,
-            `circle(${endRadius}px at ${x}px ${y}px)`,
-          ];
-          ((window as any).document as Document).documentElement.animate(
-            {
-              clipPath: clipPath,
-            },
-            {
-              duration: 450,
-              easing: "ease-in-out",
-              pseudoElement: "::view-transition-new(root)",
-            }
-          );
-        })
-        .catch(() => {
-          // Ignorar si la animación fue abortada o saltada por un nuevo cambio de tema
-        });
-    } else {
-      const doc = (window as any).document as Document;
-      const ripple = doc.createElement("div");
-      const nextIsDay = nextTheme === THEMES.Day;
+    const ripple = doc.createElement("div");
+    ripple.className = "lyra-theme-ripple";
+    const nextIsDay = nextTheme === THEMES.Day;
 
-      ripple.style.position = "fixed";
-      ripple.style.left = `${x}px`;
-      ripple.style.top = `${y}px`;
-      ripple.style.width = "0px";
-      ripple.style.height = "0px";
-      ripple.style.borderRadius = "50%";
-      ripple.style.backgroundColor = nextIsDay ? "#e0e0e0" : "#101010";
-      ripple.style.transform = "translate(-50%, -50%)";
-      ripple.style.transition = "width 450ms cubic-bezier(0.4, 0, 0.2, 1), height 450ms cubic-bezier(0.4, 0, 0.2, 1)";
-      ripple.style.pointerEvents = "none";
-      ripple.style.zIndex = "99999";
-      doc.body.appendChild(ripple);
+    ripple.style.position = "fixed";
+    ripple.style.left = `${x}px`;
+    ripple.style.top = `${y}px`;
+    ripple.style.width = "0px";
+    ripple.style.height = "0px";
+    ripple.style.borderRadius = "50%";
+    ripple.style.backgroundColor = nextIsDay ? "#e0e0e0" : "#101010";
+    ripple.style.transform = "translate(-50%, -50%)";
+    ripple.style.transition = "width 400ms cubic-bezier(0.4, 0, 0.2, 1), height 400ms cubic-bezier(0.4, 0, 0.2, 1)";
+    ripple.style.pointerEvents = "none";
+    ripple.style.zIndex = "99999";
+    doc.body.appendChild(ripple);
 
-      requestAnimationFrame(() => {
-        const diameter = endRadius * 2.2;
-        ripple.style.width = `${diameter}px`;
-        ripple.style.height = `${diameter}px`;
-      });
+    requestAnimationFrame(() => {
+      const diameter = endRadius * 2.2;
+      ripple.style.width = `${diameter}px`;
+      ripple.style.height = `${diameter}px`;
+    });
 
+    setTimeout(() => {
+      updateThemeState();
       setTimeout(() => {
-        updateThemeState();
-        setTimeout(() => {
-          ripple.remove();
-        }, 150);
-      }, 400);
-    }
+        ripple.remove();
+      }, 100);
+    }, 380);
   }
 
   function handleSettingsClick(): void {

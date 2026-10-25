@@ -115,20 +115,6 @@ body.is-typing .auto-hide-ui {
   @apply !opacity-90 !text-white;
 }
 
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
-}
-
-::view-transition-old(root) {
-  z-index: 1;
-}
-
-::view-transition-new(root) {
-  z-index: 9999;
-}
-
 @media print {
   .no-print, header, button, .search-replace-modal {
     display: none !important;
