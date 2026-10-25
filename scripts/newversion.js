@@ -49,13 +49,15 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 const currentVersion = pkg.version;
 log(`Versión actual: v${currentVersion}`);
 
-const arg = process.argv[2] ? process.argv[2].trim() : "patch";
+const args = process.argv.slice(2).map(a => a.trim());
+const skipBuild = args.includes("--skip-build") || args.includes("--no-build") || args.includes("--ci-only");
+const versionArg = args.find(a => !a.startsWith("--")) || "patch";
 let nextVersion = "";
 
 const semverRegex = /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/;
 
-if (semverRegex.test(arg)) {
-  nextVersion = arg;
+if (semverRegex.test(versionArg)) {
+  nextVersion = versionArg;
 } else {
   const parts = currentVersion.split(".").map(n => parseInt(n, 10));
   if (parts.length !== 3 || parts.some(isNaN)) {
@@ -63,14 +65,14 @@ if (semverRegex.test(arg)) {
     process.exit(1);
   }
 
-  if (arg === "major") {
+  if (versionArg === "major") {
     nextVersion = `${parts[0] + 1}.0.0`;
-  } else if (arg === "minor") {
+  } else if (versionArg === "minor") {
     nextVersion = `${parts[0]}.${parts[1] + 1}.0`;
-  } else if (arg === "patch") {
+  } else if (versionArg === "patch") {
     nextVersion = `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
   } else {
-    error(`Argumento desconocido: "${arg}". Usa patch, minor, major o una versión explícita como 2.0.2`);
+    error(`Argumento desconocido: "${versionArg}". Usa patch, minor, major o una versión explícita como 2.0.4`);
     process.exit(1);
   }
 }
@@ -97,69 +99,92 @@ cargoToml = cargoToml.replace(
 fs.writeFileSync(cargoTomlPath, cargoToml, "utf8");
 success("Actualizado src-tauri/Cargo.toml");
 
-// 5. Cargar clave de firma de Tauri
+// 5. Cargar clave de firma de Tauri y preparar compilación
 const keyPath = path.join(os.homedir(), ".tauri", "lyra.key");
-if (!fs.existsSync(keyPath)) {
-  error(`No se encontró la clave de firma en ${keyPath}`);
-  error("Ejecuta 'pnpm tauri signer generate -w ~/.tauri/lyra.key' primero.");
-  process.exit(1);
-}
+const hasKey = fs.existsSync(keyPath);
+const privateKey = hasKey ? fs.readFileSync(keyPath, "utf8").trim() : "";
 
-const privateKey = fs.readFileSync(keyPath, "utf8").trim();
 const buildEnv = {
   TAURI_SIGNING_PRIVATE_KEY: privateKey,
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "",
+  NO_STRIP: "1",
+  APPIMAGE_EXTRACT_AND_RUN: "1",
 };
 
-// 6. Compilar frontend y bundles firmados de Tauri
-log("Iniciando build y generación de firmas criptográficas...");
-run("pnpm run build");
-run("pnpm run tauri build", buildEnv);
-success("Build y firma completados con éxito");
+// 6. Verificación / Compilación
+if (skipBuild) {
+  log("Omitiendo build local (--no-build). Verificando tipos y sintaxis...");
+  run("pnpm run build");
+  run("cargo check --manifest-path src-tauri/Cargo.toml");
+  success("Verificación local completada");
+} else {
+  if (!hasKey) {
+    warn(`No se encontró la clave de firma en ${keyPath}`);
+    warn("El build local no estará firmado, pero GitHub Actions firmará con el secreto del repo.");
+  }
+  log("Iniciando build local de frontend y bundles de Tauri...");
+  run("pnpm run build");
+  run("pnpm run tauri build", buildEnv);
+  success("Build local completado con éxito");
+}
 
-// 7. Recolectar artefactos generados para subir
+// 7. Recolectar artefactos generados para la versión actual
 const bundleDir = path.join(rootDir, "src-tauri", "target", "release", "bundle");
 const artifacts = [];
 
-function searchArtifacts(dir) {
-  if (!fs.existsSync(dir)) return;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      searchArtifacts(fullPath);
-    } else {
-      const ext = path.extname(entry.name).toLowerCase();
-      // Incluir instaladores, paquetes comprimidos, firmas y latest.json
-      if (
-        entry.name === "latest.json" ||
-        entry.name.endsWith(".tar.gz") ||
-        entry.name.endsWith(".tar.gz.sig") ||
-        entry.name.endsWith(".zip") ||
-        entry.name.endsWith(".sig") ||
-        ext === ".rpm" ||
-        ext === ".deb" ||
-        ext === ".appimage" ||
-        ext === ".msi" ||
-        ext === ".dmg"
-      ) {
-        artifacts.push(fullPath);
+function searchArtifacts(dir, version) {
+  if (!fs.existsSync(dir)) return [];
+  const validExts = [".deb", ".rpm", ".appimage", ".msi", ".dmg", ".zip", ".tar.gz", ".sig"];
+  const collected = [];
+  const seenBasenames = new Set();
+
+  function scan(currentDir, depth = 0) {
+    if (depth > 2) return;
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        // Evitar directorios intermedios de empaquetado (como deb/Lyra_2.0.3_amd64 o appimage/Lyra.AppDir)
+        if (entry.name.endsWith(".AppDir") || entry.name.startsWith("Lyra_") || entry.name.startsWith("Lyra-")) {
+          continue;
+        }
+        scan(fullPath, depth + 1);
+      } else {
+        const basename = entry.name;
+        // Ignorar artefactos internos de debian
+        if (basename.startsWith("control.") || basename.startsWith("data.") || basename === "debian-binary") {
+          continue;
+        }
+        // Solo incluir archivos de la versión actual o latest.json
+        if (basename === "latest.json" || basename.includes(version)) {
+          const isKnownAsset = validExts.some(ext => basename.toLowerCase().endsWith(ext));
+          if (isKnownAsset && !seenBasenames.has(basename)) {
+            seenBasenames.add(basename);
+            collected.push(fullPath);
+          }
+        }
       }
     }
   }
+
+  scan(dir, 0);
+  return collected;
 }
 
-searchArtifacts(bundleDir);
-log(`Artefactos encontrados para release (${artifacts.length}):`);
-for (const art of artifacts) {
-  console.log(`  - ${path.basename(art)}`);
+if (!skipBuild) {
+  artifacts.push(...searchArtifacts(bundleDir, nextVersion));
+  if (artifacts.length > 0) {
+    log(`Artefactos locales encontrados para v${nextVersion} (${artifacts.length}):`);
+    for (const art of artifacts) {
+      console.log(`  - ${path.basename(art)}`);
+    }
+  }
 }
 
 // 8. Commit y Tag en Git
 log("Creando commit y tag en Git...");
 run("git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock");
-// Añadir cualquier cambio pendiente en src si lo hubiera
-run("git add src/ src-tauri/");
+run("git add src/ src-tauri/ scripts/");
 try {
   run(`git commit -m "release: v${nextVersion}"`);
 } catch {
@@ -182,24 +207,35 @@ try {
   warn("No se pudo hacer push automático a git. Asegúrate de tener conexión.");
 }
 
-// 10. Publicar Release en GitHub con GitHub CLI (gh)
+// 10. Publicar o adjuntar artefactos en GitHub Release
 const hasGh = Boolean(runCapture("which gh"));
 if (hasGh) {
-  if (artifacts.length === 0) {
-    warn("No se encontraron artefactos en bundle para publicar en GitHub Release.");
-  } else {
-    log(`Creando Release en GitHub para ${tag} con los artefactos firmados...`);
-    try {
-      const artifactArgs = artifacts.map(a => `"${a}"`).join(" ");
-      run(`gh release create ${tag} ${artifactArgs} --title "Lyra ${tag}" --notes "Lyra ${tag} - Actualizaciones automáticas habilitadas" --clobber`);
-      success(`¡Release ${tag} publicada exitosamente en GitHub!`);
-      success(`Los usuarios de Lyra se actualizarán automáticamente a la v${nextVersion}.`);
-    } catch (err) {
-      error("Error al crear release con 'gh'. Puedes subir los artefactos manualmente desde GitHub Releases.");
+  log("Gestionando release en GitHub...");
+  try {
+    const releaseExists = Boolean(runCapture(`gh release view ${tag}`));
+    const artifactArgs = artifacts.map(a => `"${a}"`).join(" ");
+
+    if (releaseExists) {
+      if (artifacts.length > 0) {
+        log(`La release ${tag} ya existe en GitHub. Subiendo artefactos locales...`);
+        run(`gh release upload ${tag} ${artifactArgs} --clobber`);
+        success(`Artefactos locales subidos a la release ${tag}`);
+      }
+    } else {
+      if (artifacts.length > 0) {
+        log(`Creando release ${tag} en GitHub con artefactos locales...`);
+        run(`gh release create ${tag} ${artifactArgs} --title "Lyra ${tag}" --notes "Lyra ${tag} - Actualizaciones automáticas habilitadas"`);
+        success(`Release ${tag} creada en GitHub`);
+      } else {
+        log("Release delegada al flujo de GitHub Actions");
+      }
     }
+  } catch (err) {
+    warn("No se pudo actualizar la release localmente con 'gh'. GitHub Actions la gestionará de forma remota.");
   }
 } else {
-  warn("GitHub CLI ('gh') no está disponible. Sube manualmente los archivos de src-tauri/target/release/bundle a tu release de GitHub.");
+  log("GitHub CLI ('gh') no está disponible; GitHub Actions creará la release automáticamente.");
 }
 
-console.log("\n\x1b[32m🎉 ¡Proceso finalizado con éxito para Lyra v" + nextVersion + "!\x1b[0m\n");
+console.log("\n\x1b[32m🎉 ¡Proceso finalizado con éxito para Lyra v" + nextVersion + "!\x1b[0m");
+log(`GitHub Actions compila y publica automáticamente para Windows, macOS y Linux en: https://github.com/gixi404/lyra/actions\n`);
