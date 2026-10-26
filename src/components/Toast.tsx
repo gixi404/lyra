@@ -1,5 +1,5 @@
 import { useToastStore } from "../store/toastStore";
-import { CheckCircle2, AlertCircle, Info } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
 import { themes } from "../utils/helpers";
 
 function Toast(): JSX.Element | null {
@@ -16,8 +16,8 @@ function Toast(): JSX.Element | null {
           key={t.id}
           className={`flex items-center gap-x-2.5 px-4 py-2.5 rounded-xl shadow-xl border text-xs font-medium animate-in fade-in slide-in-from-top-2 duration-150 pointer-events-auto ${
             isDay
-              ? "bg-white/95 text-neutral-800 border-neutral-200 shadow-neutral-300/40 backdrop-blur-md"
-              : "bg-zinc-900/95 text-zinc-100 border-zinc-700/80 shadow-black/50 backdrop-blur-md"
+              ? "bg-white text-neutral-800 border-neutral-200 shadow-neutral-300/40"
+              : "bg-zinc-900 text-zinc-100 border-zinc-700 shadow-black/50"
           }`}
         >
           {t.type === "success" && (
@@ -39,9 +39,24 @@ function Toast(): JSX.Element | null {
               }}
               className={`${
                 t.msg ? "ml-1" : ""
-              } text-sky-400 hover:text-sky-300 underline underline-offset-2 decoration-sky-400/50 hover:decoration-sky-300 font-semibold cursor-pointer transition-all duration-150 outline-none hover:brightness-110 active:scale-95`}
+              } ${
+                isDay
+                  ? "text-sky-600 hover:text-sky-700 decoration-sky-600/50 hover:decoration-sky-700"
+                  : "text-sky-400 hover:text-sky-300 decoration-sky-400/50 hover:decoration-sky-300"
+              } underline underline-offset-2 font-semibold cursor-pointer transition-all duration-150 outline-none hover:brightness-110 active:scale-95`}
             >
               {t.action.label}
+            </button>
+          )}
+          {t.action && (
+            <button
+              type="button"
+              onClick={() => removeToast(t.id)}
+              className="ml-1 text-neutral-400 hover:text-neutral-600 dark:hover:text-zinc-200 transition-colors p-0.5 rounded cursor-pointer"
+              title="Cerrar"
+              aria-label="Cerrar"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>

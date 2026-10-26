@@ -41,7 +41,7 @@ export async function notifyIfJustUpdated(): Promise<void> {
             scrollToNovedades();
           },
         },
-        5000
+        7000
       );
     } else if (!lastSeenVersion) {
       window.localStorage.setItem("lyra_last_seen_version", currentVersion);
@@ -109,12 +109,12 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
     // Remover el toast de "Actualizando..."
     useToastStore.getState().clearToasts();
 
-    // 2. Notificar "Reinicia para actualizar" (duración: 5 segundos)
+    // 2. Notificar "Actualización terminada." con acción para reiniciar y ver novedades
     notification(
-      "info",
-      "",
+      "success",
+      "Actualización terminada.",
       {
-        label: "Reinicia para actualizar",
+        label: "Reiniciar para ver novedades",
         onClick: async () => {
           try {
             await relaunch();
@@ -123,7 +123,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
           }
         },
       },
-      5000
+      30000
     );
   } catch (error: any) {
     useToastStore.getState().clearToasts();

@@ -29,9 +29,11 @@ export const useToastStore = create<ToastStore>(set => ({
   addToast: (type, msg, action, durationMs = 2500) => {
     const id = Math.random().toString(36).substring(2, 9);
     set(state => ({ toasts: [...state.toasts, { id, type, msg, action }] }));
-    setTimeout(() => {
-      set(state => ({ toasts: state.toasts.filter(t => t.id !== id) }));
-    }, durationMs);
+    if (durationMs > 0) {
+      setTimeout(() => {
+        set(state => ({ toasts: state.toasts.filter(t => t.id !== id) }));
+      }, durationMs);
+    }
     return id;
   },
   removeToast: id =>
