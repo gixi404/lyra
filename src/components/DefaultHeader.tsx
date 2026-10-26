@@ -6,60 +6,124 @@ import { configStore } from "../store/configStore";
 import type { Component } from "../utils/types";
 import { memo, type MouseEvent } from "react";
 
+let activeThemeAnim: Animation | null = null;
+
 function DefaultHeader(): Component {
   const { isDay } = themes(),
     { goTo } = navigation(),
     { setItem } = useStorage(),
     toggleThemeTick = configStore(state => state.toggleThemeTick);
 
-  function cycleTheme(e: MouseEvent<HTMLButtonElement>): void {
+  function cycleTheme(e?: MouseEvent<HTMLButtonElement>): void {
     const nextTheme = isDay ? THEMES.clearNigth : THEMES.Day;
+    const root = document.getElementById("root");
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX || rect.left + rect.width / 2;
-    const y = e.clientY || rect.top + rect.height / 2;
-    const endRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    );
-
-    const updateThemeState = () => {
+    if (!root) {
       setItem("theme", nextTheme);
       toggleThemeTick();
-    };
+      return;
+    }
 
-    const doc = (window as any).document as Document;
-    doc.querySelectorAll(".lyra-theme-ripple").forEach(el => el.remove());
+    // Cancelar animación previa si el usuario hace clics repetidos rápidamente
+    if (activeThemeAnim) {
+      activeThemeAnim.onfinish = null;
+      activeThemeAnim.oncancel = null;
+      activeThemeAnim.cancel();
+      activeThemeAnim = null;
+    }
+    document.querySelectorAll(".theme-wave-snapshot").forEach(el => el.remove());
 
-    const ripple = doc.createElement("div");
-    ripple.className = "lyra-theme-ripple";
-    const nextIsDay = nextTheme === THEMES.Day;
+    // Coordenadas del botón para el origen de la onda circular
+    let x = window.innerWidth - 40;
+    let y = 40;
+    if (e && e.currentTarget) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      x = e.clientX || rect.left + rect.width / 2;
+      y = e.clientY || rect.top + rect.height / 2;
+    }
 
-    ripple.style.position = "fixed";
-    ripple.style.left = `${x}px`;
-    ripple.style.top = `${y}px`;
-    ripple.style.width = "0px";
-    ripple.style.height = "0px";
-    ripple.style.borderRadius = "50%";
-    ripple.style.backgroundColor = nextIsDay ? "#e0e0e0" : "#101010";
-    ripple.style.transform = "translate(-50%, -50%)";
-    ripple.style.transition = "width 400ms cubic-bezier(0.4, 0, 0.2, 1), height 400ms cubic-bezier(0.4, 0, 0.2, 1)";
-    ripple.style.pointerEvents = "none";
-    ripple.style.zIndex = "99999";
-    doc.body.appendChild(ripple);
+    const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
+    const clipX = x + scrollX;
+    const clipY = y + scrollY;
 
-    requestAnimationFrame(() => {
-      const diameter = endRadius * 2.2;
-      ripple.style.width = `${diameter}px`;
-      ripple.style.height = `${diameter}px`;
+    const rootWidth = root.offsetWidth;
+    const rootHeight = root.offsetHeight;
+    const endRadius = Math.hypot(
+      Math.max(clipX, rootWidth - clipX),
+      Math.max(clipY, rootHeight - clipY)
+    );
+
+    // 1. Snapshot del estado actual para mantener todo el contenido visible
+    const snapshot = root.cloneNode(true) as HTMLElement;
+    snapshot.id = "";
+    snapshot.className = `${snapshot.className} theme-wave-snapshot`;
+    snapshot.style.position = "absolute";
+    snapshot.style.top = "0";
+    snapshot.style.left = "0";
+    snapshot.style.width = "100%";
+    snapshot.style.minHeight = "100vh";
+    snapshot.style.pointerEvents = "none";
+    snapshot.style.zIndex = "0";
+    snapshot.setAttribute("aria-hidden", "true");
+
+    // Sincronizar textareas, inputs y scrolls en el snapshot para no perder el estado visual
+    const origElements = root.querySelectorAll("*");
+    const cloneElements = snapshot.querySelectorAll("*");
+    origElements.forEach((el, i) => {
+      const clone = cloneElements[i];
+      if (clone) {
+        if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+          (clone as HTMLInputElement | HTMLTextAreaElement).value = el.value;
+        }
+        if (el.scrollTop) clone.scrollTop = el.scrollTop;
+        if (el.scrollLeft) clone.scrollLeft = el.scrollLeft;
+      }
     });
 
-    setTimeout(() => {
-      updateThemeState();
-      setTimeout(() => {
-        ripple.remove();
-      }, 100);
-    }, 380);
+    document.body.appendChild(snapshot);
+
+    // 2. Aplicar el nuevo tema inmediatamente al contenido real
+    setItem("theme", nextTheme);
+    toggleThemeTick();
+
+    root.style.position = "relative";
+    root.style.zIndex = "1";
+
+    // 3. Animar la propagación circular del nuevo tema revelándose sobre el snapshot
+    try {
+      const anim = root.animate(
+        [
+          { clipPath: `circle(0px at ${clipX}px ${clipY}px)` },
+          { clipPath: `circle(${endRadius}px at ${clipX}px ${clipY}px)` },
+        ],
+        {
+          duration: 380,
+          easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+        }
+      );
+
+      activeThemeAnim = anim;
+
+      const cleanup = () => {
+        snapshot.remove();
+        root.style.position = "";
+        root.style.zIndex = "";
+        root.style.clipPath = "";
+        if (activeThemeAnim === anim) {
+          activeThemeAnim = null;
+        }
+      };
+
+      anim.onfinish = cleanup;
+      anim.oncancel = cleanup;
+    } catch {
+      snapshot.remove();
+      root.style.position = "";
+      root.style.zIndex = "";
+      root.style.clipPath = "";
+      activeThemeAnim = null;
+    }
   }
 
   function handleSettingsClick(): void {
