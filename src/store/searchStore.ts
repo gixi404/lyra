@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { scheduleSavePersistentPreferences } from "../utils/persistentPreferences";
 
 export type SortOptionId = "mtime" | "az" | "za" | "recent" | "oldest" | "random";
 
@@ -37,6 +38,7 @@ export const searchStore = create<SearchStoreState>(set => ({
   setSortOption: (id: SortOptionId) => {
     try {
       localStorage.setItem("sortOption", id);
+      scheduleSavePersistentPreferences();
     } catch {}
     set({
       sortOption: id,
@@ -47,6 +49,7 @@ export const searchStore = create<SearchStoreState>(set => ({
   toggleSortOption: (id: SortOptionId) => {
     try {
       localStorage.setItem("sortOption", id);
+      scheduleSavePersistentPreferences();
     } catch {}
     set({
       sortOption: id,

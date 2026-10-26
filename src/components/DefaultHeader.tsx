@@ -91,8 +91,9 @@ function DefaultHeader(): Component {
 
     root.style.position = "relative";
     root.style.zIndex = "1";
+    root.style.willChange = "clip-path";
 
-    // 3. Animar la propagación circular del nuevo tema revelándose sobre el snapshot
+    // 3. Animar la propagación circular del nuevo tema revelándose sobre el snapshot con una transición suave y orgánica
     try {
       const anim = root.animate(
         [
@@ -100,8 +101,8 @@ function DefaultHeader(): Component {
           { clipPath: `circle(${endRadius}px at ${clipX}px ${clipY}px)` },
         ],
         {
-          duration: 380,
-          easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+          duration: 650,
+          easing: "cubic-bezier(0.4, 0, 0.1, 1)",
         }
       );
 
@@ -112,6 +113,7 @@ function DefaultHeader(): Component {
         root.style.position = "";
         root.style.zIndex = "";
         root.style.clipPath = "";
+        root.style.willChange = "";
         if (activeThemeAnim === anim) {
           activeThemeAnim = null;
         }
@@ -124,6 +126,7 @@ function DefaultHeader(): Component {
       root.style.position = "";
       root.style.zIndex = "";
       root.style.clipPath = "";
+      root.style.willChange = "";
       activeThemeAnim = null;
     }
   }

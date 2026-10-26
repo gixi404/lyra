@@ -190,6 +190,41 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 fn main() {
     #[cfg(target_os = "linux")]
     {
+        // En distribuciones Wayland modernas (Fedora, Arch, etc.), los paquetes AppImage
+        // construidos en CI pueden incorporar librerías antiguas de Wayland incompatibles
+        // con el compositor del host y drivers Mesa recientes, provocando el fallo
+        // "Could not create default EGL display: EGL_BAD_PARAMETER" y pantalla negra.
+        // Si detectamos la biblioteca nativa en el host y no está en LD_PRELOAD, relanzar
+        // de forma transparente el proceso vinculando la biblioteca del sistema.
+        if std::env::var("LYRA_WAYLAND_WRAPPED").is_err() {
+            let candidate_libs = [
+                "/usr/lib64/libwayland-client.so.0",
+                "/lib64/libwayland-client.so.0",
+                "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
+                "/usr/lib/libwayland-client.so.0",
+            ];
+
+            if let Some(host_lib) = candidate_libs.iter().find(|p| std::path::Path::new(p).exists()) {
+                let current_preload = std::env::var("LD_PRELOAD").unwrap_or_default();
+                if !current_preload.contains("libwayland-client") {
+                    let new_preload = if current_preload.is_empty() {
+                        host_lib.to_string()
+                    } else {
+                        format!("{}:{}", host_lib, current_preload)
+                    };
+
+                    if let Ok(current_exe) = std::env::current_exe() {
+                        use std::os::unix::process::CommandExt;
+                        let mut cmd = std::process::Command::new(current_exe);
+                        cmd.args(std::env::args().skip(1));
+                        cmd.env("LD_PRELOAD", new_preload);
+                        cmd.env("LYRA_WAYLAND_WRAPPED", "1");
+                        let _ = cmd.exec();
+                    }
+                }
+            }
+        }
+
         // En Wayland/WebKitGTK, el renderizador DMA-BUF provoca que al redimensionar,
         // arrastrar o poner la ventana en pantalla completa, el compositor estire el buffer
         // antiguo durante unos milisegundos produciendo parpadeo y contenido deformado.

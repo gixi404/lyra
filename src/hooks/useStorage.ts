@@ -1,4 +1,8 @@
 import { configStore } from "../store/configStore";
+import {
+  PERSISTENT_KEYS,
+  scheduleSavePersistentPreferences,
+} from "../utils/persistentPreferences";
 
 const storageInstance: Storage = {
   getItem: (key: string, defaultValue = ""): string => {
@@ -8,10 +12,16 @@ const storageInstance: Storage = {
   setItem: (key: string, value: string): void => {
     window.localStorage.setItem(key, value);
     configStore.getState().bumpPrefTick();
+    if (PERSISTENT_KEYS.includes(key as any)) {
+      scheduleSavePersistentPreferences();
+    }
   },
   removeItem: (key: string): void => {
     window.localStorage.removeItem(key);
     configStore.getState().bumpPrefTick();
+    if (PERSISTENT_KEYS.includes(key as any)) {
+      scheduleSavePersistentPreferences();
+    }
   },
 };
 

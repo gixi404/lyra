@@ -25,6 +25,8 @@ jobs:
             args: ''
 
     runs-on: ${{ matrix.platform }}
+    env:
+      RUST_MIN_STACK: 67108864
 
     steps:
       - name: Checkout repository
@@ -72,6 +74,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           NO_STRIP: ${{ matrix.platform == 'ubuntu-22.04' && '1' || '0' }}
+          RUST_MIN_STACK: 67108864
         with:
           tagName: v__VERSION__
           releaseName: 'Lyra v__VERSION__'

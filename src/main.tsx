@@ -4,6 +4,7 @@ import Toast from "./components/Toast";
 import "./styles.css";
 import { type Container, createRoot } from "react-dom/client";
 import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater";
+import { initPersistentPreferences } from "./utils/persistentPreferences";
 import { router } from "./router";
 
 const root = document.getElementById("root") as Container;
@@ -35,6 +36,9 @@ createRoot(root).render(
     <Toast />
   </StrictMode>
 );
+
+// Cargar y sincronizar preferencias y archivados persistentes desde disco
+void initPersistentPreferences();
 
 // Notificar si la app acaba de ser actualizada
 setTimeout(() => {

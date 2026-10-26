@@ -2,6 +2,10 @@ import { type ToastAction, useToastStore } from "../store/toastStore";
 import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
+import {
+  initPersistentPreferences,
+  scheduleSavePersistentPreferences,
+} from "./persistentPreferences";
 import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
@@ -172,11 +176,22 @@ async function verifyMainFolder(): Promise<void> {
     if (!mainFolderExists) {
       await mkdir(MAIN_FOLDER, BASE_DIRECTORY);
       await writeTextFile(path, intro, BASE_DIRECTORY);
-    } else {
+    }
+
+    // Inicializar y sincronizar preferencias y archivados persistentes con el disco
+    await initPersistentPreferences();
+
+    const isInit = window.localStorage.getItem("lyra_initialized") === "true";
+    if (!isInit) {
       const welcomeExists: boolean = await exists(path, BASE_DIRECTORY);
       if (!welcomeExists) {
         await writeTextFile(path, intro, BASE_DIRECTORY);
-      } else {
+      }
+      window.localStorage.setItem("lyra_initialized", "true");
+      scheduleSavePersistentPreferences();
+    } else {
+      const welcomeExists: boolean = await exists(path, BASE_DIRECTORY);
+      if (welcomeExists) {
         try {
           const currentContent = await readTextFile(path, BASE_DIRECTORY);
           if (
@@ -202,19 +217,6 @@ async function verifyMainFolder(): Promise<void> {
         ) {
           window.localStorage.removeItem(key);
         }
-      }
-    }
-
-    // Asegurarse de que en la primera instalación el archivo de bienvenida nunca esté en archivados
-    const isInit = window.localStorage.getItem("lyra_initialized");
-    if (!isInit) {
-      window.localStorage.setItem("lyra_initialized", "true");
-      const rawPaper = JSON.parse(window.localStorage.getItem("paper") || "[]");
-      if (Array.isArray(rawPaper)) {
-        const cleanPaper = rawPaper.filter(
-          (name: string) => !name.toLowerCase().includes("bienvenido a lyra")
-        );
-        window.localStorage.setItem("paper", JSON.stringify(cleanPaper));
       }
     }
   } catch (e: unknown) {
