@@ -17,8 +17,13 @@ import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { MAIN_FOLDER } from "../utils/consts";
 import translations from "../utils/dictionary";
-import { scrollToNovedades, themes } from "../utils/helpers";
-import { checkAndApplyUpdate } from "../utils/updater";
+import { notification, scrollToNovedades, themes } from "../utils/helpers";
+import {
+  checkAndApplyUpdate,
+  getIsCheckingUpdate,
+  getPendingRestartVersion,
+} from "../utils/updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import type { Component } from "../utils/types";
 import packageJson from "../../package.json";
 
@@ -65,6 +70,16 @@ const d = translations(),
     "Soporte y empaquetado multiplataforma oficial para Windows, macOS y Linux.",
   ] as const;
 
+function parseChangelog(raw: string | null): string[] | null {
+  if (!raw) return null;
+  const parsed = raw
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.startsWith("- ") || line.startsWith("* "))
+    .map(line => line.replace(/^[-*]\s+/, ""));
+  return parsed.length > 0 ? parsed : null;
+}
+
 function Preferences(): Component {
   const { isDay } = themes(),
     {
@@ -75,18 +90,12 @@ function Preferences(): Component {
     { setItem } = useStorage(),
     paragraphFocus = myParagraphFocus(),
     [currentVersion, setCurrentVersion] = useState<string>(packageJson.version),
-    [checkingUpdate, setCheckingUpdate] = useState<boolean>(false),
-    [releaseNotes] = useState<readonly string[]>(() => {
+    [checkingUpdate, setCheckingUpdate] = useState<boolean>(() => getIsCheckingUpdate()),
+    [releaseNotes, setReleaseNotes] = useState<readonly string[]>(() => {
       try {
         const raw = window.localStorage.getItem("lyra_release_notes");
-        if (raw) {
-          const parsed = raw
-            .split("\n")
-            .map(line => line.trim())
-            .filter(line => line.startsWith("- ") || line.startsWith("* "))
-            .map(line => line.replace(/^[-*]\s+/, ""));
-          if (parsed.length > 0) return parsed;
-        }
+        const parsed = parseChangelog(raw);
+        if (parsed) return parsed;
       } catch {}
       return defaultChangelog;
     });
@@ -103,10 +112,32 @@ function Preferences(): Component {
     } catch {}
   }, []);
 
+  const pendingVersion = getPendingRestartVersion();
+
   async function handleCheckUpdate(): Promise<void> {
+    const pending = getPendingRestartVersion();
+    if (pending) {
+      try {
+        await relaunch();
+      } catch (err) {
+        console.error("Error al reiniciar la aplicación automáticamente:", err);
+        notification(
+          "error",
+          "No se pudo reiniciar automáticamente. Por favor, cierra y vuelve a abrir Lyra.",
+          undefined,
+          8000
+        );
+      }
+      return;
+    }
+
+    if (getIsCheckingUpdate()) return;
     setCheckingUpdate(true);
     try {
       await checkAndApplyUpdate(true);
+      const raw = window.localStorage.getItem("lyra_release_notes");
+      const parsed = parseChangelog(raw);
+      if (parsed) setReleaseNotes(parsed);
     } finally {
       setCheckingUpdate(false);
     }
@@ -145,7 +176,11 @@ function Preferences(): Component {
                 <RefreshCwIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
                 <div>
                   <p className="text-sm sm:text-md">Actualizaciones</p>
-                  <p className="text-xs opacity-60">Versión {currentVersion}</p>
+                  <p className="text-xs opacity-60">
+                    {pendingVersion
+                      ? `Versión ${currentVersion} (v${pendingVersion} lista)`
+                      : `Versión ${currentVersion}`}
+                  </p>
                 </div>
               </div>
               <button
@@ -161,7 +196,13 @@ function Preferences(): Component {
                 )}
               >
                 <RefreshCwIcon size={14} className={checkingUpdate ? "animate-spin" : ""} />
-                <span>{checkingUpdate ? "Buscando..." : "Buscar"}</span>
+                <span>
+                  {checkingUpdate
+                    ? "Buscando..."
+                    : pendingVersion
+                    ? "Reiniciar"
+                    : "Buscar"}
+                </span>
               </button>
             </div>
 

@@ -7,25 +7,37 @@ import { PAGES } from "./consts";
 import { useToastStore } from "../store/toastStore";
 
 let isChecking = false;
+let pendingRestartVersion: string | null = null;
+
+export function getIsCheckingUpdate(): boolean {
+  return isChecking;
+}
+
+export function getPendingRestartVersion(): string | null {
+  if (pendingRestartVersion) return pendingRestartVersion;
+  try {
+    return window.sessionStorage.getItem("lyra_pending_restart_version");
+  } catch {
+    return null;
+  }
+}
 
 export async function notifyIfJustUpdated(): Promise<void> {
   try {
     const currentVersion = await getVersion();
     const lastSeenVersion = window.localStorage.getItem("lyra_last_seen_version");
     const wasJustUpdated = window.localStorage.getItem("lyra_just_updated") === "true";
+    const isNewVersion = Boolean(lastSeenVersion && lastSeenVersion !== currentVersion);
 
-    // Si hay datos previos de la app y la versión cambió, o si se marcó la bandera de actualización:
-    const hasExistingData =
-      window.localStorage.getItem("theme") !== null ||
-      window.localStorage.getItem("font") !== null ||
-      window.localStorage.getItem("files") !== null ||
-      window.localStorage.getItem("paper") !== null;
-
-    const isNewVersion = lastSeenVersion !== currentVersion;
-    const shouldNotify = (lastSeenVersion && isNewVersion) || wasJustUpdated || (!lastSeenVersion && hasExistingData);
+    // Solo notificar si realmente hubo un cambio de versión previo o se marcó la bandera de reinicio
+    const shouldNotify = wasJustUpdated || isNewVersion;
 
     if (shouldNotify) {
       window.localStorage.removeItem("lyra_just_updated");
+      try {
+        window.sessionStorage.removeItem("lyra_pending_restart_version");
+      } catch {}
+      pendingRestartVersion = null;
       window.localStorage.setItem("lyra_last_seen_version", currentVersion);
 
       notification(
@@ -41,7 +53,7 @@ export async function notifyIfJustUpdated(): Promise<void> {
             scrollToNovedades();
           },
         },
-        7000
+        8000
       );
     } else if (!lastSeenVersion) {
       window.localStorage.setItem("lyra_last_seen_version", currentVersion);
@@ -52,9 +64,44 @@ export async function notifyIfJustUpdated(): Promise<void> {
 }
 
 export async function checkAndApplyUpdate(isManual = false): Promise<void> {
-  if (isChecking) return;
+  // 1. Si la versión ya fue descargada e instalada en esta sesión y espera reinicio, NO volver a descargar
+  const pendingVersion = getPendingRestartVersion();
+  if (pendingVersion) {
+    if (isManual) {
+      notification(
+        "success",
+        `La versión v${pendingVersion} ya está descargada e instalada.`,
+        {
+          label: "Reiniciar para ver novedades",
+          onClick: async () => {
+            try {
+              await relaunch();
+            } catch (err) {
+              console.error("Error al reiniciar la aplicación automáticamente:", err);
+              notification(
+                "error",
+                "No se pudo reiniciar automáticamente. Por favor, cierra y vuelve a abrir Lyra.",
+                undefined,
+                8000
+              );
+            }
+          },
+        },
+        8000
+      );
+    }
+    return;
+  }
 
-  // Si no hay conexión a internet, salir silenciosamente (o avisar si fue clic manual)
+  // 2. Prevenir comprobaciones concurrentes
+  if (isChecking) {
+    if (isManual) {
+      notification("info", "Ya se está comprobando o descargando una actualización...", undefined, 4000);
+    }
+    return;
+  }
+
+  // 3. Si no hay conexión a internet, salir silenciosamente (o avisar si fue clic manual)
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     if (isManual) {
       notification("info", "No hay conexión a internet.", undefined, 5000);
@@ -87,8 +134,36 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
       return;
     }
 
-    // 1. Notificar "Actualizando..."
-    notification("info", "Actualizando...", undefined, 120000);
+    // Si la actualización detectada coincide con la que ya instalamos en memoria
+    if (getPendingRestartVersion() === update.version) {
+      if (isManual) {
+        notification(
+          "success",
+          `La versión v${update.version} ya está descargada e instalada.`,
+          {
+            label: "Reiniciar para ver novedades",
+            onClick: async () => {
+              try {
+                await relaunch();
+              } catch (err) {
+                console.error("Error al reiniciar la aplicación automáticamente:", err);
+                notification(
+                  "error",
+                  "No se pudo reiniciar automáticamente. Por favor, cierra y vuelve a abrir Lyra.",
+                  undefined,
+                  8000
+                );
+              }
+            },
+          },
+          8000
+        );
+      }
+      return;
+    }
+
+    // 4. Notificar inicio de descarga de la nueva versión
+    notification("info", `Actualizando a v${update.version}...`, undefined, 120000);
 
     // Guardar notas de la versión en almacenamiento local para mostrarlas en Preferencias
     if (update.body) {
@@ -98,8 +173,18 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
       } catch {}
     }
 
-    // Descarga e instala en segundo plano
-    await update.downloadAndInstall();
+    // 5. Descarga e instala en segundo plano
+    await update.downloadAndInstall(event => {
+      if (event.event === "Finished") {
+        console.log("Descarga de actualización finalizada exitosamente.");
+      }
+    });
+
+    // 6. Marcar que la actualización ya fue instalada en disco para evitar descargas infinitas
+    pendingRestartVersion = update.version;
+    try {
+      window.sessionStorage.setItem("lyra_pending_restart_version", update.version);
+    } catch {}
 
     // Marcar bandera para que al volver a abrir la app se muestre el toast de novedades
     try {
@@ -109,7 +194,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
     // Remover el toast de "Actualizando..."
     useToastStore.getState().clearToasts();
 
-    // 2. Notificar "Actualización terminada." con acción para reiniciar y ver novedades
+    // 7. Notificar "Actualización terminada." con acción para reiniciar (duración: 8 segundos)
     notification(
       "success",
       "Actualización terminada.",
@@ -119,11 +204,17 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
           try {
             await relaunch();
           } catch (err) {
-            console.error("Error al reiniciar la aplicación:", err);
+            console.error("Error al reiniciar la aplicación automáticamente:", err);
+            notification(
+              "error",
+              "No se pudo reiniciar automáticamente. Por favor, cierra y vuelve a abrir Lyra.",
+              undefined,
+              8000
+            );
           }
         },
       },
-      30000
+      8000
     );
   } catch (error: any) {
     useToastStore.getState().clearToasts();
@@ -164,10 +255,13 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
           "error",
           "Sin permisos para sobrescribir el ejecutable del sistema (/usr/bin). Actualiza vía DNF o usa la versión AppImage.",
           undefined,
-          5000
+          7000
         );
+      } else if (isManual) {
+        notification("error", `Error al actualizar: ${errorMsg}`, undefined, 6000);
       } else {
-        notification("error", `Error al actualizar: ${errorMsg}`, undefined, 5000);
+        // En revisiones automáticas de fondo, silenciar errores de red temporales para no molestar
+        console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
       }
     }
   } finally {
