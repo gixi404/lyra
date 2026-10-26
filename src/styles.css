@@ -22,6 +22,9 @@
   html {
     scrollbar-gutter: stable;
     overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
   }
 
   html.in-editor {
@@ -29,7 +32,7 @@
   }
 
   body {
-    @apply caret-[#00a8ff] text-zinc-200 flex flex-col justify-start items-stretch overflow-x-hidden select-none antialiased;
+    @apply caret-[#00a8ff] text-zinc-200 flex flex-col justify-start items-stretch select-none antialiased;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 }
@@ -79,6 +82,18 @@ details summary {
   background-color: rgba(107, 114, 128, 0.8);
 }
 
+::-webkit-scrollbar-thumb:disabled,
+::-webkit-scrollbar-thumb:vertical:disabled,
+::-webkit-scrollbar-thumb:horizontal:disabled {
+  background-color: transparent !important;
+  visibility: hidden !important;
+  display: none !important;
+}
+
+::-webkit-scrollbar-corner {
+  background-color: transparent !important;
+}
+
 .auto-hide-ui {
   opacity: 1;
   visibility: visible;
@@ -113,6 +128,43 @@ body.is-typing .auto-hide-ui {
 
 .normal-opacity {
   @apply !opacity-90 !text-white;
+}
+
+@keyframes listSwitchFade {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes listSwitchHeaderFade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.animate-list-switch {
+  animation: listSwitchFade 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+.animate-list-header {
+  animation: listSwitchHeaderFade 180ms ease-out both;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-list-switch,
+  .animate-list-header {
+    animation: none !important;
+  }
 }
 
 @media print {

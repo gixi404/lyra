@@ -1,6 +1,6 @@
 [package]
 name = "lyra"
-version = "2.0.7"
+version = "2.0.9"
 description = "lyra: focused writing"
 authors = ["gixi"]
 edition = "2021"

@@ -160,12 +160,13 @@ function MenuPaperFile({ fileName }: Props): Component {
           setMenuOpen(prev => !prev);
         }}
         className={twMerge(
-          "p-1 rounded-md transition-colors cursor-pointer flex items-center justify-center",
+          "p-1 rounded-md transition-all duration-150 active:scale-95 cursor-pointer flex items-center justify-center",
           isDay
             ? "text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/50"
             : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80"
         )}
         aria-label="Opciones"
+        title="Opciones"
       >
         <MoreVertical size={16} />
       </button>

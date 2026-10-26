@@ -77,6 +77,21 @@ function Modal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const preventScroll = (e: WheelEvent | TouchEvent): void => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".modal-scrollable")) return;
+      e.preventDefault();
+    };
+    window.addEventListener("wheel", preventScroll, { passive: false });
+    window.addEventListener("touchmove", preventScroll, { passive: false });
+    return () => {
+      window.removeEventListener("wheel", preventScroll);
+      window.removeEventListener("touchmove", preventScroll);
+    };
+  }, [isOpen]);
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (hasInput && !inputValue.trim()) return;
@@ -113,7 +128,7 @@ function Modal({
             >
               <animated.div
                 style={{ transform: styles.transform }}
-                className={`w-full max-w-md p-6 rounded-2xl shadow-2xl border ${
+                className={`w-[420px] max-w-[92vw] p-6 rounded-2xl shadow-2xl border select-none ${
                   isDay
                     ? "bg-white border-neutral-200 text-neutral-900"
                     : "bg-zinc-900 border-zinc-800 text-zinc-100"

@@ -92,11 +92,13 @@ function sanitizeFileName(name: string): string {
 }
 
 function hasSupportedFileExtension(fileName: string): boolean {
-  return SUPPORTED_FILE_EXTENSIONS.some(extension => fileName.endsWith(extension));
+  const lower = fileName.toLowerCase();
+  return SUPPORTED_FILE_EXTENSIONS.some(extension => lower.endsWith(extension));
 }
 
 function getLegacyFileName(fileName: string): string {
-  const matchingExtension = SUPPORTED_FILE_EXTENSIONS.find(extension => fileName.endsWith(extension));
+  const lower = fileName.toLowerCase();
+  const matchingExtension = SUPPORTED_FILE_EXTENSIONS.find(extension => lower.endsWith(extension));
   return matchingExtension ? fileName.slice(0, -matchingExtension.length) : fileName;
 }
 

@@ -17,6 +17,7 @@ type Timer = ReturnType<typeof setTimeout>;
 interface File {
   name: string;
   content: string;
+  initialCaretPos?: number;
 }
 
 interface stylesText {

@@ -3,7 +3,7 @@ import { StrictMode, Suspense } from "react";
 import Toast from "./components/Toast";
 import "./styles.css";
 import { type Container, createRoot } from "react-dom/client";
-import { checkAndApplyUpdate } from "./utils/updater";
+import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater";
 import { router } from "./router";
 
 const root = document.getElementById("root") as Container;
@@ -30,17 +30,22 @@ try {
 createRoot(root).render(
   <StrictMode>
     <Suspense fallback={<div className="w-full min-h-screen bg-[#101010] light:bg-[#e0e0e0]" />}>
-      <RouterProvider router={router} />
+      <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </Suspense>
     <Toast />
   </StrictMode>
 );
 
+// Notificar si la app acaba de ser actualizada
+setTimeout(() => {
+  void notifyIfJustUpdated();
+}, 600);
+
 // Comprobación de actualizaciones al iniciar si hay conexión a internet
 if (typeof navigator !== "undefined" && navigator.onLine) {
   setTimeout(() => {
     void checkAndApplyUpdate(false);
-  }, 2000);
+  }, 2500);
 }
 
 if (typeof window !== "undefined") {

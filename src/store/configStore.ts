@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export interface ConfigState {
   paperIsOpen: boolean;
-  setPaperIsOpen: () => void;
+  setPaperIsOpen: (isOpen?: boolean) => void;
   spellCheck: boolean;
   setSpellCheck: (newState: boolean) => void;
   showHeader: boolean;
@@ -15,8 +15,8 @@ export interface ConfigState {
 
 export const configStore = create<ConfigState>(set => ({
   paperIsOpen: false,
-  setPaperIsOpen: () =>
-    set(state => ({ paperIsOpen: !state.paperIsOpen })),
+  setPaperIsOpen: (isOpen?: boolean) =>
+    set(state => ({ paperIsOpen: typeof isOpen === "boolean" ? isOpen : !state.paperIsOpen })),
   spellCheck: false,
   setSpellCheck: (newState: boolean) => set(() => ({ spellCheck: newState })),
   showHeader: true,

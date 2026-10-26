@@ -68,6 +68,21 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const preventScroll = (e: WheelEvent | TouchEvent): void => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".modal-scrollable")) return;
+      e.preventDefault();
+    };
+    window.addEventListener("wheel", preventScroll, { passive: false });
+    window.addEventListener("touchmove", preventScroll, { passive: false });
+    return () => {
+      window.removeEventListener("wheel", preventScroll);
+      window.removeEventListener("touchmove", preventScroll);
+    };
+  }, [isOpen]);
+
   const handleBackdropClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -97,7 +112,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
             >
               <animated.div
                 style={{ transform: styles.transform }}
-                className={`w-full max-w-sm p-6 rounded-2xl shadow-2xl border ${
+                className={`modal-scrollable w-[380px] max-w-[92vw] h-[450px] max-h-[90vh] p-6 rounded-2xl shadow-2xl border flex flex-col justify-start select-none ${
                   isDay
                     ? "bg-white border-neutral-200 text-neutral-900"
                     : "bg-zinc-900 border-zinc-800 text-zinc-100"
@@ -108,7 +123,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
               >
                 {/* Cabecera con título e icono X arriba a la derecha */}
                 <div
-                  className={`flex items-center justify-between pb-3 border-b ${
+                  className={`flex items-center justify-between pb-3 border-b shrink-0 ${
                     isDay ? "border-neutral-200" : "border-zinc-800"
                   }`}
                 >
@@ -122,7 +137,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
                     type="button"
                     onClick={onClose}
                     aria-label="Cerrar"
-                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                    className={`p-1 rounded-lg transition-all duration-150 active:scale-95 cursor-pointer ${
                       isDay
                         ? "text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
                         : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
@@ -132,21 +147,22 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
                   </button>
                 </div>
 
-                <div className="mt-4">
-                  <p className="text-sm font-medium truncate mb-4 opacity-80" title={displayName}>
-                    {displayName}
-                  </p>
+                <p className="text-sm font-medium truncate mt-3 mb-2 opacity-80 shrink-0" title={displayName}>
+                  {displayName}
+                </p>
 
+                <div className="flex-1 flex flex-col justify-center overflow-hidden">
                   {loading ? (
                     <div
-                      className={`py-8 text-center text-xs ${
+                      className={`flex flex-col items-center justify-center gap-y-2.5 py-8 text-center text-xs ${
                         isDay ? "text-neutral-400" : "text-zinc-500"
                       }`}
                     >
-                      Cargando información...
+                      <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
+                      <span>Cargando información...</span>
                     </div>
                   ) : stats ? (
-                    <div className="flex flex-col gap-y-2.5 text-xs">
+                    <div className="flex flex-col gap-y-2 text-xs">
                       <div
                         className={`flex items-center justify-between py-1 border-b ${
                           isDay ? "border-neutral-100" : "border-zinc-800/60"

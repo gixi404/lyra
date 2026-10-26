@@ -7,12 +7,14 @@ import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal";
 // Descomentar para activar el HUD de debug en pantalla:
 // import EditorDebugHUD from "./EditorDebugHUD";
 import { editorDebug } from "../utils/editorDebug";
-import { themes } from "../utils/helpers";
+import { navigation, themes } from "../utils/helpers";
+import { PAGES } from "../utils/consts";
 import type { Component } from "../utils/types";
 
 interface TinyEditorProps {
   content: string;
   onContentChange: (content: string) => void;
+  initialCaretPos?: number;
 }
 
 function getParagraphRange(
@@ -63,6 +65,7 @@ function getParagraphRange(
 function TinyEditor({
   content,
   onContentChange,
+  initialCaretPos,
 }: TinyEditorProps): Component {
   const textareaRef = useRef<HTMLTextAreaElement>(null),
     displayRef = useRef<HTMLDivElement>(null),
@@ -77,6 +80,7 @@ function TinyEditor({
     isDraggingThumbRef = useRef<boolean>(false),
     dragStartYRef = useRef<number>(0),
     dragStartScrollTopRef = useRef<number>(0),
+    { goTo } = navigation(),
     { isDay } = themes(),
     { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue } = usePreferences(),
     [fontSizeOverride, setFontSizeOverride] = useState<string | null>(null),
@@ -593,11 +597,34 @@ function TinyEditor({
   const redoStackRef = useRef<HistorySnapshot[]>([]);
   const lastSnapshotRef = useRef<HistorySnapshot>({
     content,
-    caretPos: 0,
+    caretPos: typeof initialCaretPos === "number" ? initialCaretPos : 0,
     scrollTop: 0,
   });
   const isTypingWordRef = useRef<boolean>(false);
   const wordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hasAppliedInitialCaret = useRef(false);
+
+  useEffect(() => {
+    if (hasAppliedInitialCaret.current) return;
+    if (typeof initialCaretPos === "number") {
+      hasAppliedInitialCaret.current = true;
+      const applyCaret = () => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.setSelectionRange(initialCaretPos, initialCaretPos);
+        textarea.focus();
+        textarea.setSelectionRange(initialCaretPos, initialCaretPos);
+        updateCaretState();
+        if (lastSnapshotRef.current) {
+          lastSnapshotRef.current.caretPos = initialCaretPos;
+        }
+      };
+      applyCaret();
+      const raf = requestAnimationFrame(applyCaret);
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [initialCaretPos, updateCaretState]);
 
   const handleUndo = useCallback(() => {
     if (wordTimerRef.current) {
@@ -706,6 +733,22 @@ function TinyEditor({
         return;
       }
 
+      if (e.key === "Escape") {
+        if (isSearchOpen) {
+          setIsSearchOpen(false);
+          return;
+        }
+        const hasOpenModal = document.querySelector(
+          ".search-replace-modal, #modal-root > div, [role='dialog']"
+        );
+        if (hasOpenModal) {
+          return;
+        }
+        e.preventDefault();
+        goTo(PAGES.list);
+        return;
+      }
+
       const isCmdOrCtrl = e.ctrlKey || e.metaKey;
       if (!isCmdOrCtrl) return;
 
@@ -754,7 +797,7 @@ function TinyEditor({
     return () => {
       window.removeEventListener("keydown", handleShortcutsKeyDown);
     };
-  }, [fontSize, setItem, handleUndo, handleRedo]);
+  }, [fontSize, setItem, handleUndo, handleRedo, isSearchOpen, goTo]);
 
   const handleChange = useCallback(
     (e: ChangeEvent<HTMLTextAreaElement>): void => {

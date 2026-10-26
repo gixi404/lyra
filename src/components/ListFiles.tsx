@@ -1,10 +1,13 @@
 import ItemFile from "./ItemFile";
+import Modal from "./Modal";
 import NoFiles from "./NoFiles";
 import NoMatches from "./NoMatches";
+import useFile from "../hooks/useFile";
 import usePreferences from "../hooks/usePreferences";
+import useStorage from "../hooks/useStorage";
 import { configStore } from "../store/configStore";
-import { len, normalize, themes } from "../utils/helpers";
-import { memo, useEffect, useMemo } from "react";
+import { len, normalize, notification, themes } from "../utils/helpers";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { searchStore, type SortOptionId } from "../store/searchStore";
 import { fileStore } from "../store/fileStore";
@@ -41,7 +44,27 @@ const ListFiles = memo(({ arr }: Props): Component => {
     fileIsEdited = fileStore(state => state.fileIsEdited),
     normalizedSearch = useMemo(() => normalize(search), [search]),
     paperFiles = useMemo(() => myPaper(arr), [arr, fileIsEdited]),
-    paperSet = useMemo(() => new Set(paperFiles), [paperFiles]);
+    paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
+    [isEmptyModalOpen, setIsEmptyModalOpen] = useState<boolean>(false),
+    { deleteFile } = useFile(),
+    { setItem } = useStorage(),
+    removeFileFromList = fileStore(state => state.removeFileFromList),
+    editedFile = fileStore(state => state.editedFile);
+
+  async function handleEmptyArchivedConfirm(): Promise<void> {
+    setIsEmptyModalOpen(false);
+    try {
+      for (const fileName of paperFiles) {
+        await deleteFile(fileName);
+        removeFileFromList(fileName);
+      }
+      setItem("paper", JSON.stringify([]));
+      editedFile();
+      notification("success", "Archivados eliminados permanentemente");
+    } catch {
+      notification("error", "Error al vaciar los archivos archivados");
+    }
+  }
 
   const isReady = isInitialized;
 
@@ -102,17 +125,49 @@ const ListFiles = memo(({ arr }: Props): Component => {
           isDay ? "border-neutral-200 text-neutral-400" : "border-zinc-800/80 text-zinc-500"
         }`}
       >
-        <span className="font-mono text-[11px] tracking-widest uppercase">
+        <span
+          key={`title-${paperIsOpen}`}
+          className="font-mono text-[11px] tracking-widest uppercase animate-list-header"
+        >
           {paperIsOpen ? "ARCHIVADOS" : "DOCUMENTOS"}
         </span>
-        <span className="font-mono text-[11px] tracking-widest pr-1.5">
-          {files.length}
-        </span>
+        <div className="flex items-center gap-x-3">
+          {paperIsOpen && files.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsEmptyModalOpen(true)}
+              className="text-[11px] font-mono tracking-wider text-rose-500/80 hover:text-rose-500 transition-all duration-150 cursor-pointer active:scale-95"
+              title="Vaciar todos los archivos archivados"
+            >
+              Vaciar
+            </button>
+          )}
+          <span
+            key={`count-${paperIsOpen}`}
+            className="font-mono text-[11px] tracking-widest pr-1.5 animate-list-header"
+          >
+            {files.length}
+          </span>
+        </div>
       </div>
 
-      <ul className="flex flex-col w-[680px] max-w-full pb-20">
+      <ul
+        key={paperIsOpen ? "paper" : "active"}
+        className="flex flex-col w-[680px] max-w-full pb-20 animate-list-switch"
+      >
         {renderFiles()}
       </ul>
+
+      <Modal
+        isOpen={isEmptyModalOpen}
+        onClose={() => setIsEmptyModalOpen(false)}
+        onConfirm={handleEmptyArchivedConfirm}
+        title="¿Vaciar todos los archivados?"
+        description="Esta acción eliminará de forma permanente todos los archivos archivados. No se podrá deshacer."
+        confirmText="Vaciar todo"
+        cancelText="Cancelar"
+        variant="danger"
+      />
     </div>
   );
 });

@@ -29,7 +29,7 @@ function Toast(): JSX.Element | null {
           {t.type === "info" && (
             <Info className="w-4 h-4 text-sky-500 shrink-0" />
           )}
-          <span>{t.msg}</span>
+          {Boolean(t.msg) && <span>{t.msg}</span>}
           {t.action && (
             <button
               type="button"
@@ -37,7 +37,9 @@ function Toast(): JSX.Element | null {
                 t.action?.onClick();
                 removeToast(t.id);
               }}
-              className="ml-1 text-sky-400 hover:text-sky-300 underline font-semibold cursor-pointer transition-colors outline-none"
+              className={`${
+                t.msg ? "ml-1" : ""
+              } text-sky-400 hover:text-sky-300 underline underline-offset-2 decoration-sky-400/50 hover:decoration-sky-300 font-semibold cursor-pointer transition-all duration-150 outline-none hover:brightness-110 active:scale-95`}
             >
               {t.action.label}
             </button>

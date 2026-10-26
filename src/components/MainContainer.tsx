@@ -268,8 +268,8 @@ function MainContainer({ children }: PropsWithChildren): Component {
       >
         <button
           onClick={handleExitFullscreen}
-          title="Salir de pantalla completa"
-          aria-label="Salir de pantalla completa"
+          title="Salir de pantalla completa (F11)"
+          aria-label="Salir de pantalla completa (F11)"
           className={twMerge(
             "flex items-center justify-center p-2 rounded-full shadow-lg border backdrop-blur-md transition-all duration-150 hover:scale-110 active:scale-95 cursor-pointer",
             isDay

@@ -7,20 +7,27 @@ import type { LazyCmp } from "./utils/types";
 const FilePage: LazyCmp = lazy(() => import("./pages/FileContent"));
 const PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences"));
 
-export const router = createBrowserRouter([
+export const router = createBrowserRouter(
+  [
+    {
+      path: PAGES.list,
+      element: <ListPage />,
+    },
+    {
+      path: PAGES.file,
+      element: <FilePage />,
+    },
+    {
+      path: PAGES.preferences,
+      element: <PreferencesPage />,
+    },
+  ],
   {
-    path: PAGES.list,
-    element: <ListPage />,
-  },
-  {
-    path: PAGES.file,
-    element: <FilePage />,
-  },
-  {
-    path: PAGES.preferences,
-    element: <PreferencesPage />,
-  },
-]);
+    future: {
+      v7_relativeSplatPath: true,
+    },
+  }
+);
 
 export function navigateTo(path: string): void {
   void router.navigate(path);

@@ -307,6 +307,7 @@ function FileContent(): Component {
           key={selectedFile.name}
           content={content}
           onContentChange={handleContentChange}
+          initialCaretPos={selectedFile.initialCaretPos}
         />
       </Suspense>
     </MainContainer>

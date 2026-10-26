@@ -12,7 +12,9 @@ function DefaultHeader(): Component {
   const { isDay } = themes(),
     { goTo } = navigation(),
     { setItem } = useStorage(),
-    toggleThemeTick = configStore(state => state.toggleThemeTick);
+    toggleThemeTick = configStore(state => state.toggleThemeTick),
+    paperIsOpen = configStore(state => state.paperIsOpen),
+    setPaperIsOpen = configStore(state => state.setPaperIsOpen);
 
   function cycleTheme(e?: MouseEvent<HTMLButtonElement>): void {
     const nextTheme = isDay ? THEMES.clearNigth : THEMES.Day;
@@ -34,8 +36,8 @@ function DefaultHeader(): Component {
     document.querySelectorAll(".theme-wave-snapshot").forEach(el => el.remove());
 
     // Coordenadas del botón para el origen de la onda circular
-    let x = window.innerWidth - 40;
-    let y = 40;
+    let x = 70;
+    let y = 34;
     if (e && e.currentTarget) {
       const rect = e.currentTarget.getBoundingClientRect();
       x = e.clientX || rect.left + rect.width / 2;
@@ -136,27 +138,19 @@ function DefaultHeader(): Component {
 
   return (
     <>
+      {/* Botones de acción / volver a la izquierda */}
       <div
-        className="auto-hide-ui no-print fixed top-4 left-4 sm:left-6 z-50 flex items-center gap-x-2"
+        className="auto-hide-ui no-print fixed top-4 left-4 sm:left-6 z-50 flex items-center gap-x-2 h-[36px]"
         style={{
           transform: "translateZ(0)",
           WebkitBackfaceVisibility: "hidden",
           backfaceVisibility: "hidden",
         }}
       >
-        {pathIs(PAGES.list) && (
-          <div className="flex items-center gap-x-2.5 select-none opacity-90">
-            <img src="/logo.png" alt="Lyra" className="w-[26px] h-[26px] object-contain" />
-            <span className={`text-base font-bold tracking-tight ${isDay ? "text-neutral-800" : "text-neutral-100"}`}>
-              Lyra
-            </span>
-          </div>
-        )}
-
         {pathIs(PAGES.file) && (
           <button
             onClick={() => goTo(PAGES.list)}
-            className={`p-2 rounded-xl transition-colors shadow-sm border cursor-pointer ${
+            className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
               isDay
                 ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
                 : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
@@ -167,10 +161,91 @@ function DefaultHeader(): Component {
             <ArrowLeftIcon size={18} />
           </button>
         )}
+
+        {pathIs(PAGES.preferences) && (
+          <>
+            <button
+              type="button"
+              onClick={handleSettingsClick}
+              className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
+                isDay
+                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              }`}
+              aria-label="Volver a la lista"
+              title="Volver a la lista"
+            >
+              <ArrowLeftIcon size={18} />
+            </button>
+
+            <button
+              type="button"
+              onClick={cycleTheme}
+              className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
+                isDay
+                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              }`}
+              aria-label="Cambiar tema"
+              title="Cambiar tema"
+            >
+              {isDay ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          </>
+        )}
+
+        {pathIs(PAGES.list) && (
+          <>
+            {paperIsOpen ? (
+              <button
+                type="button"
+                onClick={() => setPaperIsOpen(false)}
+                className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
+                  isDay
+                    ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                    : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                }`}
+                aria-label="Volver a documentos"
+                title="Volver a documentos"
+              >
+                <ArrowLeftIcon size={18} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSettingsClick}
+                className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
+                  isDay
+                    ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                    : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                }`}
+                aria-label="Configuración"
+                title="Configuración"
+              >
+                <Settings size={18} />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={cycleTheme}
+              className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
+                isDay
+                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
+                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              }`}
+              aria-label="Cambiar tema"
+              title="Cambiar tema"
+            >
+              {isDay ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          </>
+        )}
       </div>
 
+      {/* Icono y texto Lyra a la derecha */}
       <div
-        className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2"
+        className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2.5 h-[36px]"
         style={{
           transform: "translateZ(0)",
           WebkitBackfaceVisibility: "hidden",
@@ -178,33 +253,12 @@ function DefaultHeader(): Component {
         }}
       >
         {(pathIs(PAGES.list) || pathIs(PAGES.preferences)) && (
-          <>
-            <button
-              type="button"
-              onClick={cycleTheme}
-              className={`p-2 rounded-xl transition-colors shadow-sm border cursor-pointer ${
-                isDay
-                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-              }`}
-              aria-label="Cambiar tema"
-            >
-              {isDay ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSettingsClick}
-              className={`p-2 rounded-xl transition-colors shadow-sm border cursor-pointer ${
-                isDay
-                  ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-                  : "bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-              }`}
-              aria-label={pathIs(PAGES.preferences) ? "Volver a la lista" : "Configuración"}
-            >
-              {pathIs(PAGES.preferences) ? <ArrowLeftIcon size={18} /> : <Settings size={18} />}
-            </button>
-          </>
+          <div className="flex items-center gap-x-2.5 select-none opacity-90">
+            <span className={`text-base font-bold tracking-tight ${isDay ? "text-neutral-800" : "text-neutral-100"}`}>
+              Lyra
+            </span>
+            <img src="/logo.png" alt="Lyra" className="w-[26px] h-[26px] object-contain" />
+          </div>
         )}
       </div>
     </>

@@ -19,8 +19,9 @@ interface ToastStore {
     msg: string,
     action?: ToastAction,
     durationMs?: number
-  ) => void;
+  ) => string;
   removeToast: (id: string) => void;
+  clearToasts: () => void;
 }
 
 export const useToastStore = create<ToastStore>(set => ({
@@ -31,7 +32,9 @@ export const useToastStore = create<ToastStore>(set => ({
     setTimeout(() => {
       set(state => ({ toasts: state.toasts.filter(t => t.id !== id) }));
     }, durationMs);
+    return id;
   },
   removeToast: id =>
     set(state => ({ toasts: state.toasts.filter(t => t.id !== id) })),
+  clearToasts: () => set({ toasts: [] }),
 }));
