@@ -7,11 +7,12 @@ import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { configStore } from "../store/configStore";
 import { len, normalize, notification, themes } from "../utils/helpers";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { searchStore, type SortOptionId } from "../store/searchStore";
 import { fileStore } from "../store/fileStore";
 import type { Component } from "../utils/types";
+import { resetListScroll } from "../utils/listScroll";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
 
@@ -100,7 +101,16 @@ const ListFiles = memo(({ arr }: Props): Component => {
     });
   }, [arr, normalizedSearch, sortOption, paperFiles, paperIsOpen, paperSet, statsMap]);
 
-  useEffect(() => resetSearch(), [paperIsOpen]);
+  const isFirstMountRef = useRef<boolean>(true);
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    resetSearch();
+    resetListScroll();
+    window.scrollTo(0, 0);
+  }, [paperIsOpen]);
 
   function renderFiles(): Component {
     if (len(files) === 0) {

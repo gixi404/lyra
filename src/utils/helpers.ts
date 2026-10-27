@@ -13,6 +13,7 @@ import {
   BASE_DIRECTORY,
   INTRO_ES,
   MAIN_FOLDER,
+  PAGES,
   THEMES,
   WELCOME_ES,
 } from "./consts";
@@ -40,6 +41,10 @@ function notification(
 }
 
 export function scrollToNovedades(): void {
+  try {
+    window.sessionStorage.removeItem("scroll_to_novedades");
+  } catch {}
+
   const tryScroll = (attempts = 0) => {
     const el = document.getElementById("novedades-section");
     if (el) {
@@ -239,7 +244,15 @@ function getDate(): string {
 
 function pathIs(path: string): boolean {
   const currentPath: string = window.location.pathname;
-  return currentPath === path;
+  if (path === "/" || path === PAGES.list) {
+    return (
+      currentPath === "/" ||
+      currentPath === "/index.html" ||
+      currentPath === "" ||
+      currentPath.endsWith("/index.html")
+    );
+  }
+  return currentPath === path || currentPath.endsWith(path);
 }
 
 const normalize = (text: string): string =>

@@ -9,6 +9,10 @@ import { router } from "./router";
 
 const root = document.getElementById("root") as Container;
 
+if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
+  window.history.scrollRestoration = "manual";
+}
+
 try {
   const savedTheme = window.localStorage.getItem("theme");
   const isLight =

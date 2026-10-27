@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import {
   AlignLeft as AlignIcon,
   ChevronDown,
@@ -102,14 +102,21 @@ function Preferences(): Component {
 
   useEffect(() => {
     void getVersion().then(setCurrentVersion).catch(() => {});
+  }, []);
 
-    // Scroll suave automático si se navega desde la notificación de novedades
+  useLayoutEffect(() => {
+    let shouldScrollToNovedades = false;
     try {
-      if (window.sessionStorage.getItem("scroll_to_novedades") === "true") {
-        window.sessionStorage.removeItem("scroll_to_novedades");
-        scrollToNovedades();
-      }
+      shouldScrollToNovedades = window.sessionStorage.getItem("scroll_to_novedades") === "true";
+      window.sessionStorage.removeItem("scroll_to_novedades");
     } catch {}
+
+    if (shouldScrollToNovedades) {
+      window.scrollTo(0, 0);
+      scrollToNovedades();
+    } else {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
   }, []);
 
   const pendingVersion = getPendingRestartVersion();

@@ -1,16 +1,36 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { notification, scrollToNovedades } from "./helpers";
+import { notification, pathIs, scrollToNovedades } from "./helpers";
 import { navigateTo } from "../router";
 import { PAGES } from "./consts";
 import { useToastStore } from "../store/toastStore";
+import { setListScroll } from "./listScroll";
 
 let isChecking = false;
 let pendingRestartVersion: string | null = null;
 
 export function getIsCheckingUpdate(): boolean {
   return isChecking;
+}
+
+export function openNovedades(): void {
+  if (pathIs(PAGES.list)) {
+    const y = window.scrollY || document.documentElement.scrollTop || 0;
+    setListScroll(y);
+  }
+
+  if (pathIs(PAGES.preferences)) {
+    try {
+      window.sessionStorage.removeItem("scroll_to_novedades");
+    } catch {}
+    scrollToNovedades();
+  } else {
+    try {
+      window.sessionStorage.setItem("scroll_to_novedades", "true");
+    } catch {}
+    navigateTo(PAGES.preferences);
+  }
 }
 
 export function getPendingRestartVersion(): string | null {
@@ -45,13 +65,7 @@ export async function notifyIfJustUpdated(): Promise<void> {
         "Actualización terminada.",
         {
           label: "Ver novedades",
-          onClick: () => {
-            try {
-              window.sessionStorage.setItem("scroll_to_novedades", "true");
-            } catch {}
-            navigateTo(PAGES.preferences);
-            scrollToNovedades();
-          },
+          onClick: openNovedades,
         },
         8000
       );
@@ -120,13 +134,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
           "Lyra está en la última versión disponible.",
           {
             label: "Ver novedades",
-            onClick: () => {
-              try {
-                window.sessionStorage.setItem("scroll_to_novedades", "true");
-              } catch {}
-              navigateTo(PAGES.preferences);
-              scrollToNovedades();
-            },
+            onClick: openNovedades,
           },
           5000
         );
@@ -232,13 +240,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
           "Lyra está en la última versión disponible.",
           {
             label: "Ver novedades",
-            onClick: () => {
-              try {
-                window.sessionStorage.setItem("scroll_to_novedades", "true");
-              } catch {}
-              navigateTo(PAGES.preferences);
-              scrollToNovedades();
-            },
+            onClick: openNovedades,
           },
           5000
         );

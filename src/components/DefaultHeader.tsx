@@ -5,6 +5,7 @@ import { PAGES, THEMES } from "../utils/consts";
 import { configStore } from "../store/configStore";
 import type { Component } from "../utils/types";
 import { memo, type MouseEvent } from "react";
+import { setListScroll } from "../utils/listScroll";
 
 let activeThemeAnim: Animation | null = null;
 
@@ -135,6 +136,20 @@ function DefaultHeader(): Component {
     if (pathIs(PAGES.preferences)) {
       goTo(PAGES.list);
     } else {
+      if (pathIs(PAGES.list)) {
+        const y =
+          window.pageYOffset ||
+          window.scrollY ||
+          document.documentElement.scrollTop ||
+          document.body.scrollTop ||
+          0;
+        if (y > 0) {
+          setListScroll(y);
+        }
+      }
+      try {
+        window.sessionStorage.removeItem("scroll_to_novedades");
+      } catch {}
       goTo(PAGES.preferences);
     }
   }

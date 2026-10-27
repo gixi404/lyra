@@ -32,15 +32,16 @@ function MenuFile({ fileName }: Props): Component {
     { myPaper } = usePreferences(),
     { isDay } = themes(),
     [menuOpen, setMenuOpen] = useState<boolean>(false),
+    [openUpwards, setOpenUpwards] = useState<boolean>(false),
     [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
     [isEditOpen, setIsEditOpen] = useState<boolean>(false),
     [isTrashOpen, setIsTrashOpen] = useState<boolean>(false),
     menuRef = useRef<HTMLDivElement>(null);
 
   const menuTransitions = useTransition(menuOpen, {
-    from: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
+    from: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
     enter: { opacity: 1, transform: "scale(1) translateY(0px)" },
-    leave: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
+    leave: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
     config: { duration: 150 },
   });
 
@@ -120,9 +121,23 @@ function MenuFile({ fileName }: Props): Component {
       if (e.key === "Escape") setMenuOpen(false);
     };
 
+    const updatePosition = (): void => {
+      if (!menuRef.current) return;
+      const rect = menuRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      setOpenUpwards(spaceBelow < 200 && spaceAbove > spaceBelow);
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
     window.addEventListener("mousedown", handleClickOutside);
     window.addEventListener("keydown", handleKeyDown);
+
     return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("mousedown", handleClickOutside);
       window.removeEventListener("keydown", handleKeyDown);
     };
@@ -167,6 +182,12 @@ function MenuFile({ fileName }: Props): Component {
         type="button"
         onClick={(e: SyntheticEvent) => {
           e.stopPropagation();
+          if (!menuOpen && menuRef.current) {
+            const rect = menuRef.current.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            setOpenUpwards(spaceBelow < 200 && spaceAbove > spaceBelow);
+          }
           setMenuOpen(prev => !prev);
         }}
         className={twMerge(
@@ -188,14 +209,16 @@ function MenuFile({ fileName }: Props): Component {
               style={{
                 opacity: styles.opacity,
                 transform: styles.transform,
-                transformOrigin: "top right",
+                transformOrigin: openUpwards ? "bottom right" : "top right",
+                backgroundColor: isDay ? "#ffffff" : "#18181b",
               }}
               onClick={(e: SyntheticEvent) => e.stopPropagation()}
               className={twMerge(
-                "absolute right-0 top-full mt-1 w-44 rounded-xl border shadow-xl py-1 z-50 flex flex-col text-xs font-medium",
+                "absolute right-0 w-44 rounded-xl border py-1 z-50 flex flex-col text-xs font-medium",
+                openUpwards ? "bottom-full mb-1" : "top-full mt-1",
                 isDay
-                  ? "bg-white/95 border-neutral-200 text-neutral-700 shadow-neutral-300/40 backdrop-blur-md"
-                  : "bg-zinc-900/95 border-zinc-700/80 text-zinc-200 shadow-black/50 backdrop-blur-md"
+                  ? "border-neutral-200 text-neutral-700 shadow-xl shadow-neutral-400/30"
+                  : "border-zinc-700 text-zinc-200 shadow-2xl shadow-black/80"
               )}
             >
           <button

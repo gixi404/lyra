@@ -20,7 +20,10 @@
       "identifier": "fs:scope",
       "allow": [
         "$DOCUMENT/lyra",
-        "$DOCUMENT/lyra/**"
+        "$DOCUMENT/lyra/*",
+        "$DOCUMENT/lyra/**",
+        "$DOCUMENT/lyra/.*",
+        "$DOCUMENT/lyra/**/.*"
       ]
     },
     "core:window:allow-set-maximizable",

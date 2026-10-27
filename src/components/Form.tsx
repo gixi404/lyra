@@ -24,6 +24,7 @@ import {
   sanitizeFileName,
   themes,
 } from "../utils/helpers";
+import { setListScroll } from "../utils/listScroll";
 import type { Component, File } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 
@@ -152,6 +153,15 @@ function Form(): Component {
       if (matches.length === 1) {
         void (async () => {
           try {
+            const currentY =
+              window.pageYOffset ||
+              window.scrollY ||
+              document.documentElement.scrollTop ||
+              document.body.scrollTop ||
+              0;
+            if (currentY > 0) {
+              setListScroll(currentY);
+            }
             const fileName = matches[0];
             const fileContent = await readFile(fileName);
             setSelectedFile({ name: fileName, content: fileContent });
@@ -166,6 +176,15 @@ function Form(): Component {
 
   async function fileManagement(file: File): Promise<void> {
     try {
+      const currentY =
+        window.pageYOffset ||
+        window.scrollY ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0;
+      if (currentY > 0) {
+        setListScroll(currentY);
+      }
       const displayName: string = await createFile(file.name, file.content);
       const nextFile: File = { ...file, name: displayName };
       updateListFiles(displayName);
@@ -229,7 +248,6 @@ function Form(): Component {
             />
             <input
               ref={searchInputRef}
-              autoFocus
               type="text"
               className={twMerge(
                 isDay

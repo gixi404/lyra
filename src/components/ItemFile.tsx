@@ -7,6 +7,7 @@ import { navigation, notification, themes } from "../utils/helpers";
 import { PAGES } from "../utils/consts";
 import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types";
+import { setListScroll } from "../utils/listScroll";
 
 function ItemFile({ fileName }: Props): Component {
   const { goTo } = navigation(),
@@ -21,6 +22,15 @@ function ItemFile({ fileName }: Props): Component {
 
   async function openFile(): Promise<void> {
     try {
+      const currentY =
+        window.pageYOffset ||
+        window.scrollY ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0;
+      if (currentY > 0) {
+        setListScroll(currentY);
+      }
       const fileContent: string = await readFile(fileName);
       const newSelectedFile: File = { name: fileName, content: fileContent };
       setSelectedFile(newSelectedFile);
