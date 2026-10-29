@@ -162,8 +162,8 @@ function themes(): Themes {
   configStore(state => state.themeTick);
   const { myTheme } = usePreferences(),
     theme = myTheme();
-  let isDay: boolean = theme === THEMES.Day;
-  if (theme === "auto") {
+  let isDay: boolean = theme === THEMES.Day || theme === "Day";
+  if (theme === "auto" || theme === "nothing" || !theme) {
     isDay = !window.matchMedia("(prefers-color-scheme: dark)").matches;
   }
   const isNigth: boolean = !isDay;

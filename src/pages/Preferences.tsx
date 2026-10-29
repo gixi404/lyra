@@ -10,12 +10,14 @@ import {
   Focus as FocusIcon,
   RefreshCw as RefreshCwIcon,
   Sparkles,
+  SunMoon,
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
-import { MAIN_FOLDER } from "../utils/consts";
+import { MAIN_FOLDER, THEMES } from "../utils/consts";
+import { configStore } from "../store/configStore";
 import translations from "../utils/dictionary";
 import { notification, scrollToNovedades, themes } from "../utils/helpers";
 import {
@@ -50,6 +52,11 @@ const d = translations(),
     { value: "center", label: d.Centered },
     { value: "end", label: d.Right },
   ] as const,
+  themesOptions: Options[] = [
+    { value: "auto", label: "Sistema" },
+    { value: THEMES.clearNigth, label: "Noche" },
+    { value: THEMES.Day, label: "Día" },
+  ] as const,
   shortcutsList = [
     { keys: "Esc", label: "Volver a la lista / Cerrar popup / Limpiar" },
     { keys: "Ctrl + F", label: "Buscar y reemplazar en editor" },
@@ -61,6 +68,8 @@ const d = translations(),
     { keys: "Ctrl + -", label: "Reducir tamaño de letra" },
     { keys: "F11", label: "Pantalla completa" },
   ] as const,
+  // NOTA: Al agregar funcionalidades en esta lista o en notas de versión, NO usar formato
+  // markdown (**negrita**, cursiva, enlaces, etc.). Cada elemento se muestra como texto plano directo.
   defaultChangelog = [
     "Actualizaciones automáticas transparentes al iniciar el programa.",
     "Acceso directo y clicable a las novedades desde la notificación de actualización.",
@@ -87,8 +96,16 @@ function Preferences(): Component {
       myAlign,
       myParagraphFocus,
     } = usePreferences(),
-    { setItem } = useStorage(),
+    { getItem, setItem } = useStorage(),
+    toggleThemeTick = configStore(state => state.toggleThemeTick),
     paragraphFocus = myParagraphFocus(),
+    savedTheme = getItem("theme", "auto"),
+    currentTheme =
+      savedTheme === THEMES.Day || savedTheme === "Day"
+        ? THEMES.Day
+        : savedTheme === THEMES.clearNigth || savedTheme === "dark-nigth"
+        ? THEMES.clearNigth
+        : "auto",
     [currentVersion, setCurrentVersion] = useState<string>(packageJson.version),
     [checkingUpdate, setCheckingUpdate] = useState<boolean>(() => getIsCheckingUpdate()),
     [releaseNotes, setReleaseNotes] = useState<readonly string[]>(() => {
@@ -160,6 +177,11 @@ function Preferences(): Component {
 
   function toggleParagraphFocus(): void {
     setItem("paragraph-focus", JSON.stringify(!paragraphFocus));
+  }
+
+  function changeTheme(val: string): void {
+    setItem("theme", val);
+    toggleThemeTick();
   }
 
   async function openFolder(): Promise<void> {
@@ -319,6 +341,37 @@ function Preferences(): Component {
                 >
                   {paragraphFocus ? (d.Enabled ?? "Activado") : (d.Disabled ?? "Desactivado")}
                 </button>
+              </div>
+            </div>
+
+            {/* Tema */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <SunMoon size={22} className="sm:w-[25px] sm:h-[25px]" />
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>Tema</p>
+              </div>
+              <div className="relative">
+                <select
+                  value={currentTheme}
+                  onChange={e => changeTheme(e.target.value)}
+                  className={twMerge(
+                    "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 pr-8 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
+                    isDay
+                      ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
+                      : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                  )}
+                >
+                  {themesOptions.map(opt => (
+                    <option
+                      key={opt.value}
+                      value={opt.value}
+                      className={isDay ? "bg-white text-gray-900" : "bg-[#222222] text-zinc-100"}
+                    >
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
               </div>
             </div>
 

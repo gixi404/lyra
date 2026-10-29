@@ -65,6 +65,8 @@ function translations(): Record<string, string> {
     Commands: "Comandos",
     Language: "Idioma",
     Themes: "Temas",
+    Theme: "Tema",
+    System: "Sistema",
     Support: "Soporte",
     Night: "Noche",
     Day: "Día",

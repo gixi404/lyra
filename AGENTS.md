@@ -76,6 +76,11 @@ pnpm run tauri dev      # desarrollo con hot-reload
   ```
 - **Publicación**: Subir el archivo `latest.json` generado en `src-tauri/target/release/bundle/` junto con los artefactos a GitHub Releases (`https://github.com/gixi404/lyra/releases/latest/download/latest.json`).
 
+## Sección de Novedades (Changelog)
+
+- **Sin formato Markdown**: Al agregar o redactar funcionalidades en la sección de novedades (`defaultChangelog` en `src/pages/Preferences.tsx` o notas de actualización de versiones para `lyra_release_notes`), **NO usar formato markdown** (evitar negritas `**texto**`, cursivas `*texto*`, enlaces `[texto](url)`, viñetas manuales, etc.).
+- Las novedades se renderizan como texto plano directo en elementos `<li>{item}</li>` dentro de la interfaz; redactar siempre texto plano, simple y directo.
+
 ---
 
 ## Post-Task: Auto-Doc Sync

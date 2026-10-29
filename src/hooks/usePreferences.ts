@@ -1,11 +1,11 @@
 import useStorage from "./useStorage";
 import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
-import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
+import { TEXT_ALIGNS, TEXT_SIZES } from "../utils/consts";
 import { configStore } from "../store/configStore";
 
 function usePreferences(): Preferences {
   configStore(state => state.prefTick);
-  const { getItem, setItem } = useStorage();
+  const { getItem } = useStorage();
   const readBoolean = (key: string, fallback: string): boolean => {
     try {
       const val = getItem(key, fallback);
@@ -63,13 +63,7 @@ function usePreferences(): Preferences {
   }
 
   function myTheme(): string {
-    const savedTheme = getItem("theme", "nothing");
-    if (savedTheme === "nothing" || savedTheme === "auto") {
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      const defaultTheme = prefersDark ? THEMES.clearNigth : THEMES.Day;
-      setItem("theme", defaultTheme);
-      return defaultTheme;
-    }
+    const savedTheme = getItem("theme", "auto");
     return savedTheme;
   }
 

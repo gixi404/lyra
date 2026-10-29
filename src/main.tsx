@@ -5,6 +5,7 @@ import "./styles.css";
 import { type Container, createRoot } from "react-dom/client";
 import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater";
 import { initPersistentPreferences } from "./utils/persistentPreferences";
+import { configStore } from "./store/configStore";
 import { router } from "./router";
 
 const root = document.getElementById("root") as Container;
@@ -18,7 +19,8 @@ try {
   const isLight =
     savedTheme === "sunny-day" ||
     savedTheme === "Day" ||
-    (savedTheme === "auto" && !window.matchMedia("(prefers-color-scheme: dark)").matches);
+    ((!savedTheme || savedTheme === "auto" || savedTheme === "nothing") &&
+      !window.matchMedia("(prefers-color-scheme: dark)").matches);
   const isDark = !isLight;
   const initialBg = isDark ? "#101010" : "#e0e0e0";
   document.documentElement.style.backgroundColor = initialBg;
@@ -29,6 +31,19 @@ try {
   } else {
     document.documentElement.classList.add("light");
     document.documentElement.classList.remove("dark");
+  }
+
+  const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const handleMediaChange = () => {
+    const currentStoredTheme = window.localStorage.getItem("theme");
+    if (!currentStoredTheme || currentStoredTheme === "auto" || currentStoredTheme === "nothing") {
+      configStore.getState().toggleThemeTick();
+    }
+  };
+  if (mediaQuery.addEventListener) {
+    mediaQuery.addEventListener("change", handleMediaChange);
+  } else if (mediaQuery.addListener) {
+    mediaQuery.addListener(handleMediaChange);
   }
 } catch {}
 

@@ -176,6 +176,12 @@ Lyra uses the official Tauri v2 Updater (`tauri-plugin-updater` and `@tauri-apps
   pnpm run tauri build
   ```
 
+## Sección de Novedades (Changelog)
+
+- Al agregar o redactar funcionalidades en la sección de novedades (`defaultChangelog` en `src/pages/Preferences.tsx` o notas de actualización de versiones):
+  - **No usar formato markdown** (evitar negritas `**texto**`, cursivas `*texto*`, enlaces `[texto](url)`, viñetas manuales, etc.).
+  - Los ítems se renderizan como texto plano directamente dentro de la lista de novedades (`<li>{item}</li>`). Redactar siempre texto plano simple y limpio.
+
 ## Editor Diagnostics & Debugging
 
 The repository includes a telemetry and live HUD system for diagnosing cursor, caret, and paragraph focus behaviors:
