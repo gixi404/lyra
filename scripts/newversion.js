@@ -241,7 +241,7 @@ if (!skipBuild) {
 // 8. Commit y Tag en Git
 log("Creando commit y tag en Git...");
 run("git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock");
-run("git add src/ src-tauri/ scripts/");
+run("git add src/ src-tauri/ scripts/ pnpm-workspace.yaml .npmrc");
 try {
   run(`git commit -m "release: v${nextVersion}"`);
 } catch {
