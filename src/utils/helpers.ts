@@ -12,7 +12,7 @@ import {
   THEMES,
 } from "./consts";
 import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
-import { noteTitle, SUPPORTED_NOTE_EXTENSIONS } from "./noteName";
+import { ensureNoteExtension, hasSupportedNoteExtension, noteTitle } from "./noteName";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
 
@@ -95,11 +95,6 @@ function sanitizeFileName(name: string): string {
   return name.replace(/\?/g, "@");
 }
 
-function hasSupportedFileExtension(fileName: string): boolean {
-  const lower = fileName.toLowerCase();
-  return SUPPORTED_NOTE_EXTENSIONS.some(extension => lower.endsWith(extension));
-}
-
 function getLegacyFileName(fileName: string): string {
   return noteTitle(fileName);
 }
@@ -108,14 +103,10 @@ function getEditableFileName(fileName: string): string {
   return getLegacyFileName(fileName);
 }
 
-function resolveDisplayFileName(fileName: string, currentName?: string): string {
-  if (hasSupportedFileExtension(fileName)) return fileName;
-  if (currentName?.endsWith(".md")) return `${fileName}.md`;
-  return `${fileName}${DEFAULT_FILE_EXTENSION}`;
-}
+const resolveDisplayFileName = ensureNoteExtension;
 
 function getCompatibleFileNames(fileName: string): string[] {
-  if (!hasSupportedFileExtension(fileName)) return [fileName];
+  if (!hasSupportedNoteExtension(fileName)) return [fileName];
 
   if (!fileName.endsWith(DEFAULT_FILE_EXTENSION)) return [fileName];
 
@@ -132,7 +123,7 @@ function getCompatibleStorageKeys(fileName: string, suffix: string = "", prefix:
 
 function resolveStoredFileName(fileName: string, files: string[]): string | null {
   if (files.includes(fileName)) return fileName;
-  if (hasSupportedFileExtension(fileName)) return null;
+  if (hasSupportedNoteExtension(fileName)) return null;
 
   const txtMatch: string = `${fileName}.txt`;
   if (files.includes(txtMatch)) return txtMatch;
@@ -293,12 +284,14 @@ export {
   normalizeStoredFileNames,
   getCompatibleStorageKeys,
   getLegacyFileName,
-  hasSupportedFileExtension,
+  hasSupportedNoteExtension,
   sanitizeFileName,
   themes,
   verifyMainFolder,
   isWelcomeFileName,
 };
+
+export { hasSupportedNoteExtension as hasSupportedFileExtension };
 
 interface Themes {
   isDay: boolean;

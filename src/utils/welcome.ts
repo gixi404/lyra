@@ -211,25 +211,9 @@ export async function ensureWelcomeFileState(
     const paperSet = new Set(localPaper);
     const isArchived = existingWelcome ? paperSet.has(existingWelcome) : false;
 
-    // Escenario E: Si la carpeta local contiene notas reales
+    // Si la carpeta local contiene notas reales, el archivo de bienvenida permanece visible
+    // hasta que el usuario lo elimine o archive explícitamente. No se autoarchiva al crear notas.
     if (realNotes.length > 0) {
-      // Si existe un archivo de bienvenida activo y no fue restaurado manualmente por el usuario
-      if (existingWelcome && !isArchived && !isWelcomeManuallyRestored(storageOps)) {
-        try {
-          const welcomePath = await resolveWelcomePath(MAIN_FOLDER, existingWelcome);
-          const content = await fsOps.readTextFile(welcomePath);
-          // Autoarchivar sólo si el contenido es el predeterminado (no modificado por el usuario)
-          if (await isInternalWelcome(existingWelcome, content, fsOps)) {
-            await archiveWelcome(existingWelcome, localPaper, storageOps);
-            try {
-              fileStore.getState().editedFile();
-            } catch {}
-            return { created: false, activeWelcome: null };
-          }
-        } catch (readErr) {
-          console.warn("No se pudo inspeccionar contenido del archivo de bienvenida:", readErr);
-        }
-      }
       return {
         created: false,
         activeWelcome: existingWelcome && !isArchived ? existingWelcome : null,

@@ -141,6 +141,17 @@ body.is-typing .auto-hide-ui {
   }
 }
 
+@keyframes editorEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes listSwitchHeaderFade {
   0% {
     opacity: 0;
@@ -160,9 +171,15 @@ body.is-typing .auto-hide-ui {
   will-change: opacity;
 }
 
+.animate-editor-enter {
+  animation: editorEnter 160ms ease-out both;
+  will-change: opacity, transform;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-list-switch,
-  .animate-list-header {
+  .animate-list-header,
+  .animate-editor-enter {
     animation: none !important;
   }
 }

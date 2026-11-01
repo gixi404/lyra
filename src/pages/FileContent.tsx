@@ -438,13 +438,15 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
   return (
     <MainContainer>
       <Suspense fallback={<div className="w-full flex-1" />}>
-        <TinyEditor
-          key={selectedFile.name}
-          content={content}
-          onContentChange={handleContentChange}
-          readOnly={updateInstallInProgress}
-          initialCaretPos={selectedFile.initialCaretPos}
-        />
+        <div className="w-full flex-1 flex flex-col items-center justify-start animate-editor-enter">
+          <TinyEditor
+            key={selectedFile.name}
+            content={content}
+            onContentChange={handleContentChange}
+            readOnly={updateInstallInProgress}
+            initialCaretPos={selectedFile.initialCaretPos}
+          />
+        </div>
       </Suspense>
     </MainContainer>
   );

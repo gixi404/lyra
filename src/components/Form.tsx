@@ -90,9 +90,8 @@ function Form(): Component {
         toggleOrder: state.toggleOrder,
       }))
     ),
-    { updateListFiles, setSelectedFile, files } = fileStore(
+    { setSelectedFile, files } = fileStore(
       useShallow(state => ({
-        updateListFiles: state.updateListFiles,
         setSelectedFile: state.setSelectedFile,
         files: state.files,
       }))
@@ -110,7 +109,12 @@ function Form(): Component {
       const activeEl = document.activeElement;
       const isInputActive =
         activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA");
-      if (isModalOpen || isSortModalOpen) return;
+
+      // Respetar modales/diálogos abiertos: ellos tienen prioridad para cerrarse.
+      const hasOpenDialog = Boolean(
+        document.querySelector("#modal-root > div, [role='dialog'], .search-replace-modal")
+      );
+      if (isModalOpen || isSortModalOpen || hasOpenDialog) return;
 
       if (
         (e.key === "/" && !isInputActive) ||
@@ -122,7 +126,9 @@ function Form(): Component {
         return;
       }
 
-      if (e.key === "Escape" && !isInputActive && paperIsOpen) {
+      // Usar el estado actual del store para evitar closures desactualizadas.
+      const isPaperOpen = configStore.getState().paperIsOpen;
+      if (e.key === "Escape" && !isInputActive && isPaperOpen) {
         e.preventDefault();
         setPaperIsOpen(false);
         return;
@@ -131,7 +137,7 @@ function Form(): Component {
 
     window.addEventListener("keydown", handleGlobalShortcuts);
     return () => window.removeEventListener("keydown", handleGlobalShortcuts);
-  }, [isModalOpen, isSortModalOpen]);
+  }, [isModalOpen, isSortModalOpen, setPaperIsOpen]);
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>): void {
     if (e.key === "Escape") {
@@ -188,7 +194,6 @@ function Form(): Component {
       }
       const displayName: string = await createFile(file.name, file.content);
       const nextFile: File = { ...file, name: displayName };
-      updateListFiles(displayName);
       setSelectedFile(nextFile);
       goTo(PAGES.file);
     } catch {

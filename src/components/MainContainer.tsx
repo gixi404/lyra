@@ -282,9 +282,15 @@ function MainContainer({ children }: PropsWithChildren): Component {
       </div>
 
       <Header />
-      <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start">
-        {children}
-      </animated.div>
+      {pathIs(PAGES.file) ? (
+        <div className="w-full flex-1 flex flex-col items-center justify-start">
+          {children}
+        </div>
+      ) : (
+        <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start">
+          {children}
+        </animated.div>
+      )}
     </main>
   );
 }

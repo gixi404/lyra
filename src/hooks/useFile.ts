@@ -12,6 +12,7 @@ import {
   resolveDisplayFileName,
 } from "../utils/helpers";
 import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome";
+import { ensureNoteExtension } from "../utils/noteName";
 import {
   DirEntry,
   exists,
@@ -81,16 +82,17 @@ function useFile(): Files {
 
   const createFile = useCallback(async (name: string, content: string = ""): Promise<string> => {
     if (!name) throw new Error("File name is required");
+    const displayName: string = ensureNoteExtension(name);
     const isTauri = typeof window !== "undefined" &&
       Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
     if (isTauri) {
-      await invoke("create_note", { fileName: name, content });
+      await invoke("create_note", { fileName: displayName, content });
     } else {
-      const { pathFile } = await getFilePath(name);
+      const { pathFile } = await getFilePath(displayName);
       await writeTextFile(pathFile, content, { createNew: true, baseDir: BASE_DIRECTORY.baseDir });
     }
 
-    return resolveDisplayName(name);
+    return displayName;
   }, [getFilePath]);
 
   const getFiles = useCallback(async (): Promise<string[]> => {

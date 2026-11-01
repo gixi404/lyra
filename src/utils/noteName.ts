@@ -1,5 +1,16 @@
 export const SUPPORTED_NOTE_EXTENSIONS = [".txt", ".md"] as const;
 
+export function hasSupportedNoteExtension(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return SUPPORTED_NOTE_EXTENSIONS.some(extension => lower.endsWith(extension));
+}
+
+export function ensureNoteExtension(fileName: string, currentName?: string): string {
+  if (hasSupportedNoteExtension(fileName)) return fileName;
+  if (currentName?.toLowerCase().endsWith(".md")) return `${fileName}.md`;
+  return `${fileName}.txt`;
+}
+
 export function noteTitle(fileName: string): string {
   const lower = fileName.toLowerCase();
   const extension = SUPPORTED_NOTE_EXTENSIONS.find(value => lower.endsWith(value));
