@@ -4659,6 +4659,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_aud_004_stale_tmp_recovery_preserves_tmp_on_write_error() {
         let temp_dir = std::env::temp_dir().join(format!("lyra_test_write_err_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
@@ -4696,6 +4697,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_aud_004_clean_stale_tmp_save_files_respects_ttl() {
         let temp_dir = std::env::temp_dir().join(format!("lyra_test_ttl_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
