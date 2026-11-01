@@ -70,14 +70,31 @@ function DefaultHeader(): Component {
     snapshot.style.zIndex = "0";
     snapshot.setAttribute("aria-hidden", "true");
 
-    // Sincronizar textareas, inputs y scrolls en el snapshot para no perder el estado visual
+    // Sincronizar textareas, inputs, selects y scrolls en el snapshot para no perder el estado visual
     const origElements = root.querySelectorAll("*");
     const cloneElements = snapshot.querySelectorAll("*");
     origElements.forEach((el, i) => {
       const clone = cloneElements[i];
       if (clone) {
-        if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
-          (clone as HTMLInputElement | HTMLTextAreaElement).value = el.value;
+        if (el instanceof HTMLInputElement && clone instanceof HTMLInputElement) {
+          clone.value = el.value;
+          if (el.type === "checkbox" || el.type === "radio") {
+            clone.checked = el.checked;
+          }
+        } else if (el instanceof HTMLTextAreaElement && clone instanceof HTMLTextAreaElement) {
+          clone.value = el.value;
+        } else if (el instanceof HTMLSelectElement && clone instanceof HTMLSelectElement) {
+          clone.selectedIndex = el.selectedIndex;
+          clone.value = el.value;
+          Array.from(clone.options).forEach((opt, idx) => {
+            if (idx === el.selectedIndex) {
+              opt.setAttribute("selected", "selected");
+              opt.selected = true;
+            } else {
+              opt.removeAttribute("selected");
+              opt.selected = false;
+            }
+          });
         }
         if (el.scrollTop) clone.scrollTop = el.scrollTop;
         if (el.scrollLeft) clone.scrollLeft = el.scrollLeft;
@@ -271,8 +288,8 @@ function DefaultHeader(): Component {
         }}
       >
         {(pathIs(PAGES.list) || pathIs(PAGES.preferences)) && (
-          <div className="flex items-center gap-x-2.5 select-none opacity-90">
-            <span className={`text-base font-bold tracking-tight ${isDay ? "text-neutral-800" : "text-neutral-100"}`}>
+          <div className="flex items-center gap-x-2.5 select-none">
+            <span className={`text-base font-semibold tracking-tight ${isDay ? "text-neutral-700" : "text-zinc-200"}`}>
               Lyra
             </span>
             <img src="/logo.png" alt="Lyra" className="w-[26px] h-[26px] object-contain" />

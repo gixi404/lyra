@@ -17,6 +17,8 @@ interface ModalProps {
   confirmText?: string;
   cancelText?: string;
   variant?: "primary" | "danger";
+  busy?: boolean;
+  busyText?: string;
 }
 
 function Modal({
@@ -31,6 +33,8 @@ function Modal({
   confirmText,
   cancelText,
   variant = "primary",
+  busy = false,
+  busyText,
 }: ModalProps): Component | null {
   const d = translations();
   const { isDay } = themes();
@@ -69,13 +73,13 @@ function Modal({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !busy) {
         onClose();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, busy]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -94,6 +98,7 @@ function Modal({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (hasInput && !inputValue.trim()) return;
     onConfirm(hasInput ? inputValue.trim() : undefined);
   };
@@ -101,7 +106,7 @@ function Modal({
   const handleBackdropClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    onClose();
+    if (!busy) onClose();
   };
 
   const handleBackdropEvent = (e: MouseEvent) => {
@@ -121,6 +126,7 @@ function Modal({
           createPortal(
             <animated.div
               style={{ opacity: styles.opacity }}
+              aria-busy={busy}
               className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/70"
               onMouseDown={handleBackdropEvent}
               onMouseUp={handleBackdropEvent}
@@ -169,25 +175,38 @@ function Modal({
                     <button
                       type="button"
                       onClick={onClose}
-                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-colors ${
-                        isDay
-                          ? "text-neutral-600 hover:bg-neutral-100"
-                          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                      }`}
+                      disabled={busy}
+                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-colors select-none ${
+                        busy
+                          ? "opacity-40 cursor-not-allowed text-neutral-400"
+                          : isDay
+                          ? "text-neutral-600 enabled:hover:bg-neutral-100"
+                          : "text-zinc-400 enabled:hover:bg-zinc-800 enabled:hover:text-zinc-200"
+                      } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:shadow-none`}
                     >
                       {finalCancelText}
                     </button>
                     <button
                       type="submit"
-                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-all shadow-sm ${
-                        variant === "danger"
-                          ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20"
+                      disabled={busy}
+                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-all select-none ${
+                        busy
+                          ? `${variant === "danger" ? "bg-rose-600 text-white" : isDay
+                            ? "bg-indigo-600 text-white" : "bg-sky-500 text-zinc-950"} opacity-40 cursor-not-allowed shadow-none`
+                          : variant === "danger"
+                          ? "bg-rose-600 enabled:hover:bg-rose-700 text-white shadow-rose-600/20 active:enabled:scale-95"
                           : isDay
-                          ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20"
-                          : "bg-sky-500 hover:bg-sky-400 text-zinc-950 font-semibold shadow-sky-500/20"
+                          ? "bg-indigo-600 enabled:hover:bg-indigo-700 text-white shadow-indigo-600/20 active:enabled:scale-95"
+                          : "bg-sky-500 enabled:hover:bg-sky-400 text-zinc-950 font-semibold shadow-sky-500/20 active:enabled:scale-95"
+                      } disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:active:scale-100 ${
+                        variant === "danger"
+                          ? "disabled:hover:bg-rose-600"
+                          : isDay
+                          ? "disabled:hover:bg-indigo-600"
+                          : "disabled:hover:bg-sky-500"
                       }`}
                     >
-                      {finalConfirmText}
+                      {busy ? busyText ?? finalConfirmText : finalConfirmText}
                     </button>
                   </div>
                 </form>

@@ -3,7 +3,7 @@
 ## What matters here
 
 - This is a Tauri v2 + React 18 + TypeScript + Tailwind app. The UI boots from `src/main.tsx`; routes live in `src/pages/*`.
-- Persistent app files live in `~/Documents/lyra/`. `verifyMainFolder()` creates the folder and a welcome file on first run.
+- Persistent app files live in `~/Documents/lyra/`. `verifyMainFolder()` creates the folder and the welcome file (`¡Bienvenid@ a Lyra!.txt`) on first run or when empty.
 - `pnpm run build` is the repo’s verification gate; it is the only TypeScript type-check path defined here. There is no separate test script.
 - `pnpm run dev` starts Vite on port `1420`; Tauri expects that port.
 - `pnpm run tauri build` is the full Rust build producing DEB, RPM, AppImage (Linux) and MSI (Windows).
@@ -29,6 +29,7 @@ sudo dnf install \
   atk-devel \
   pango-devel \
   openssl-devel \
+  dbus-devel \
   pkg-config \
   gcc
 ```
@@ -80,6 +81,27 @@ pnpm run tauri dev      # desarrollo con hot-reload
 
 - **Sin formato Markdown**: Al agregar o redactar funcionalidades en la sección de novedades (`defaultChangelog` en `src/pages/Preferences.tsx` o notas de actualización de versiones para `lyra_release_notes`), **NO usar formato markdown** (evitar negritas `**texto**`, cursivas `*texto*`, enlaces `[texto](url)`, viñetas manuales, etc.).
 - Las novedades se renderizan como texto plano directo en elementos `<li>{item}</li>` dentro de la interfaz; redactar siempre texto plano, simple y directo.
+
+## Motor de Sincronización Google Drive y Protección Antiperdida
+
+- **Arquitectura Backend**: Ubicado en `src-tauri/src/gdrive/` (`auth.rs`, `client.rs`, `sync.rs`, `types.rs`, `mod.rs`).
+- **Comandos Tauri**:
+  - `gdrive_sync_now`: Orquesta la sincronización bidireccional no bloqueante con trailing sync (`SYNC_QUEUED`).
+  - `gdrive_delete_file`: Registra un tombstone persistente en `manifest.pending_deletions` antes de eliminar el archivo local, propagándolo inmediatamente a la papelera de Drive si hay conexión.
+  - `gdrive_get_status`, `gdrive_start_auth`, `gdrive_logout`: Gestión de autenticación OAuth 2.0 PKCE.
+- **Regla Fundamental Antiperdida**: La eliminación de notas o de la carpeta `lyra` directamente en Google Drive NUNCA borra archivos locales. El motor des-papela (`untrash_file`) o regenera la copia remota.
+- **Restauración y Reconciliación de Notas Des-papeladas en Drive**: Si el usuario des-papela en la web de Drive una nota previamente eliminada, el motor la sincroniza y descarga a local. Si ya existe una nota local recreada con el mismo nombre, la copia remota se descarga como archivo de conflicto único y se renombra en Drive para preservar ambas notas sin pérdida de información ni sobreescrituras.
+- **Aislamiento Multi-Cuenta Google Drive**:
+  - Manifiestos independientes por cuenta Google utilizando el identificador estable `sub` de Google UserInfo (con fallback a email sanitizado): `.gdrive_manifest_{account_key}.json`.
+  - Aislamiento completo de tombstones (`pending_deletions`), mapeo de archivos y `drive_folder_id` entre cuentas.
+  - Al cerrar sesión (`gdrive_logout`), las credenciales se eliminan pero los manifiestos y respaldos se conservan para permitir alternar cuentas sin re-descargas ni pérdida de estado.
+  - Validación activa de `drive_folder_id`: se valida la carpeta antes de listar mediante `check_file_status`. Errores 404 o 403 provocan el descarte del ID obsoleto y la resolución/búsqueda de la carpeta de la cuenta activa sin perder notas ni abortar.
+- **Estrategia 4 Híbrida de Bajo Consumo**:
+  - Escaneo local optimizado con verificación rápida de `mtime` y `size` (evita computar MD5 o leer bytes innecesariamente).
+  - Validación y reutilización de `drive_folder_id` con verificación de pertenencia a la cuenta activa.
+  - Sincronización rezagada (*trailing sync*) para no descartar eventos concurrentes de guardado.
+  - Reintentos con retroceso exponencial, jitter y soporte de cabecera `Retry-After` para errores 429 y 5xx.
+  - Sincronización por foco de ventana con acelerador/throttle de 3 minutos.
 
 ---
 

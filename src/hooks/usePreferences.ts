@@ -1,6 +1,6 @@
 import useStorage from "./useStorage";
 import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
-import { TEXT_ALIGNS, TEXT_SIZES } from "../utils/consts";
+import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 import { configStore } from "../store/configStore";
 
 function usePreferences(): Preferences {
@@ -63,12 +63,12 @@ function usePreferences(): Preferences {
   }
 
   function myTheme(): string {
-    const savedTheme = getItem("theme", "auto");
+    const savedTheme = getItem("theme", THEMES.auto);
     return savedTheme;
   }
 
   function myParagraphFocus(): boolean {
-    return readBoolean("paragraph-focus", "false");
+    return readBoolean("paragraph-focus", "true");
   }
 
   function myPaper(files: string[] = []): string[] {

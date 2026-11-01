@@ -5,8 +5,8 @@ import { twMerge } from "tailwind-merge";
 import { downloadDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import useFile from "../hooks/useFile";
-import usePreferences from "../hooks/usePreferences";
-import useStorage from "../hooks/useStorage";
+import { setArchiveState } from "../utils/archiveState";
+import { useSyncStore } from "../store/syncStore";
 import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
 import {
@@ -20,6 +20,7 @@ import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal";
 import ModalInfo from "./ModalInfo";
+import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
@@ -28,15 +29,21 @@ function MenuFile({ fileName }: Props): Component {
     ),
     files: string[] = filesArr,
     { renameFile, resolveDisplayName, readFile } = useFile(),
-    { setItem } = useStorage(),
-    { myPaper } = usePreferences(),
     { isDay } = themes(),
     [menuOpen, setMenuOpen] = useState<boolean>(false),
     [openUpwards, setOpenUpwards] = useState<boolean>(false),
     [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
     [isEditOpen, setIsEditOpen] = useState<boolean>(false),
     [isTrashOpen, setIsTrashOpen] = useState<boolean>(false),
+    [isArchiving, setIsArchiving] = useState<boolean>(false),
+    archivingRef = useRef(false),
+    mountedRef = useRef(false),
     menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const menuTransitions = useTransition(menuOpen, {
     from: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
@@ -58,7 +65,7 @@ function MenuFile({ fileName }: Props): Component {
   async function handleExportPDF(): Promise<void> {
     try {
       const content = await readFile(fileName);
-      const title = fileName.replace(/\.(txt|md)$/i, "");
+      const title = noteTitle(fileName);
       const { jsPDF } = await import("jspdf");
 
       const doc = new jsPDF({
@@ -92,7 +99,7 @@ function MenuFile({ fileName }: Props): Component {
       }
 
       doc.save(`${title}.pdf`);
-      notification("success", "Archivo exportado a PDF correctamente");
+      notification("success", `${noteLabel(fileName)} se exportó a PDF`);
 
       try {
         const downloadsPath = await downloadDir();
@@ -104,7 +111,7 @@ function MenuFile({ fileName }: Props): Component {
       }
     } catch (err) {
       console.error("Error exporting PDF:", err);
-      notification("error", "Error al exportar archivo");
+      notification("error", `No se pudo exportar ${noteLabel(fileName)} a PDF`);
     }
   }
 
@@ -155,25 +162,46 @@ function MenuFile({ fileName }: Props): Component {
     }
 
     if (files.includes(nextDisplayName)) {
-      notification("error", d.NameAlreadyExists);
+      notification("error", `${noteLabel(nextDisplayName)} ya existe`);
       return;
     }
 
     setIsEditOpen(false);
     renameFile(fileName, sanitizedName)
-      .then(() => notification("success", d.EditedName))
-      .catch(() => notification("error", d.InvalidName));
+      .catch(() => notification("error", `No se pudo renombrar ${noteLabel(fileName)}`));
   }
 
-  function handleTrashConfirm(): void {
-    const currentPaper: string[] = myPaper(files);
-    const updatedPaper: string[] = currentPaper.includes(fileName)
-      ? currentPaper
-      : [fileName, ...currentPaper];
-    setItem("paper", JSON.stringify(updatedPaper));
-    notification("success", d.SentToTrash);
-    setIsTrashOpen(false);
-    editedFile();
+  async function handleTrashConfirm(): Promise<void> {
+    if (archivingRef.current) return;
+    archivingRef.current = true;
+    setIsArchiving(true);
+    const archivedName = fileName;
+    fileStore.getState().retainForExit(archivedName, "active");
+    try {
+      const projection = await setArchiveState(archivedName, true);
+      if (!projection.archivedNames.includes(archivedName)) {
+        fileStore.getState().releaseRetainedExit(archivedName);
+        if (mountedRef.current) setIsTrashOpen(false);
+        return;
+      }
+      if (mountedRef.current) setIsTrashOpen(false);
+      notification("success", noteSuccessMessage(archivedName, "archived"));
+      if (useSyncStore.getState().isConnected && navigator.onLine) {
+        void useSyncStore.getState().syncNow(true, true);
+      }
+
+      fileStore.getState().scheduleExitAnimation(archivedName, () => {
+        editedFile();
+      });
+    } catch (err) {
+      console.error("Error al persistir archivado de nota:", err);
+      fileStore.getState().releaseRetainedExit(archivedName);
+      if (mountedRef.current) setIsTrashOpen(false);
+      notification("error", `No se pudo archivar ${noteLabel(archivedName)}`);
+    } finally {
+      archivingRef.current = false;
+      if (mountedRef.current) setIsArchiving(false);
+    }
   }
 
   return (
@@ -336,13 +364,15 @@ function MenuFile({ fileName }: Props): Component {
 
       <Modal
         isOpen={isTrashOpen}
-        onClose={() => setIsTrashOpen(false)}
+        onClose={() => { if (!isArchiving) setIsTrashOpen(false); }}
         onConfirm={handleTrashConfirm}
         title={d.MoveToTrash}
-        description={`"${fileName.replace(/\.(txt|md)$/i, "")}"`}
+        description={`"${noteTitle(fileName)}"`}
         confirmText={d.Confirm}
         cancelText={d.Cancel}
         variant="danger"
+        busy={isArchiving}
+        busyText="Archivando..."
       />
     </div>
   );

@@ -8,6 +8,7 @@ import { verifyMainFolder } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 import { getListScroll, setListScroll } from "../utils/listScroll";
+import { startLocalFirstListInitialization } from "../utils/listInitialization";
 
 function getScrollPos(): number {
   return (
@@ -149,12 +150,12 @@ function List(): Component {
   }, [files]);
 
   useEffect(() => {
-    async function init() {
-      await verifyMainFolder();
-      const { files: filesList, stats } = await getFilesWithStats();
-      setFilesWithStats(filesList, stats);
-    }
-    init();
+    return startLocalFirstListInitialization(
+      getFilesWithStats,
+      verifyMainFolder,
+      ({ files: filesList, stats }) => setFilesWithStats(filesList, stats),
+      error => console.error("Could not initialize note list", error),
+    );
   }, [fileIsEdited]);
 
   return (

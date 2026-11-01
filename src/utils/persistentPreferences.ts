@@ -1,9 +1,27 @@
-import { exists, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
-import { BASE_DIRECTORY, MAIN_FOLDER } from "./consts";
-import { configStore } from "../store/configStore";
+import { BASE_DIRECTORY, MAIN_FOLDER } from "./consts.ts";
+import { configStore } from "../store/configStore.ts";
 
 const PREFERENCES_FILE_NAME = ".preferences.json";
+
+export async function ensurePreferencesDirectory(): Promise<void> {
+  try {
+    const mainFolderExists = await exists(MAIN_FOLDER, BASE_DIRECTORY);
+    if (!mainFolderExists) {
+      await mkdir(MAIN_FOLDER, { ...BASE_DIRECTORY, recursive: true });
+    }
+  } catch (err: unknown) {
+    const msg = String(err);
+    if (
+      !msg.includes("os error 17") &&
+      !msg.includes("ya existe") &&
+      !msg.includes("AlreadyExists")
+    ) {
+      console.warn("ensurePreferencesDirectory warning:", err);
+    }
+  }
+}
 
 export const PERSISTENT_KEYS = [
   "theme",
@@ -18,6 +36,9 @@ export const PERSISTENT_KEYS = [
   "paper",
   "language",
   "lyra_initialized",
+  "lyra_theme_migrated_v2",
+  "welcome_dismissed",
+  "welcome_manually_restored",
 ] as const;
 
 export type PersistentKey = (typeof PERSISTENT_KEYS)[number];
@@ -35,6 +56,9 @@ export interface PreferencesData {
   paper?: string[];
   language?: string;
   lyra_initialized?: string | boolean;
+  lyra_theme_migrated_v2?: string | boolean;
+  welcome_dismissed?: string | boolean;
+  welcome_manually_restored?: string | boolean;
   initialized?: boolean;
   updatedAt?: number;
 }
@@ -45,8 +69,21 @@ export async function getPreferencesFilePath(): Promise<string> {
   return join(MAIN_FOLDER, PREFERENCES_FILE_NAME);
 }
 
+let initPreferencesPromise: Promise<void> | null = null;
+
 export async function initPersistentPreferences(): Promise<void> {
+  if (initPreferencesPromise) {
+    return initPreferencesPromise;
+  }
+  initPreferencesPromise = initPersistentPreferencesInternal().finally(() => {
+    initPreferencesPromise = null;
+  });
+  return initPreferencesPromise;
+}
+
+async function initPersistentPreferencesInternal(): Promise<void> {
   try {
+    await ensurePreferencesDirectory();
     const filePath = await getPreferencesFilePath();
     const hasFile = await exists(filePath, BASE_DIRECTORY);
 
@@ -58,38 +95,49 @@ export async function initPersistentPreferences(): Promise<void> {
 
         // 1. Sincronizar 'paper' (Archivados)
         const localPaperRaw = window.localStorage.getItem("paper");
-        let localPaper: string[] = [];
-        try {
-          if (localPaperRaw) {
+        let localPaper: string[] | null = null;
+        if (localPaperRaw !== null) {
+          try {
             const parsed = JSON.parse(localPaperRaw);
             if (Array.isArray(parsed)) localPaper = parsed;
-          }
-        } catch {}
+          } catch {}
+        }
 
-        const filePaper = Array.isArray(fileData.paper) ? fileData.paper : [];
+        const filePaper = Array.isArray(fileData.paper) ? fileData.paper : null;
 
-        // Si local está vacío pero el archivo en disco tiene archivados, restaurar en local
-        if (localPaper.length === 0 && filePaper.length > 0) {
+        // Al iniciar la aplicación, .preferences.json en disco es la fuente autoritativa
+        // persistente en ~/Documents/lyra/.preferences.json (incluyendo backups externos).
+        if (filePaper !== null) {
           window.localStorage.setItem("paper", JSON.stringify(filePaper));
-        } else if (localPaper.length > 0 && filePaper.length === 0) {
+        } else if (localPaper !== null) {
           fileData.paper = localPaper;
           needsSave = true;
-        } else if (localPaper.length > 0 && filePaper.length > 0) {
-          const merged = Array.from(new Set([...localPaper, ...filePaper]));
-          window.localStorage.setItem("paper", JSON.stringify(merged));
-          if (merged.length !== filePaper.length) {
-            fileData.paper = merged;
-            needsSave = true;
-          }
+        } else {
+          window.localStorage.setItem("paper", JSON.stringify([]));
+          fileData.paper = [];
+          needsSave = true;
         }
 
         // 2. Sincronizar el resto de preferencias
+        const isThemeMigrated =
+          fileData.lyra_theme_migrated_v2 === true ||
+          fileData.lyra_theme_migrated_v2 === "true" ||
+          window.localStorage.getItem("lyra_theme_migrated_v2") === "true";
+
+        if (!isThemeMigrated) {
+          fileData.theme = "auto";
+          fileData.lyra_theme_migrated_v2 = true;
+          window.localStorage.setItem("theme", "auto");
+          window.localStorage.setItem("lyra_theme_migrated_v2", "true");
+          needsSave = true;
+        }
+
         for (const key of PERSISTENT_KEYS) {
           if (key === "paper") continue;
           const fileVal = fileData[key];
           const localVal = window.localStorage.getItem(key);
 
-          if (localVal === null && fileVal !== undefined && fileVal !== null) {
+          if (fileVal !== undefined && fileVal !== null) {
             window.localStorage.setItem(key, String(fileVal));
           } else if (localVal !== null && fileVal === undefined) {
             (fileData as Record<string, unknown>)[key] = localVal;
@@ -101,8 +149,13 @@ export async function initPersistentPreferences(): Promise<void> {
           window.localStorage.setItem("lyra_initialized", "true");
         }
 
+        const effectiveTimestamp = Number(fileData.updatedAt || Date.now());
+        window.localStorage.setItem("lyra_preferences_updated_at", String(effectiveTimestamp));
+
         if (needsSave) {
-          fileData.updatedAt = Date.now();
+          const now = Date.now();
+          fileData.updatedAt = now;
+          window.localStorage.setItem("lyra_preferences_updated_at", String(now));
           await writeTextFile(filePath, JSON.stringify(fileData, null, 2), BASE_DIRECTORY);
         }
 
@@ -110,6 +163,14 @@ export async function initPersistentPreferences(): Promise<void> {
         configStore.getState().toggleThemeTick();
       }
     } else {
+      // Si no existe el archivo .preferences.json en disco, es un inicio limpio o la carpeta se reseteó.
+      // Purgamos residuos huérfanos de archivados o estado de bienvenida previo.
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem("welcome_dismissed");
+        window.localStorage.removeItem("welcome_manually_restored");
+        window.localStorage.setItem("paper", JSON.stringify([]));
+        configStore.getState().bumpPrefTick();
+      }
       await savePersistentPreferencesNow();
     }
   } catch (err) {
@@ -117,14 +178,44 @@ export async function initPersistentPreferences(): Promise<void> {
   }
 }
 
-export async function savePersistentPreferencesNow(): Promise<void> {
+interface QueuedSave {
+  resolve: () => void;
+  reject: (err: unknown) => void;
+}
+
+let isWriting = false;
+let pendingQueue: QueuedSave[] = [];
+
+export function savePersistentPreferencesNow(): Promise<void> {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    pendingQueue.push({ resolve, reject });
+    void processSaveQueue();
+  });
+}
+
+async function processSaveQueue(): Promise<void> {
+  if (isWriting) return;
+  if (pendingQueue.length === 0) return;
+
+  isWriting = true;
+  const currentBatch = [...pendingQueue];
+  pendingQueue = [];
+
   try {
+    await ensurePreferencesDirectory();
     const filePath = await getPreferencesFilePath();
+    const now = Date.now();
     const data: PreferencesData = {
-      updatedAt: Date.now(),
+      updatedAt: now,
       initialized: true,
     };
 
+    // El snapshot se captura en el momento exacto de escribir
     for (const key of PERSISTENT_KEYS) {
       const val = window.localStorage.getItem(key);
       if (val !== null) {
@@ -141,9 +232,26 @@ export async function savePersistentPreferencesNow(): Promise<void> {
     }
 
     await writeTextFile(filePath, JSON.stringify(data, null, 2), BASE_DIRECTORY);
+    window.localStorage.setItem("lyra_preferences_updated_at", String(now));
+
+    for (const req of currentBatch) {
+      req.resolve();
+    }
   } catch (err) {
     console.error("Error al guardar preferencias persistentes en disco:", err);
+    for (const req of currentBatch) {
+      req.reject(err);
+    }
+  } finally {
+    isWriting = false;
+    if (pendingQueue.length > 0) {
+      void processSaveQueue();
+    }
   }
+}
+
+export async function flushPersistentPreferences(): Promise<void> {
+  return savePersistentPreferencesNow();
 }
 
 export function scheduleSavePersistentPreferences(): void {

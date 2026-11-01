@@ -1,6 +1,67 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::process::Command;
+use std::path::Path;
+use std::time::UNIX_EPOCH;
 use tauri::Manager;
+
+mod gdrive;
+
+#[derive(serde::Serialize)]
+struct NoteStats {
+    mtime: u128,
+    birthtime: u128,
+}
+
+#[derive(serde::Serialize)]
+struct NoteListing {
+    files: Vec<String>,
+    stats: std::collections::HashMap<String, NoteStats>,
+}
+
+fn timestamp_ms(value: Option<std::time::SystemTime>) -> u128 {
+    value.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis()).unwrap_or(0)
+}
+
+fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
+    let mut listing = NoteListing { files: Vec::new(), stats: std::collections::HashMap::new() };
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Could not list notes: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Could not read note entry: {e}"))?;
+        if !entry.file_type().map_err(|e| format!("Could not inspect note entry: {e}"))?.is_file() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else { continue; };
+        if name.starts_with('.') || !(name.ends_with(".txt") || name.ends_with(".md")) {
+            continue;
+        }
+        let stats = match entry.metadata() {
+            Ok(metadata) => {
+                let mtime = timestamp_ms(metadata.modified().ok());
+                NoteStats { mtime, birthtime: metadata.created().ok().map(|time| timestamp_ms(Some(time))).unwrap_or(mtime) }
+            }
+            Err(_) => NoteStats { mtime: 0, birthtime: 0 },
+        };
+        listing.stats.insert(name.clone(), stats);
+        listing.files.push(name);
+    }
+    Ok(listing)
+}
+
+#[tauri::command]
+async fn list_note_files_with_stats(app: tauri::AppHandle) -> Result<NoteListing, String> {
+    let documents = app.path().document_dir()
+        .map_err(|e| format!("Could not resolve Documents: {e}"))?;
+    let dir = documents.join("lyra");
+    gdrive::sync::ensure_safe_base_dir(&dir)?;
+    let allowed = documents.canonicalize().map_err(|e| format!("Could not inspect Documents: {e}"))?;
+    let actual = dir.canonicalize().map_err(|e| format!("Could not inspect notes folder: {e}"))?;
+    if !actual.starts_with(&allowed) {
+        return Err("Notes folder is outside Documents".to_string());
+    }
+    tokio::task::spawn_blocking(move || list_note_files_with_stats_at(&dir)).await
+        .map_err(|e| format!("Could not finish note listing: {e}"))?
+}
 
 fn is_path_allowed(target: &std::path::Path, allowed_base: &std::path::Path) -> bool {
     if let (Ok(canonical_target), Ok(canonical_base)) =
@@ -85,6 +146,58 @@ fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn list_notes_batches_metadata_and_ignores_internal_files() {
+        let dir = std::env::temp_dir().join(format!("lyra_listing_{}", rand::random::<u64>()));
+        fs::create_dir_all(&dir).unwrap();
+        assert!(list_note_files_with_stats_at(&dir).unwrap().files.is_empty());
+        for index in 0..1000 {
+            fs::write(dir.join(format!("note-{index}.txt")), "sample").unwrap();
+        }
+        fs::write(dir.join("canción.md"), "sample").unwrap();
+        fs::write(dir.join(".gdrive_manifest.json"), "private").unwrap();
+        fs::write(dir.join("image.png"), "private").unwrap();
+        fs::create_dir(dir.join("folder.md")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("note-0.txt"), dir.join("linked.md")).unwrap();
+        let listed = list_note_files_with_stats_at(&dir).unwrap();
+        assert_eq!(listed.files.len(), 1001);
+        assert_eq!(listed.stats.len(), 1001);
+        assert!(listed.files.contains(&"canción.md".to_string()));
+        assert!(!listed.files.contains(&".gdrive_manifest.json".to_string()));
+        assert!(!listed.files.contains(&"linked.md".to_string()));
+        assert!(listed.stats["canción.md"].mtime > 0);
+        fs::rename(dir.join("note-0.txt"), dir.join("renamed.md")).unwrap();
+        fs::remove_file(dir.join("note-1.txt")).unwrap();
+        let updated = list_note_files_with_stats_at(&dir).unwrap();
+        assert_eq!(updated.files.len(), 1000);
+        assert!(updated.files.contains(&"renamed.md".to_string()));
+        assert!(!updated.files.contains(&"note-0.txt".to_string()));
+        assert!(!updated.files.contains(&"note-1.txt".to_string()));
+        fs::write(dir.join("new.md"), "sample").unwrap();
+        assert!(list_note_files_with_stats_at(&dir).unwrap().files.contains(&"new.md".to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn list_notes_reports_missing_directory() {
+        let dir = std::env::temp_dir().join(format!("lyra_missing_{}", rand::random::<u64>()));
+        assert!(list_note_files_with_stats_at(&dir).is_err());
+    }
+
+    #[test]
+    fn local_listing_does_not_depend_on_archive_or_drive_state() {
+        let dir = std::env::temp_dir().join(format!("lyra_local_listing_{}", rand::random::<u64>()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Local.md"), "fictional note").unwrap();
+        fs::write(dir.join(".lyra_archive_state.json"), "{invalid").unwrap();
+        assert!(gdrive::archive::projection(&dir, None).is_err());
+        let listed = list_note_files_with_stats_at(&dir).unwrap();
+        assert_eq!(listed.files, ["Local.md"]);
+        assert!(listed.stats.contains_key("Local.md"));
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn test_is_path_allowed_valid_subdir() {
@@ -187,6 +300,100 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn create_note(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+) -> Result<(), String> {
+    let doc_dir = app.path().document_dir().map_err(|e| format!("Cannot resolve Documents: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+    gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)?;
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    let account = gdrive::auth::verify_current_account(&app).ok();
+    gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
+        gdrive::provenance::create_local_note(
+            &lyra_dir, &file_name, content.as_bytes(),
+            account.as_ref().map(|a| a.account_key.as_str()),
+        )
+    })
+}
+
+#[tauri::command]
+async fn create_internal_welcome(app: tauri::AppHandle, content: String) -> Result<bool, String> {
+    use sha2::{Digest, Sha256};
+    const NAME: &str = "¡Bienvenid@ a Lyra!.txt";
+    const ORIGINAL_SHA256: &str = "abacc64832e3b1767687bc2bca1070b0413119090b229c70c7e8c162f6a76fa5";
+    let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+    if digest != ORIGINAL_SHA256 { return Err("Invalid welcome content".into()); }
+    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    gdrive::sync::ensure_safe_base_dir(&lyra_dir)?;
+    let target = gdrive::sync::resolve_safe_path(&lyra_dir, NAME)?;
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    gdrive::sync::get_file_lock_coordinator().with_file_lock(NAME, || {
+        if target.exists() { return Ok(false); }
+        gdrive::provenance::create_local_note(&lyra_dir, NAME, content.as_bytes(), None)?;
+        gdrive::provenance::mark_internal_welcome(&lyra_dir, NAME, content.as_bytes())?;
+        Ok(true)
+    })
+}
+
+#[tauri::command]
+async fn save_note_atomic(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+) -> Result<i64, String> {
+    let doc_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+    let target_path = gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)
+        .map_err(|e| format!("Ruta o nombre de archivo inválido: {e}"))?;
+
+    // Coordinación exclusiva por archivo para prevenir condiciones de carrera TOCTOU
+    // con descargas o reemplazos concurrentes del motor de Google Drive.
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    let mtime = gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
+        // If the file was replaced externally, its old permissions are retired
+        // before writing any new Lyra content into it.
+        gdrive::provenance::invalidate_changed_note(&lyra_dir, &file_name)?;
+        gdrive::sync::write_file_atomic(&target_path, content.as_bytes())
+            .map_err(|e| format!("Error en guardado atómico de '{file_name}': {e}"))?;
+
+        let mtime = std::fs::metadata(&target_path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+        if let Err(e) = gdrive::provenance::record_local_write(&lyra_dir, &file_name, None, false) {
+            eprintln!("[save_note_atomic] Note saved locally without updated cloud authorization: {e}");
+        }
+        Ok::<i64, String>(mtime)
+    })?;
+
+    Ok(mtime)
+}
+
+#[tauri::command]
+fn check_and_drain_recovered_notes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let doc_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+
+    // Escanear temporales huérfanos que hayan superado el TTL
+    gdrive::sync::clean_stale_tmp_save_files(&lyra_dir);
+
+    // Drenar las notas rescatadas que no se hayan notificado aún
+    let recovered = gdrive::sync::drain_recovered_notes();
+    Ok(recovered)
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -235,16 +442,39 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            eprintln!(
+                "[Lyra Backend] Iniciando v{} (compilado: {})",
+                gdrive::BACKEND_VERSION,
+                gdrive::BACKEND_BUILD_TIMESTAMP
+            );
+
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = app.default_window_icon() {
                     let _ = window.set_icon(icon.clone());
                 }
             }
+
+            gdrive::sync::set_app_handle_for_recovery(app.handle().clone());
+
+            let cleanup_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Ok(doc_dir) = cleanup_handle.path().document_dir() {
+                    let lyra_dir = doc_dir.join("lyra");
+                    gdrive::sync::clean_stale_tmp_save_files(&lyra_dir);
+                }
+            });
 
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -264,7 +494,32 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_folder, show_main_window])
+        .invoke_handler(tauri::generate_handler![
+            open_folder,
+            show_main_window,
+            save_note_atomic,
+            list_note_files_with_stats,
+            create_note,
+            create_internal_welcome,
+            check_and_drain_recovered_notes,
+            gdrive::get_backend_build_info,
+            gdrive::gdrive_login,
+            gdrive::gdrive_logout,
+            gdrive::gdrive_cancel_login,
+            gdrive::gdrive_get_status,
+            gdrive::gdrive_sync_now,
+            gdrive::gdrive_delete_file,
+            gdrive::gdrive_set_auto_sync,
+            gdrive::gdrive_get_pending_authorizations,
+            gdrive::gdrive_manage_local_notes,
+            gdrive::gdrive_is_internal_welcome,
+            gdrive::gdrive_authorize_pending,
+            gdrive::gdrive_decline_pending,
+            gdrive::gdrive_note_renamed,
+            gdrive::archive_initialize,
+            gdrive::archive_set,
+            gdrive::archive_get_projection,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

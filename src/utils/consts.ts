@@ -11,6 +11,7 @@ const PAGES: Pages = {
 };
 
 const THEMES: Themes = {
+  auto: "auto",
   clearNigth: "clear-nigth",
   darkNigth: "dark-nigth",
   Day: "sunny-day",
@@ -31,7 +32,7 @@ const TEXT_ALIGNS: AlignsText = {
   end: "text-right",
 };
 
-const WELCOME_ES: string = "Bienvenido a Lyra.txt";
+const WELCOME_ES: string = "¡Bienvenid@ a Lyra!.txt";
 
 const INTRO_ES: string = `Bienvenido a Lyra
 
@@ -96,6 +97,7 @@ interface Pages {
 }
 
 interface Themes {
+  auto: string;
   clearNigth: string;
   darkNigth: string;
   Day: string;

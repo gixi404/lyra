@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 scratch/
 *.AppImage
+
+# Environment variables
+.env
+.env.*
+.env.local

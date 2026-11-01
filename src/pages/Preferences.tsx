@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlignLeft as AlignIcon,
   ChevronDown,
   CaseSensitive as FontIcon,
+  Command,
   Folder as FolderIcon,
   Focus as FocusIcon,
   RefreshCw as RefreshCwIcon,
@@ -17,17 +18,21 @@ import MainContainer from "../components/MainContainer";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { MAIN_FOLDER, THEMES } from "../utils/consts";
-import { configStore } from "../store/configStore";
 import translations from "../utils/dictionary";
-import { notification, scrollToNovedades, themes } from "../utils/helpers";
+import { scrollToNovedades, themes } from "../utils/helpers";
 import {
   checkAndApplyUpdate,
   getIsCheckingUpdate,
   getPendingRestartVersion,
+  restartInstalledUpdate,
 } from "../utils/updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import type { Component } from "../utils/types";
 import packageJson from "../../package.json";
+import { useSyncStore } from "../store/syncStore";
+import { configStore } from "../store/configStore";
+import GoogleDriveIcon from "../components/GoogleDriveIcon";
+import Modal from "../components/Modal";
+import { createLogoutConfirmation } from "../utils/logoutConfirmation";
 
 const d = translations(),
   fontsOptions: Options[] = [
@@ -53,30 +58,27 @@ const d = translations(),
     { value: "end", label: d.Right },
   ] as const,
   themesOptions: Options[] = [
-    { value: "auto", label: "Sistema" },
-    { value: THEMES.clearNigth, label: "Noche" },
-    { value: THEMES.Day, label: "Día" },
+    { value: THEMES.auto, label: d.System ?? "Sistema" },
+    { value: THEMES.clearNigth, label: d.Night ?? "Noche" },
+    { value: THEMES.Day, label: d.Day ?? "Día" },
   ] as const,
   shortcutsList = [
-    { keys: "Esc", label: "Volver a la lista / Cerrar popup / Limpiar" },
-    { keys: "Ctrl + F", label: "Buscar y reemplazar en editor" },
-    { keys: "/  ó  Ctrl + F", label: "Buscar en lista de archivos" },
-    { keys: "Enter", label: "Abrir archivo único coincidente en búsqueda" },
+    { keys: "F11", label: "Pantalla completa" },
     { keys: "Ctrl + Z", label: "Deshacer cambio" },
     { keys: "Ctrl + Y", label: "Rehacer cambio" },
+    { keys: "Esc", label: "Volver a la lista / Cerrar popup / Limpiar" },
+    { keys: "Ctrl + F", label: "Buscar y reemplazar en editor" },
     { keys: "Ctrl + +", label: "Aumentar tamaño de letra" },
     { keys: "Ctrl + -", label: "Reducir tamaño de letra" },
-    { keys: "F11", label: "Pantalla completa" },
+    { keys: "/  ó  Ctrl + F", label: "Buscar en lista de archivos" },
+    { keys: "Enter", label: "Abrir archivo único coincidente en búsqueda" },
   ] as const,
   // NOTA: Al agregar funcionalidades en esta lista o en notas de versión, NO usar formato
   // markdown (**negrita**, cursiva, enlaces, etc.). Cada elemento se muestra como texto plano directo.
   defaultChangelog = [
-    "Actualizaciones automáticas transparentes al iniciar el programa.",
-    "Acceso directo y clicable a las novedades desde la notificación de actualización.",
-    "Nuevo botón de comprobación manual con estado en vivo en Preferencias.",
-    "Sincronización instantánea del ordenamiento de archivos en la lista.",
-    "Arranque de ventana optimizado sin destellos blancos con tema oscuro nativo.",
-    "Soporte y empaquetado multiplataforma oficial para Windows, macOS y Linux.",
+    "Sincronización de archivos con Google Drive.",
+    "Nuevo tema \"Sistema\".",
+    "Correción de bugs.",
   ] as const;
 
 function parseChangelog(raw: string | null): string[] | null {
@@ -99,13 +101,13 @@ function Preferences(): Component {
     { getItem, setItem } = useStorage(),
     toggleThemeTick = configStore(state => state.toggleThemeTick),
     paragraphFocus = myParagraphFocus(),
-    savedTheme = getItem("theme", "auto"),
+    savedTheme = getItem("theme", THEMES.auto),
     currentTheme =
       savedTheme === THEMES.Day || savedTheme === "Day"
         ? THEMES.Day
         : savedTheme === THEMES.clearNigth || savedTheme === "dark-nigth"
         ? THEMES.clearNigth
-        : "auto",
+        : THEMES.auto,
     [currentVersion, setCurrentVersion] = useState<string>(packageJson.version),
     [checkingUpdate, setCheckingUpdate] = useState<boolean>(() => getIsCheckingUpdate()),
     [releaseNotes, setReleaseNotes] = useState<readonly string[]>(() => {
@@ -115,7 +117,48 @@ function Preferences(): Component {
         if (parsed) return parsed;
       } catch {}
       return defaultChangelog;
-    });
+    }),
+    [hasCheckedUpdates, setHasCheckedUpdates] = useState<boolean>(false),
+    [hasSyncedInView, setHasSyncedInView] = useState<boolean>(false),
+    [logoutDialogOpen, setLogoutDialogOpen] = useState(false),
+    [isLoggingOut, setIsLoggingOut] = useState(false),
+    {
+      isConnected,
+      isSyncing,
+      userEmail,
+      lastSyncTimestamp,
+      lastError,
+      fetchStatus,
+      login,
+      logout,
+      syncNow,
+      hasManageableNotes,
+    } = useSyncStore();
+  const logoutConfirmationRef = useRef(createLogoutConfirmation(logout));
+
+  async function confirmLogout(): Promise<void> {
+    if (logoutConfirmationRef.current.isPending()) return;
+    setIsLoggingOut(true);
+    try {
+      if (await logoutConfirmationRef.current.confirm()) setLogoutDialogOpen(false);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }
+
+  useEffect(() => {
+    void fetchStatus();
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    return () => {
+      // Cancelar flujo OAuth activo al salir de Preferencias
+      const state = useSyncStore.getState();
+      if (!state.isConnected && state.isSyncing) {
+        void state.cancelLogin();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     void getVersion().then(setCurrentVersion).catch(() => {});
@@ -141,21 +184,12 @@ function Preferences(): Component {
   async function handleCheckUpdate(): Promise<void> {
     const pending = getPendingRestartVersion();
     if (pending) {
-      try {
-        await relaunch();
-      } catch (err) {
-        console.error("Error al reiniciar la aplicación automáticamente:", err);
-        notification(
-          "error",
-          "No se pudo reiniciar automáticamente. Por favor, cierra y vuelve a abrir Lyra.",
-          undefined,
-          8000
-        );
-      }
+      await restartInstalledUpdate();
       return;
     }
 
-    if (getIsCheckingUpdate()) return;
+    if (getIsCheckingUpdate() || hasCheckedUpdates) return;
+    setHasCheckedUpdates(true);
     setCheckingUpdate(true);
     try {
       await checkAndApplyUpdate(true);
@@ -199,13 +233,204 @@ function Preferences(): Component {
       <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
         <div className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20">
           <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
+            {/* Google Drive */}
+            <div
+              className={twMerge(
+                "w-full flex flex-col gap-y-3.5 p-4 rounded-xl border transition-colors",
+                isDay
+                  ? "bg-white/80 border-gray-200/90 shadow-xs"
+                  : "bg-[#18181b]/70 border-zinc-800 shadow-xs"
+              )}
+            >
+              <div className="flex justify-between items-center w-full gap-x-2">
+                <div className="flex items-center gap-x-2 sm:gap-x-3">
+                  <GoogleDriveIcon
+                    size={26}
+                    className="sm:w-[28px] sm:h-[28px] shrink-0"
+                  />
+                  <div>
+                    <div className="flex items-center gap-x-2">
+                      <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>Google Drive</p>
+                      {isConnected && (
+                        <span
+                          className={twMerge(
+                            "text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full",
+                            isDay
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-emerald-950/60 text-emerald-300 border border-emerald-800/50"
+                          )}
+                        >
+                          Conectado
+                        </span>
+                      )}
+                    </div>
+                    <p className={`text-xs leading-tight ${isDay ? "text-neutral-600" : "text-zinc-300"}`}>
+                      {isConnected ? (
+                        userEmail ?? "Carpeta 'lyra' sincronizada"
+                      ) : (
+                        <>
+                          Sincroniza tus archivos con
+                          <br />
+                          la nube
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {!isConnected ? (
+                  <button
+                    type="button"
+                    onClick={login}
+                    disabled={isSyncing}
+                    className={twMerge(
+                      "cursor-pointer w-[120px] sm:w-[140px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                      isDay
+                        ? "bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-700 shadow-sm"
+                        : "bg-indigo-600 text-white border-indigo-500 hover:bg-indigo-500 shadow-sm",
+                      isSyncing && "opacity-60 cursor-not-allowed"
+                    )}
+                  >
+                    <span>{isSyncing ? "Conectando..." : "Conectar"}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      console.log("[Preferences] Click en botón Sincronizar", {
+                        isConnected,
+                        isSyncing,
+                        hasSyncedInView,
+                        lastError,
+                      });
+                      if (isSyncing) {
+                        console.warn("[Preferences] Click ignorado: isSyncing ya está en curso");
+                        return;
+                      }
+                      await syncNow(false);
+                      if (!useSyncStore.getState().lastError) {
+                        setHasSyncedInView(true);
+                        setTimeout(() => setHasSyncedInView(false), 3000);
+                      }
+                    }}
+                    disabled={isSyncing}
+                    className={twMerge(
+                      "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                      isDay
+                        ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
+                        : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
+                      isSyncing && "opacity-60 cursor-not-allowed"
+                    )}
+                  >
+                    {isSyncing ? (
+                      <RefreshCwIcon size={14} className="animate-spin" />
+                    ) : hasSyncedInView ? null : (
+                      <RefreshCwIcon size={14} />
+                    )}
+                    <span>
+                      {isSyncing
+                        ? "Sincronizando..."
+                        : hasSyncedInView
+                        ? "Sincronizado"
+                        : "Sincronizar"}
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              {isConnected && hasManageableNotes && <button type="button" onClick={() => void useSyncStore.getState().manageLocalNotes()}
+                disabled={isSyncing}
+                className={`self-start text-xs underline underline-offset-2 disabled:opacity-50 ${isDay ? "text-indigo-700" : "text-sky-400"}`}>
+                Gestionar notas locales
+              </button>}
+
+              {lastError && (
+                <div
+                  className={twMerge(
+                    "w-full p-2.5 rounded-lg border text-xs flex flex-col gap-y-2 mt-1",
+                    isDay
+                      ? "bg-red-50/90 border-red-200 text-red-800"
+                      : "bg-red-950/30 border-red-800/50 text-red-200"
+                  )}
+                >
+                  <span className="font-medium leading-relaxed">{lastError}</span>
+                  <div className="flex items-center gap-x-2">
+                    {lastError.includes("revocada") ||
+                    lastError.includes("invalid_grant") ||
+                    lastError.includes("expirado") ||
+                    !isConnected ? (
+                      <button
+                        type="button"
+                        onClick={login}
+                        disabled={isSyncing}
+                        className={twMerge(
+                          "cursor-pointer px-2.5 py-1 rounded text-xs font-medium border transition-colors",
+                          isDay
+                            ? "bg-white text-red-700 border-red-300 hover:bg-red-50"
+                            : "bg-zinc-900 text-red-300 border-red-800 hover:bg-zinc-800"
+                        )}
+                      >
+                        Reconectar cuenta
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void syncNow(false)}
+                        disabled={isSyncing}
+                        className={twMerge(
+                          "cursor-pointer px-2.5 py-1 rounded text-xs font-medium border transition-colors",
+                          isDay
+                            ? "bg-white text-red-700 border-red-300 hover:bg-red-50"
+                            : "bg-zinc-900 text-red-300 border-red-800 hover:bg-zinc-800"
+                        )}
+                      >
+                        Reintentar sincronización
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {isConnected && (
+                <div
+                  className={twMerge(
+                    "flex flex-col gap-y-2.5 pt-3 border-t text-xs",
+                    isDay ? "border-gray-200" : "border-zinc-800"
+                  )}
+                >
+                  <div className="flex justify-between items-center text-xs">
+                    <span className={isDay ? "text-neutral-700 font-medium" : "text-zinc-300 font-medium"}>
+                      {lastSyncTimestamp
+                        ? `Última sincronización: ${new Date(
+                            lastSyncTimestamp
+                          ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                        : "Sin sincronizaciones previas"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => { logoutConfirmationRef.current.open(); setLogoutDialogOpen(true); }}
+                      className={twMerge(
+                        "cursor-pointer w-24 h-7 rounded text-xs font-medium border transition-colors flex items-center justify-center text-center",
+                        isDay
+                          ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                          : "bg-red-950/40 text-red-300 border-red-800/60 hover:bg-red-900/40"
+                      )}
+                      title="Desconectar cuenta"
+                    >
+                      Desconectar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Actualizaciones */}
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
                 <RefreshCwIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
                 <div>
-                  <p className="text-sm sm:text-md">Actualizaciones</p>
-                  <p className="text-xs opacity-60">
+                  <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>Actualizaciones</p>
+                  <p className={`text-xs ${isDay ? "text-neutral-600" : "text-zinc-300"}`}>
                     {pendingVersion
                       ? `Versión ${currentVersion} (v${pendingVersion} lista)`
                       : `Versión ${currentVersion}`}
@@ -215,21 +440,29 @@ function Preferences(): Component {
               <button
                 type="button"
                 onClick={handleCheckUpdate}
-                disabled={checkingUpdate}
+                disabled={checkingUpdate || (!pendingVersion && hasCheckedUpdates)}
                 className={twMerge(
                   "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
                   isDay
                     ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
                     : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
-                  checkingUpdate && "opacity-60 cursor-not-allowed"
+                  (checkingUpdate || (!pendingVersion && hasCheckedUpdates)) && "opacity-60 cursor-not-allowed"
                 )}
               >
-                <RefreshCwIcon size={14} className={checkingUpdate ? "animate-spin" : ""} />
+                {checkingUpdate ? (
+                  <RefreshCwIcon size={14} className="animate-spin" />
+                ) : pendingVersion ? (
+                  <RefreshCwIcon size={14} />
+                ) : hasCheckedUpdates ? null : (
+                  <RefreshCwIcon size={14} />
+                )}
                 <span>
                   {checkingUpdate
                     ? "Buscando..."
                     : pendingVersion
                     ? "Reiniciar"
+                    : hasCheckedUpdates
+                    ? "Comprobado"
                     : "Buscar"}
                 </span>
               </button>
@@ -239,7 +472,7 @@ function Preferences(): Component {
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
                 <FolderIcon size={24} className="sm:w-[28px] sm:h-[28px]" />
-                <p className="text-sm sm:text-md">Mis archivos</p>
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>Mis archivos</p>
               </div>
               <button
                 type="button"
@@ -251,7 +484,6 @@ function Preferences(): Component {
                     : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm"
                 )}
               >
-                <FolderIcon size={16} />
                 <span>Abrir</span>
               </button>
             </div>
@@ -260,7 +492,7 @@ function Preferences(): Component {
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
                 <FontIcon size={30} className="sm:w-[38px] sm:h-[38px]" />
-                <p className="text-sm sm:text-md">{d.Font}</p>
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>{d.Font}</p>
               </div>
               <div className="relative">
                 <select
@@ -291,14 +523,14 @@ function Preferences(): Component {
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
                 <AlignIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
-                <p className="text-sm sm:text-md">{d.Aligment}</p>
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>{d.Aligment}</p>
               </div>
               <div className="relative">
                 <select
                   value={myAlign()}
                   onChange={e => changeAlign(e.target.value)}
                   className={twMerge(
-                    "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 pr-8 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
+                    "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-8 text-center [text-align-last:center] rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
                     isDay
                       ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
                       : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
@@ -308,7 +540,7 @@ function Preferences(): Component {
                     <option
                       key={opt.value}
                       value={opt.value}
-                      className={isDay ? "bg-white text-gray-900" : "bg-[#222222] text-zinc-100"}
+                      className={isDay ? "bg-white text-gray-900 text-center" : "bg-[#222222] text-zinc-100 text-center"}
                     >
                       {opt.label}
                     </option>
@@ -322,7 +554,7 @@ function Preferences(): Component {
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
                 <FocusIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
-                <p className="text-sm sm:text-md">{d.ParagraphFocus ?? "Enfoque en párrafo"}</p>
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>{d.ParagraphFocus ?? "Enfoque en párrafo"}</p>
               </div>
               <div className="relative">
                 <button
@@ -388,11 +620,11 @@ function Preferences(): Component {
               >
                 <div className="flex items-center gap-x-2">
                   <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
-                  <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-800" : "text-zinc-100")}>
+                  <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-900" : "text-white")}>
                     Novedades de la versión {currentVersion}
                   </h3>
                 </div>
-                <ul className={twMerge("flex flex-col gap-y-1 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-600" : "text-neutral-300")}>
+                <ul className={twMerge("flex flex-col gap-y-1 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-700" : "text-zinc-200")}>
                   {releaseNotes.map((item, idx) => (
                     <li key={idx} className="leading-relaxed">
                       {item}
@@ -401,22 +633,28 @@ function Preferences(): Component {
                 </ul>
               </div>
 
-              {/* Atajos de teclado */}
+              {/* Comandos / Atajos de teclado */}
               <div
                 className={twMerge(
                   "w-full flex flex-col gap-y-2.5 pt-4 border-t",
                   isDay ? "border-neutral-300" : "border-zinc-800"
                 )}
               >
+                <div className="flex items-center gap-x-2 pb-1">
+                  <Command size={16} className={isDay ? "text-neutral-700" : "text-zinc-300"} />
+                  <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-900" : "text-white")}>
+                    Comandos
+                  </h3>
+                </div>
                 {shortcutsList.map(sc => (
                   <div key={sc.keys} className="flex items-center justify-between text-xs sm:text-sm">
-                    <span className={isDay ? "text-neutral-700" : "text-neutral-300"}>{sc.label}</span>
+                    <span className={isDay ? "text-neutral-800 font-medium" : "text-zinc-200 font-medium"}>{sc.label}</span>
                     <kbd
                       className={twMerge(
                         "px-2 py-1 rounded font-mono text-xs font-semibold shadow-xs border",
                         isDay
-                          ? "bg-white text-neutral-800 border-neutral-300"
-                          : "bg-zinc-800 text-zinc-200 border-zinc-700"
+                          ? "bg-white text-neutral-900 border-neutral-300"
+                          : "bg-zinc-800 text-white border-zinc-700"
                       )}
                     >
                       {sc.keys}
@@ -428,6 +666,16 @@ function Preferences(): Component {
           </div>
         </div>
       </div>
+      <Modal
+        isOpen={logoutDialogOpen}
+        onClose={() => { if (!isLoggingOut) { logoutConfirmationRef.current.cancel(); setLogoutDialogOpen(false); } }}
+        onConfirm={() => { void confirmLogout(); }}
+        title="¿Cerrar sesión de Google Drive?"
+        description={`Se desconectará Google Drive. Tus notas locales permanecerán disponibles. Los cambios pendientes podrán sincronizarse cuando vuelvas a conectar esta cuenta.${isSyncing ? " Hay una sincronización en curso que puede quedar interrumpida." : ""}${useSyncStore.getState().pendingAuthorization ? " Hay notas pendientes de autorización para sincronizar." : ""}`}
+        confirmText={isLoggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
+        cancelText="Cancelar"
+        variant="danger"
+      />
     </MainContainer>
   );
 }

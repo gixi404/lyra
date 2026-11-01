@@ -2,21 +2,21 @@ import { useCallback } from "react";
 import useStorage from "./useStorage";
 import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, PAGES } from "../utils/consts";
 import { fileStore, type FileItemStats } from "../store/fileStore";
+import { clearDetachedSaveFailure, moveDetachedSaveFailure } from "../utils/editorPersistence";
 import { join } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
 import {
   getCompatibleStorageKeys,
   navigation,
   normalizeStoredFileNames,
   resolveDisplayFileName,
 } from "../utils/helpers";
+import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome";
 import {
   DirEntry,
   exists,
-  open,
   readDir,
   readTextFile,
-  remove,
-  rename,
   stat,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
@@ -43,11 +43,6 @@ function useFile(): Files {
     return { pathFile };
   }, []);
 
-  const getRenamedFilePath = useCallback(async (oldName: string, newName: string): Promise<string> => {
-    const nextName: string = resolveDisplayName(newName, oldName);
-    return join(MAIN_FOLDER, nextName);
-  }, []);
-
   async function renameFile(oldName: string, newName: string): Promise<string> {
     if (!oldName || !newName) throw new Error("Both old and new names are required");
     const nextDisplayName: string = resolveDisplayName(newName, oldName);
@@ -57,15 +52,13 @@ function useFile(): Files {
         throw new Error(`File "${nextDisplayName}" already exists`);
       }
     }
-    const { pathFile: oldPath } = await getFilePath(oldName);
-    const newPath: string = await getRenamedFilePath(oldName, newName);
-    const baseDir = BASE_DIRECTORY.baseDir;
-    await rename(oldPath, newPath, { oldPathBaseDir: baseDir, newPathBaseDir: baseDir });
+    await invoke("gdrive_note_renamed", { oldName, newName: nextDisplayName });
 
     moveCompatibleValue(oldName, nextDisplayName, "", DRAFT_STORAGE_PREFIX);
     moveCompatibleValue(oldName, nextDisplayName, "-modified");
     moveCompatibleValue(oldName, nextDisplayName, "-scroll");
     syncPaperState(oldName, nextDisplayName);
+    moveDetachedSaveFailure(oldName, nextDisplayName);
 
     editedFile();
     return nextDisplayName;
@@ -73,33 +66,28 @@ function useFile(): Files {
 
   async function deleteFile(name: string): Promise<void> {
     if (!name) throw new Error("File name is required");
-    const { pathFile } = await getFilePath(name);
-    await remove(pathFile, BASE_DIRECTORY);
+    if (isWelcomeFileName(name)) {
+      handleWelcomeFileDeleted(name);
+    }
+    // Eliminación autoritativa e íntegra vía gdrive_delete_file (registra tombstone antes del borrado físico).
+    // No se utiliza fallback que omita el tombstone, garantizando que no haya desincronizaciones ni resurrecciones.
+    await invoke("gdrive_delete_file", { fileName: name });
     removeCompatibleKeys(name, "", DRAFT_STORAGE_PREFIX);
     removeCompatibleKeys(name, "-modified");
     removeCompatibleKeys(name, "-scroll");
     syncPaperState(name);
+    clearDetachedSaveFailure(name);
   }
 
   const createFile = useCallback(async (name: string, content: string = ""): Promise<string> => {
     if (!name) throw new Error("File name is required");
-    const { pathFile } = await getFilePath(name);
-
-    // Creación atómica mediante O_CREAT | O_EXCL (createNew: true)
-    // Evita condiciones de carrera TOCTOU entre comprobación y escritura
-    const handle = await open(pathFile, {
-      write: true,
-      createNew: true,
-      baseDir: BASE_DIRECTORY.baseDir,
-    });
-
-    try {
-      if (content) {
-        const encoder = new TextEncoder();
-        await handle.write(encoder.encode(content));
-      }
-    } finally {
-      await handle.close();
+    const isTauri = typeof window !== "undefined" &&
+      Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+    if (isTauri) {
+      await invoke("create_note", { fileName: name, content });
+    } else {
+      const { pathFile } = await getFilePath(name);
+      await writeTextFile(pathFile, content, { createNew: true, baseDir: BASE_DIRECTORY.baseDir });
     }
 
     return resolveDisplayName(name);
@@ -119,6 +107,11 @@ function useFile(): Files {
   }, []);
 
   const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats> }> => {
+    const isTauri = typeof window !== "undefined" &&
+      Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+    if (isTauri) {
+      return invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
+    }
     let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
     const validNames = dir
       .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
@@ -158,6 +151,19 @@ function useFile(): Files {
   }, [getFilePath]);
 
   const writeFile = useCallback(async (name: string, text: string): Promise<void> => {
+    const isTauri =
+      typeof window !== "undefined" &&
+      Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+
+    if (isTauri) {
+      // En entorno de producción de Tauri, se invoca save_note_atomic directamente sin capturar ni enmascarar errores.
+      // Si falla (I/O, disco lleno, ruta insegura o symlink), el error debe propagarse directamente a
+      // EditorSyncCoordinator para retener el borrador en localStorage y disparar onSaveError sin degradar a escrituras no atómicas.
+      await invoke("save_note_atomic", { fileName: name, content: text });
+      return;
+    }
+
+    // En entornos fuera de Tauri (ej. pruebas unitarias en Node/jsdom sin IPC nativo), usar writeTextFile
     const { pathFile } = await getFilePath(name);
     await writeTextFile(pathFile, text, BASE_DIRECTORY);
   }, [getFilePath]);
@@ -175,7 +181,7 @@ function useFile(): Files {
     const { pathFile } = await getFilePath(name);
     let content: string = await readTextFile(pathFile, BASE_DIRECTORY);
     if (
-      name.toLowerCase().includes("bienvenido a lyra") &&
+      isWelcomeFileName(name) &&
       (content.includes("<p>") || (content.includes("&oacute;") && content.includes("&ntilde;")))
     ) {
       content = INTRO_ES;

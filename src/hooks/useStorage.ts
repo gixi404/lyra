@@ -1,6 +1,7 @@
 import { configStore } from "../store/configStore";
 import {
   PERSISTENT_KEYS,
+  savePersistentPreferencesNow,
   scheduleSavePersistentPreferences,
 } from "../utils/persistentPreferences";
 
@@ -13,14 +14,22 @@ const storageInstance: Storage = {
     window.localStorage.setItem(key, value);
     configStore.getState().bumpPrefTick();
     if (PERSISTENT_KEYS.includes(key as any)) {
-      scheduleSavePersistentPreferences();
+      if (key === "paper" || key === "welcome_manually_restored") {
+        void savePersistentPreferencesNow();
+      } else {
+        scheduleSavePersistentPreferences();
+      }
     }
   },
   removeItem: (key: string): void => {
     window.localStorage.removeItem(key);
     configStore.getState().bumpPrefTick();
     if (PERSISTENT_KEYS.includes(key as any)) {
-      scheduleSavePersistentPreferences();
+      if (key === "paper" || key === "welcome_manually_restored") {
+        void savePersistentPreferencesNow();
+      } else {
+        scheduleSavePersistentPreferences();
+      }
     }
   },
 };

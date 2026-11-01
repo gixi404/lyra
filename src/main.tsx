@@ -1,10 +1,14 @@
 import { RouterProvider } from "react-router-dom";
 import { StrictMode, Suspense } from "react";
 import Toast from "./components/Toast";
+import PendingAuthorizationDialog from "./components/PendingAuthorizationDialog";
 import "./styles.css";
 import { type Container, createRoot } from "react-dom/client";
 import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater";
 import { initPersistentPreferences } from "./utils/persistentPreferences";
+import { initializeArchiveState } from "./utils/archiveState";
+import { initRecoveryNotifier } from "./utils/recoveryNotifier";
+import { useSyncStore } from "./store/syncStore";
 import { configStore } from "./store/configStore";
 import { router } from "./router";
 
@@ -15,6 +19,12 @@ if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
 }
 
 try {
+  const isThemeMigrated = window.localStorage.getItem("lyra_theme_migrated_v2") === "true";
+  if (!isThemeMigrated) {
+    window.localStorage.setItem("lyra_theme_migrated_v2", "true");
+    window.localStorage.setItem("theme", "auto");
+  }
+
   const savedTheme = window.localStorage.getItem("theme");
   const isLight =
     savedTheme === "sunny-day" ||
@@ -53,11 +63,12 @@ createRoot(root).render(
       <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </Suspense>
     <Toast />
+    <PendingAuthorizationDialog />
   </StrictMode>
 );
 
-// Cargar y sincronizar preferencias y archivados persistentes desde disco
-void initPersistentPreferences();
+// Inicializar notificador y drenado de recuperaciones de archivos temporales
+void initRecoveryNotifier();
 
 // Notificar si la app acaba de ser actualizada
 setTimeout(() => {
@@ -71,8 +82,48 @@ if (typeof navigator !== "undefined" && navigator.onLine) {
   }, 2500);
 }
 
+// Inicializar estado de Google Drive y sincronizar si está conectado
+void initPersistentPreferences().then(async () => {
+  await initializeArchiveState();
+  await useSyncStore.getState().fetchStatus();
+  const syncState = useSyncStore.getState();
+  if (
+    syncState.isConnected &&
+    typeof navigator !== "undefined" &&
+    navigator.onLine
+  ) {
+    setTimeout(() => {
+      void useSyncStore.getState().syncNow(true);
+    }, 1500);
+  }
+}).catch(error => console.error("Could not initialize archive state", error));
+
+let lastFocusSyncTimestamp = Date.now();
+const FOCUS_SYNC_THROTTLE_MS = 180_000; // 3 minutos de throttle
+
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
     void checkAndApplyUpdate(false);
+    const syncState = useSyncStore.getState();
+    if (syncState.isConnected) {
+      void syncState.syncNow(true, true);
+    }
+  });
+
+  window.addEventListener("focus", () => {
+    void initRecoveryNotifier();
+    const now = Date.now();
+    if (now - lastFocusSyncTimestamp < FOCUS_SYNC_THROTTLE_MS) {
+      return;
+    }
+    const syncState = useSyncStore.getState();
+    if (
+      syncState.isConnected &&
+      typeof navigator !== "undefined" &&
+      navigator.onLine
+    ) {
+      lastFocusSyncTimestamp = now;
+      void syncState.syncNow(true);
+    }
   });
 }

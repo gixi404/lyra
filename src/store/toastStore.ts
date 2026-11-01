@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+export type ToastType = "success" | "error" | "info" | "loading";
+
 export interface ToastAction {
   label: string;
   onClick: () => void;
@@ -7,7 +9,7 @@ export interface ToastAction {
 
 export interface ToastMessage {
   id: string;
-  type: "success" | "error" | "info";
+  type: ToastType;
   msg: string;
   action?: ToastAction;
 }
@@ -15,7 +17,7 @@ export interface ToastMessage {
 interface ToastStore {
   toasts: ToastMessage[];
   addToast: (
-    type: "success" | "error" | "info",
+    type: ToastType,
     msg: string,
     action?: ToastAction,
     durationMs?: number

@@ -1,13 +1,27 @@
 import MainContainer from "../components/MainContainer";
 import useFile from "../hooks/useFile";
 import { fileStore } from "../store/fileStore";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { INTRO_ES, PAGES } from "../utils/consts";
+import { isWelcomeFileName } from "../utils/welcome";
 import { getCompatibleStorageKeys, getDate, navigation, notification } from "../utils/helpers";
-import type { Component } from "../utils/types";
+import type { Component, File } from "../utils/types";
+import { useSyncStore, registerPreSyncHandler, type SyncResultPayload } from "../store/syncStore";
+import { listen } from "@tauri-apps/api/event";
+import {
+  EditorSyncCoordinator,
+  normalizeText,
+} from "../utils/editorSyncCoordinator";
+import { reconcileDraftState } from "../utils/draftRecovery";
+import { noteLabel } from "../utils/noteName";
+import {
+  clearDetachedSaveFailure,
+  getUpdateInstallInProgress,
+  markDetachedSaveFailure,
+  registerEditorSession,
+  subscribeUpdateInstall,
+} from "../utils/editorPersistence";
 
-const AUTOSAVE_DEBOUNCE_MS = 400;
-const DRAFT_DEBOUNCE_MS = 250;
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 const TinyEditor = lazy(() => import("../components/TinyEditor"));
 
@@ -16,9 +30,20 @@ interface DraftPayload {
   updatedAt: number;
 }
 
-function normalizeText(text: string): string {
-  return text.replace(/\r\n/g, "\n");
+let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+const CLOUD_SYNC_DEBOUNCE_MS = 15_000; // 15 segundos de inactividad de escritura para sincronizar con Google Drive
+
+function scheduleCloudSync(onSyncStart?: () => void): void {
+  const syncState = useSyncStore.getState();
+  if (!syncState.isConnected) return;
+  if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    cloudSyncTimer = null;
+    onSyncStart?.();
+    void useSyncStore.getState().syncNow(true);
+  }, CLOUD_SYNC_DEBOUNCE_MS);
 }
+
 
 function getDraftKey(fileName: string): string {
   return `${DRAFT_STORAGE_PREFIX}:${fileName}`;
@@ -43,7 +68,7 @@ function readDraft(fileName: string): DraftPayload | null {
       (parsed.content.includes("&oacute;") ||
         parsed.content.includes("espacio ideal") ||
         parsed.content.includes("&ntilde;") ||
-        fileName.toLowerCase().includes("bienvenido"))
+        isWelcomeFileName(fileName))
     ) {
       clearDraft(fileName);
       return null;
@@ -72,10 +97,18 @@ function clearDraft(fileName: string): void {
   });
 }
 
-function FileContent(): Component {
+function saveLastModified(fileName: string, previousContent: string, currentContent: string): void {
+  if (fileName && normalizeText(previousContent) !== normalizeText(currentContent)) {
+    const date: string = getDate();
+    const [modifiedKey] = getCompatibleStorageKeys(fileName, "-modified");
+    window.localStorage.setItem(modifiedKey, date);
+  }
+}
+
+function FileContentSession({ selectedFile }: { selectedFile: File }): Component {
+  const updateInstallInProgress = useSyncExternalStore(subscribeUpdateInstall, getUpdateInstallInProgress);
   const { goTo } = navigation(),
-    selectedFile = fileStore(state => state.selectedFile),
-    { saveFileContent, getFileMtime } = useFile(),
+    { saveFileContent, getFileMtime, readFile, fileExists, createFile } = useFile(),
     diskContent = selectedFile.content ?? "",
     initialDraft = readDraft(selectedFile.name),
     hasRealDraft = Boolean(
@@ -84,21 +117,136 @@ function FileContent(): Component {
     ),
     rawInitial = hasRealDraft && initialDraft ? initialDraft.content : diskContent,
     isWelcomeLegacy =
-      selectedFile.name.toLowerCase().includes("bienvenido") &&
+      isWelcomeFileName(selectedFile.name) &&
       rawInitial.includes("<p>"),
     initialStartingContent = isWelcomeLegacy ? INTRO_ES : rawInitial,
     [content, setContent] = useState<string>(initialStartingContent),
-    autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
-    draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null),
-    isDirtyRef = useRef<boolean>(hasRealDraft),
-    saveQueueRef = useRef<Promise<void>>(Promise.resolve()),
-    saveSeqRef = useRef<number>(0),
-    inFlightSeqRef = useRef<number>(0),
-    latestPersistedContentRef = useRef<string>(diskContent),
-    latestContentRef = useRef<string>(initialStartingContent),
-    latestFileNameRef = useRef<string>(selectedFile.name),
-    initialContentRef = useRef<string>(diskContent),
-    loadedFileNameRef = useRef<string>("");
+    loadedFileNameRef = useRef<string>(""),
+    mountedRef = useRef(false),
+    coordinatorRef = useRef<EditorSyncCoordinator | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  const scheduleDebouncedCloudSync = useCallback(() => {
+    scheduleCloudSync(() => {
+      coordinatorRef.current?.markSyncInFlight();
+    });
+  }, []);
+
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new EditorSyncCoordinator({
+      fileName: selectedFile.name,
+      initialContent: diskContent,
+      saveFileContent: async (name, newContent) => {
+        await saveFileContent(name, newContent);
+      },
+      readFileContent: readFile,
+      writeDraft,
+      clearDraft,
+      scheduleCloudSync: scheduleDebouncedCloudSync,
+      onSaveSuccess: (name, prev, current) => {
+        saveLastModified(name, prev, current);
+        clearDetachedSaveFailure(name);
+      },
+      onSaveError: (name, _content, _err) => {
+        notification("error", `No se pudo guardar ${noteLabel(name)}. Tus cambios se conservaron en un borrador local`);
+      },
+      onContentReloaded: (newContent) => {
+        if (mountedRef.current) setContent(newContent);
+      },
+      onConflictCreated: (conflictName) => {
+        fileStore.getState().editedFile();
+        notification(
+          "error",
+          `${noteLabel(selectedFile.name)} se actualizó desde Google Drive. Tus cambios se conservaron en ${noteLabel(conflictName)}`,
+          undefined,
+          8000
+        );
+      },
+      onRemoteDeleted: (fileName, wasDirty) => {
+        if (!wasDirty) {
+          notification("info", `${noteLabel(fileName)} fue eliminado en Google Drive.`);
+          goTo(PAGES.list);
+        } else {
+          notification(
+            "info",
+            `${noteLabel(fileName)} se eliminó de Google Drive, pero tus cambios se conservaron en Lyra`
+          );
+        }
+      },
+    });
+    if (hasRealDraft) {
+      coordinatorRef.current.handleUserContentChange(initialStartingContent);
+    }
+  }
+
+  useEffect(() => {
+    coordinatorRef.current?.updateOptions({
+      saveFileContent: async (name, newContent) => {
+        await saveFileContent(name, newContent);
+      },
+      readFileContent: readFile,
+      writeDraft,
+      clearDraft,
+      scheduleCloudSync: scheduleDebouncedCloudSync,
+      onSaveSuccess: (name, prev, current) => {
+        saveLastModified(name, prev, current);
+        clearDetachedSaveFailure(name);
+      },
+      onSaveError: (name, _content, _err) => {
+        notification("error", `No se pudo guardar ${noteLabel(name)}. Tus cambios se conservaron en un borrador local`);
+      },
+      onContentReloaded: (newContent) => {
+        if (mountedRef.current) setContent(newContent);
+      },
+      onConflictCreated: (conflictName) => {
+        fileStore.getState().editedFile();
+        notification(
+          "error",
+          `${noteLabel(selectedFile.name)} se actualizó desde Google Drive. Tus cambios se conservaron en ${noteLabel(conflictName)}`,
+          undefined,
+          8000
+        );
+      },
+      onRemoteDeleted: (fileName, wasDirty) => {
+        if (!wasDirty) {
+          notification("info", `${noteLabel(fileName)} fue eliminado en Google Drive.`);
+          goTo(PAGES.list);
+        } else {
+          notification(
+            "info",
+            `${noteLabel(fileName)} se eliminó de Google Drive, pero tus cambios se conservaron en Lyra`
+          );
+        }
+      },
+    });
+  }, [selectedFile.name, saveFileContent, readFile, goTo, scheduleDebouncedCloudSync]);
+
+  useEffect(() => {
+    const unregister = registerPreSyncHandler(async () => {
+      const coordinator = coordinatorRef.current;
+      if (!coordinator) return true;
+
+      // 1. Guardar los cambios pendientes en disco y esperar su conclusión antes de leer
+      if (coordinator.getIsDirty()) {
+        const saved = await coordinator.flushAutosave();
+        if (!saved) {
+          return false;
+        }
+      }
+
+      // 2. Capturar la revisión persistida en disco para la subida
+      coordinator.markSyncInFlight();
+      return true;
+    });
+
+    return () => {
+      unregister();
+    };
+  }, [selectedFile.name]);
 
   useEffect(() => {
     if (initialDraft && !hasRealDraft && selectedFile.name) {
@@ -112,123 +260,12 @@ function FileContent(): Component {
     }
   }, [selectedFile.name, goTo]);
 
-  function persistLatestToDisk(): Promise<void> {
-    const targetFileName: string = latestFileNameRef.current;
-    if (!targetFileName) return Promise.resolve();
-
-    // Si el usuario no ha modificado el documento, jamás guardar en disco
-    if (!isDirtyRef.current) {
-      return Promise.resolve();
-    }
-
-    const snapshotToPersist: string = latestContentRef.current ?? "";
-    if (normalizeText(snapshotToPersist) === normalizeText(latestPersistedContentRef.current)) {
-      isDirtyRef.current = false;
-      clearDraft(targetFileName);
-      return Promise.resolve();
-    }
-
-    const currentSeq = ++saveSeqRef.current;
-
-    // Encolamiento FIFO estricto mediante cadena de promesas
-    // Evita carreras entre escrituras concurrentes o ráfagas de pulsaciones
-    saveQueueRef.current = saveQueueRef.current.then(async () => {
-      if (currentSeq < inFlightSeqRef.current) return;
-      inFlightSeqRef.current = currentSeq;
-
-      try {
-        await saveFileContent(targetFileName, snapshotToPersist);
-        saveLastModified(targetFileName, initialContentRef.current, snapshotToPersist);
-        initialContentRef.current = snapshotToPersist;
-
-        if (latestFileNameRef.current === targetFileName) {
-          latestPersistedContentRef.current = snapshotToPersist;
-          if (latestContentRef.current === snapshotToPersist) {
-            isDirtyRef.current = false;
-            clearDraft(targetFileName);
-          }
-        }
-      } catch {
-        writeDraft(targetFileName, snapshotToPersist);
-        notification("error", "Error al guardar el archivo en disco. Se ha preservado en borrador local.");
-      }
-    });
-
-    return saveQueueRef.current;
-  }
-
-  function flushAutosave(): void {
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = null;
-    }
-
-    if (!isDirtyRef.current) return;
-
-    void persistLatestToDisk();
-  }
-
-  function scheduleDraftPersist(nextContent: string): void {
-    if (!isDirtyRef.current) return;
-
-    if (draftTimerRef.current) {
-      clearTimeout(draftTimerRef.current);
-    }
-
-    const targetFileName = latestFileNameRef.current;
-    if (!targetFileName) return;
-
-    draftTimerRef.current = setTimeout(() => {
-      if (isDirtyRef.current) {
-        writeDraft(targetFileName, nextContent);
-      }
-      draftTimerRef.current = null;
-    }, DRAFT_DEBOUNCE_MS);
-  }
-
-  function flushDraftPersist(): void {
-    if (draftTimerRef.current) {
-      clearTimeout(draftTimerRef.current);
-      draftTimerRef.current = null;
-    }
-
-    // Solo guardar borrador si el documento ha sido editado
-    if (!isDirtyRef.current) return;
-
-    const targetFileName = latestFileNameRef.current;
-    if (targetFileName) {
-      writeDraft(targetFileName, latestContentRef.current ?? "");
-    }
-  }
-
-  useEffect(() => {
-    latestContentRef.current = content;
-    latestFileNameRef.current = selectedFile.name;
-  }, [content, selectedFile.name]);
-
-  useEffect(() => {
-    if (!isDirtyRef.current) return;
-
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-    }
-
-    autosaveTimerRef.current = setTimeout(() => {
-      flushAutosave();
-    }, AUTOSAVE_DEBOUNCE_MS);
-
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-    };
-  }, [content]);
-
   useEffect(() => {
     const flushOnLifecycleChange = (): void => {
-      flushDraftPersist();
-      flushAutosave();
+      if (coordinatorRef.current) {
+        coordinatorRef.current.flushDraft();
+        void coordinatorRef.current.flushAutosave();
+      }
     };
 
     window.addEventListener("beforeunload", flushOnLifecycleChange);
@@ -241,9 +278,31 @@ function FileContent(): Component {
   }, []);
 
   useEffect(() => {
+    const coordinator = coordinatorRef.current;
+    if (!coordinator) return;
+    const release = registerEditorSession(coordinator);
     return () => {
-      flushDraftPersist();
-      flushAutosave();
+      const hadUnsyncedChanges =
+        Boolean(cloudSyncTimer) ||
+        Boolean(coordinatorRef.current?.getHasUnsyncedChanges());
+
+      if (cloudSyncTimer) {
+        clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = null;
+      }
+      if (coordinator) {
+        void coordinator.handleUnmount().then(savedSuccessfully => {
+          if (!savedSuccessfully) markDetachedSaveFailure(coordinator.getFileName());
+          const syncState = useSyncStore.getState();
+          if (syncState.isConnected && hadUnsyncedChanges && savedSuccessfully) {
+            coordinator.markSyncInFlight();
+            void syncState.syncNow(true);
+          }
+        }).catch(error => {
+          markDetachedSaveFailure(coordinator.getFileName());
+          console.error("Could not finish editor save during unmount", error);
+        }).finally(release);
+      }
     };
   }, [selectedFile.name]);
 
@@ -256,48 +315,61 @@ function FileContent(): Component {
     const currentDiskContent: string = selectedFile.content ?? "";
     const draft: DraftPayload | null = readDraft(selectedFile.name);
 
-    initialContentRef.current = currentDiskContent;
-    latestFileNameRef.current = selectedFile.name;
-
     const initContent = async () => {
-      let startingContent = currentDiskContent;
-      let shouldClearDraft = false;
-
       if (
-        selectedFile.name.toLowerCase().includes("bienvenido") &&
+        isWelcomeFileName(selectedFile.name) &&
         (currentDiskContent.includes("<p>") || currentDiskContent.includes("espacio ideal"))
       ) {
-        startingContent = INTRO_ES;
-        shouldClearDraft = true;
-      } else if (draft) {
-        if (normalizeText(currentDiskContent) === normalizeText(draft.content)) {
-          startingContent = currentDiskContent;
-          shouldClearDraft = true;
-        } else {
-          const diskMtime = await getFileMtime(selectedFile.name);
-          if (diskMtime !== null && diskMtime > draft.updatedAt + 1000) {
-            // El archivo en disco fue modificado externamente después de la última edición del borrador
-            startingContent = currentDiskContent;
-            shouldClearDraft = true;
-          } else {
-            // El borrador es más reciente y tiene contenido diferente
-            startingContent = draft.content;
-          }
+        if (isCancelled) return;
+        clearDraft(selectedFile.name);
+        if (!coordinatorRef.current?.getIsDirty()) {
+          setContent(INTRO_ES);
+          coordinatorRef.current?.setCleanContent(INTRO_ES, selectedFile.name);
         }
+        return;
       }
+
+      const diskMtime = await getFileMtime(selectedFile.name);
+      if (isCancelled) return;
+
+      const result = await reconcileDraftState({
+        fileName: selectedFile.name,
+        diskContent: currentDiskContent,
+        draft,
+        diskMtime,
+        saveFile: async (name, newContent) => {
+          await createFile(name, newContent);
+        },
+        readFile,
+        fileExists,
+        clearDraft,
+        onConflictCreated: (conflictName) => {
+          fileStore.getState().editedFile();
+          notification(
+            "info",
+            `Se recuperaron tus modificaciones pendientes en ${noteLabel(conflictName)} debido a cambios más recientes en el archivo`,
+            undefined,
+            9000
+          );
+        },
+        onConflictError: (err) => {
+          notification(
+            "error",
+            `No se pudo crear la copia de rescate del borrador (${String(err)}). Tus cambios permanecen en el almacenamiento local.`
+          );
+        },
+      });
 
       if (isCancelled) return;
 
-      if (shouldClearDraft) {
-        clearDraft(selectedFile.name);
-      }
-
       // Si el usuario ya comenzó a escribir en este archivo, no sobreescribir su contenido en vivo
-      if (!isDirtyRef.current) {
-        setContent(startingContent);
-        latestContentRef.current = startingContent;
-        latestPersistedContentRef.current = currentDiskContent;
-        isDirtyRef.current = normalizeText(startingContent) !== normalizeText(currentDiskContent);
+      if (!coordinatorRef.current?.getIsDirty()) {
+        setContent(result.contentToLoad);
+        if (result.action === "use_draft") {
+          coordinatorRef.current?.handleUserContentChange(result.contentToLoad);
+        } else {
+          coordinatorRef.current?.setCleanContent(result.contentToLoad, selectedFile.name);
+        }
       }
     };
 
@@ -305,24 +377,55 @@ function FileContent(): Component {
 
     return () => {
       isCancelled = true;
+      loadedFileNameRef.current = "";
     };
-  }, [selectedFile.name]);
+  }, [selectedFile.name, getFileMtime, saveFileContent, readFile, fileExists]);
 
+  // GD-007: Prevención de carreras entre autosave, desmontaje y sincronización remota
+  useEffect(() => {
+    let unlistenFinished: (() => void) | null = null;
+    let unlistenError: (() => void) | null = null;
+    let isMounted = true;
+
+    void listen<SyncResultPayload>("gdrive:sync_finished", async event => {
+      if (!isMounted || !coordinatorRef.current) return;
+      await coordinatorRef.current.handleSyncFinished(event.payload);
+    }).then(unlistenFn => {
+      if (isMounted) {
+        unlistenFinished = unlistenFn;
+      } else {
+        unlistenFn();
+      }
+    });
+
+    void listen<string>("gdrive:sync_error", () => {
+      if (!isMounted || !coordinatorRef.current) return;
+      coordinatorRef.current.handleSyncError();
+    }).then(unlistenFn => {
+      if (isMounted) {
+        unlistenError = unlistenFn;
+      } else {
+        unlistenFn();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (unlistenFinished) {
+        unlistenFinished();
+      }
+      if (unlistenError) {
+        unlistenError();
+      }
+    };
+  }, []);
 
   function handleContentChange(newContent: string): void {
-    isDirtyRef.current = true;
-    latestContentRef.current = newContent;
-    scheduleDraftPersist(newContent);
+    if (getUpdateInstallInProgress()) return;
+    coordinatorRef.current?.handleUserContentChange(newContent);
     setContent(newContent);
   }
 
-  function saveLastModified(fileName: string, previousContent: string, currentContent: string): void {
-    if (fileName && normalizeText(previousContent) !== normalizeText(currentContent)) {
-      const date: string = getDate();
-      const [modifiedKey] = getCompatibleStorageKeys(fileName, "-modified");
-      window.localStorage.setItem(modifiedKey, date);
-    }
-  }
 
   if (!selectedFile.name) {
     return (
@@ -339,10 +442,17 @@ function FileContent(): Component {
           key={selectedFile.name}
           content={content}
           onContentChange={handleContentChange}
+          readOnly={updateInstallInProgress}
           initialCaretPos={selectedFile.initialCaretPos}
         />
       </Suspense>
     </MainContainer>
   );
+}
+
+function FileContent(): Component {
+  const selectedFile = fileStore(state => state.selectedFile);
+  const generation = fileStore(state => state.selectionGeneration);
+  return <FileContentSession key={`${generation}:${selectedFile.name}`} selectedFile={selectedFile} />;
 }
 export default FileContent;

@@ -25,6 +25,7 @@ import {
   themes,
 } from "../utils/helpers";
 import { setListScroll } from "../utils/listScroll";
+import { noteLabel } from "../utils/noteName";
 import type { Component, File } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 
@@ -167,7 +168,7 @@ function Form(): Component {
             setSelectedFile({ name: fileName, content: fileContent });
             goTo(PAGES.file);
           } catch {
-            notification("error", "No se pudo abrir el archivo");
+            notification("error", `No se pudo abrir ${noteLabel(matches[0])}`);
           }
         })();
       }
@@ -191,7 +192,7 @@ function Form(): Component {
       setSelectedFile(nextFile);
       goTo(PAGES.file);
     } catch {
-      notification("error", "Error al crear el archivo");
+      notification("error", `No se pudo crear ${noteLabel(file.name)}`);
     }
   }
 
@@ -204,7 +205,7 @@ function Form(): Component {
     }
 
     if (isRepeated(sanitizedName)) {
-      notification("error", d.RepeatedItem);
+      notification("error", `${noteLabel(sanitizedName)} ya existe`);
       return;
     }
 
@@ -243,7 +244,7 @@ function Form(): Component {
             <SearchIcon
               size={17}
               className={`shrink-0 pointer-events-none mr-3 ${
-                isDay ? "text-neutral-400" : "text-zinc-500"
+                isDay ? "text-neutral-500" : "text-zinc-400"
               }`}
             />
             <input
@@ -251,8 +252,8 @@ function Form(): Component {
               type="text"
               className={twMerge(
                 isDay
-                  ? "bg-transparent text-neutral-900 placeholder:text-neutral-400 text-sm outline-none w-full"
-                  : "bg-transparent text-zinc-100 placeholder:text-zinc-500 text-sm outline-none w-full"
+                  ? "bg-transparent text-neutral-900 placeholder:text-neutral-500 text-sm outline-none w-full"
+                  : "bg-transparent text-zinc-100 placeholder:text-zinc-400 text-sm outline-none w-full"
               )}
               placeholder={d.Search + "... (/)"}
               title="Buscar (Ctrl+F o /)"

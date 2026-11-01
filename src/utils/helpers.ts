@@ -1,25 +1,20 @@
-import { type ToastAction, useToastStore } from "../store/toastStore";
+import { type ToastAction, type ToastType, useToastStore } from "../store/toastStore";
 import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
-import {
-  initPersistentPreferences,
-  scheduleSavePersistentPreferences,
-} from "./persistentPreferences";
-import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { join } from "@tauri-apps/api/path";
+import { scheduleSavePersistentPreferences } from "./persistentPreferences";
+import { exists, mkdir } from "@tauri-apps/plugin-fs";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
   BASE_DIRECTORY,
-  INTRO_ES,
   MAIN_FOLDER,
   PAGES,
   THEMES,
-  WELCOME_ES,
 } from "./consts";
+import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
+import { noteTitle, SUPPORTED_NOTE_EXTENSIONS } from "./noteName";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
-const SUPPORTED_FILE_EXTENSIONS = [".txt", ".md"] as const;
 
 function navigation(): Navigation {
   const navigate: NavigateFunction = useNavigate();
@@ -32,7 +27,7 @@ function navigation(): Navigation {
 }
 
 function notification(
-  type: "success" | "error" | "info",
+  type: ToastType,
   msg: string,
   action?: ToastAction,
   durationMs?: number
@@ -102,13 +97,11 @@ function sanitizeFileName(name: string): string {
 
 function hasSupportedFileExtension(fileName: string): boolean {
   const lower = fileName.toLowerCase();
-  return SUPPORTED_FILE_EXTENSIONS.some(extension => lower.endsWith(extension));
+  return SUPPORTED_NOTE_EXTENSIONS.some(extension => lower.endsWith(extension));
 }
 
 function getLegacyFileName(fileName: string): string {
-  const lower = fileName.toLowerCase();
-  const matchingExtension = SUPPORTED_FILE_EXTENSIONS.find(extension => lower.endsWith(extension));
-  return matchingExtension ? fileName.slice(0, -matchingExtension.length) : fileName;
+  return noteTitle(fileName);
 }
 
 function getEditableFileName(fileName: string): string {
@@ -163,58 +156,68 @@ function themes(): Themes {
   const { myTheme } = usePreferences(),
     theme = myTheme();
   let isDay: boolean = theme === THEMES.Day || theme === "Day";
-  if (theme === "auto" || theme === "nothing" || !theme) {
+  if (theme === THEMES.auto || theme === "auto" || theme === "nothing" || !theme) {
     isDay = !window.matchMedia("(prefers-color-scheme: dark)").matches;
   }
   const isNigth: boolean = !isDay;
   return { isDay, isNigth };
 }
 
-async function verifyMainFolder(): Promise<void> {
-  const welcome: string = WELCOME_ES,
-    intro: string = INTRO_ES;
+let verifyFolderPromise: Promise<void> | null = null;
 
+async function verifyMainFolder(): Promise<void> {
+  if (verifyFolderPromise) {
+    return verifyFolderPromise;
+  }
+  verifyFolderPromise = verifyMainFolderInternal().finally(() => {
+    verifyFolderPromise = null;
+  });
+  return verifyFolderPromise;
+}
+
+async function verifyMainFolderInternal(): Promise<void> {
   try {
     const mainFolderExists: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
-    const path: string = await join(MAIN_FOLDER, welcome);
 
     if (!mainFolderExists) {
-      await mkdir(MAIN_FOLDER, BASE_DIRECTORY);
-      await writeTextFile(path, intro, BASE_DIRECTORY);
-    }
-
-    // Inicializar y sincronizar preferencias y archivados persistentes con el disco
-    await initPersistentPreferences();
-
-    const isInit = window.localStorage.getItem("lyra_initialized") === "true";
-    if (!isInit) {
-      const welcomeExists: boolean = await exists(path, BASE_DIRECTORY);
-      if (!welcomeExists) {
-        await writeTextFile(path, intro, BASE_DIRECTORY);
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem("welcome_dismissed");
+        window.localStorage.removeItem("welcome_manually_restored");
+        window.localStorage.setItem("paper", JSON.stringify([]));
+        configStore.getState().bumpPrefTick();
       }
-      window.localStorage.setItem("lyra_initialized", "true");
-      scheduleSavePersistentPreferences();
-    } else {
-      const welcomeExists: boolean = await exists(path, BASE_DIRECTORY);
-      if (welcomeExists) {
-        try {
-          const currentContent = await readTextFile(path, BASE_DIRECTORY);
-          if (
-            currentContent.includes("<p>") ||
-            (currentContent.includes("&oacute;") && currentContent.includes("&ntilde;"))
-          ) {
-            await writeTextFile(path, intro, BASE_DIRECTORY);
-          }
-        } catch (readErr) {
-          console.warn("Could not inspect welcome file content:", readErr);
+      try {
+        await mkdir(MAIN_FOLDER, { ...BASE_DIRECTORY, recursive: true });
+      } catch (mkdirErr: unknown) {
+        const msg = String(mkdirErr);
+        if (
+          !msg.includes("os error 17") &&
+          !msg.includes("ya existe") &&
+          !msg.includes("AlreadyExists")
+        ) {
+          throw mkdirErr;
         }
       }
+    }
+
+    // Comprobación y creación/autoarchivado autoritativo del archivo de bienvenida
+    await ensureWelcomeFileState();
+
+    if (!window.localStorage.getItem("theme")) {
+      window.localStorage.setItem("theme", THEMES.auto);
+    }
+    if (!window.localStorage.getItem("lyra_initialized")) {
+      window.localStorage.setItem("lyra_initialized", "true");
+      scheduleSavePersistentPreferences();
     }
 
     // Purgar borradores obsoletos o residuales con formato HTML de bienvenida en localStorage
     const localKeys = Object.keys(window.localStorage);
     for (const key of localKeys) {
-      if (key.toLowerCase().includes("bienvenido") || key.startsWith("lyra-draft:")) {
+      if (
+        key.toLowerCase().includes("bienvenid") ||
+        key.startsWith("lyra-draft:")
+      ) {
         const val = window.localStorage.getItem(key) || "";
         if (
           val.includes("<p>") ||
@@ -264,7 +267,19 @@ const normalize = (text: string): string =>
 
 const len = (val: string | any[]): number => val.length;
 
+function getAnimationDuration(): number {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    return 0;
+  }
+  return 200;
+}
+
 export {
+  getAnimationDuration,
   getDate,
   getEditableFileName,
   len,
@@ -282,6 +297,7 @@ export {
   sanitizeFileName,
   themes,
   verifyMainFolder,
+  isWelcomeFileName,
 };
 
 interface Themes {

@@ -5,35 +5,48 @@ import { twMerge } from "tailwind-merge";
 import { downloadDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import useFile from "../hooks/useFile";
-import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
 import { notification, themes } from "../utils/helpers";
+import { isWelcomeFileName, setWelcomeManuallyRestored } from "../utils/welcome";
+import { setArchiveState } from "../utils/archiveState";
+import { useSyncStore } from "../store/syncStore";
 import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal";
 import ModalInfo from "./ModalInfo";
+import { runExclusiveDeletion } from "../utils/noteDeletion";
+import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
 
 function MenuPaperFile({ fileName }: Props): Component {
   const d = translations(),
     { isDay } = themes(),
-    { setItem } = useStorage(),
-    { myPaper } = usePreferences(),
+    { getItem } = useStorage(),
     { deleteFile, readFile } = useFile(),
-    { editedFile, removeFileFromList, files } = fileStore(
+    { editedFile, removeFileFromList } = fileStore(
       useShallow(state => ({
         editedFile: state.editedFile,
         removeFileFromList: state.removeFileFromList,
-        files: state.files,
       }))
     ),
     [menuOpen, setMenuOpen] = useState<boolean>(false),
     [openUpwards, setOpenUpwards] = useState<boolean>(false),
     [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
     [isRestoreOpen, setIsRestoreOpen] = useState<boolean>(false),
+    [isRestoring, setIsRestoring] = useState<boolean>(false),
+    restoringRef = useRef(false),
     [isDeleteOpen, setIsDeleteOpen] = useState<boolean>(false),
+    isDeleting = fileStore(state => state.deletingFiles.includes(fileName)),
+    isEmptyingArchived = fileStore(state => state.isEmptyingArchived),
+    deletionBusy = isDeleting || isEmptyingArchived,
+    mountedRef = useRef(false),
     menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const menuTransitions = useTransition(menuOpen, {
     from: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
@@ -55,7 +68,7 @@ function MenuPaperFile({ fileName }: Props): Component {
   async function handleExportPDF(): Promise<void> {
     try {
       const content = await readFile(fileName);
-      const title = fileName.replace(/\.(txt|md)$/i, "");
+      const title = noteTitle(fileName);
       const { jsPDF } = await import("jspdf");
 
       const doc = new jsPDF({
@@ -89,7 +102,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       }
 
       doc.save(`${title}.pdf`);
-      notification("success", "Archivo exportado a PDF correctamente");
+      notification("success", `${noteLabel(fileName)} se exportó a PDF`);
 
       try {
         const downloadsPath = await downloadDir();
@@ -101,7 +114,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       }
     } catch (err) {
       console.error("Error exporting PDF:", err);
-      notification("error", "Error al exportar archivo");
+      notification("error", `No se pudo exportar ${noteLabel(fileName)} a PDF`);
     }
   }
 
@@ -140,30 +153,67 @@ function MenuPaperFile({ fileName }: Props): Component {
     };
   }, [menuOpen]);
 
-  function handleRestoreConfirm(): void {
-    const updatedPaper: string[] = myPaper(files).filter(
-      (f: string) => f !== fileName
-    );
-    setItem("paper", JSON.stringify(updatedPaper));
-    notification("success", d.FileRecovered);
-    setIsRestoreOpen(false);
-    editedFile();
+  async function handleRestoreConfirm(): Promise<void> {
+    if (restoringRef.current) return;
+    restoringRef.current = true;
+    setIsRestoring(true);
+    const restoringName = fileName;
+    fileStore.getState().retainForExit(restoringName, "paper");
+    const isWelcome = isWelcomeFileName(restoringName);
+    let prevWelcomeRestored = "false";
+
+    try {
+      prevWelcomeRestored = getItem("welcome_manually_restored", "false");
+      if (isWelcome) setWelcomeManuallyRestored(true);
+      const projection = await setArchiveState(restoringName, false);
+      if (projection.archivedNames.includes(restoringName)) {
+        throw new Error("The note remains archived after a concurrent change");
+      }
+      if (mountedRef.current) setIsRestoreOpen(false);
+      notification("success", noteSuccessMessage(restoringName, "recovered"));
+      if (useSyncStore.getState().isConnected && navigator.onLine) {
+        void useSyncStore.getState().syncNow(true, true);
+      }
+
+      fileStore.getState().scheduleExitAnimation(restoringName, () => {
+        editedFile();
+      });
+    } catch (err) {
+      console.error("Error al persistir recuperación de nota:", err);
+      fileStore.getState().releaseRetainedExit(restoringName);
+      if (isWelcome) {
+        try { setWelcomeManuallyRestored(prevWelcomeRestored === "true"); }
+        catch (restoreError) { console.warn("Could not restore welcome preference:", restoreError); }
+      }
+      if (mountedRef.current) setIsRestoreOpen(false);
+      notification("error", `No se pudo recuperar ${noteLabel(restoringName)}`);
+    } finally {
+      restoringRef.current = false;
+      if (mountedRef.current) setIsRestoring(false);
+    }
   }
 
   async function handleDeleteConfirm(): Promise<void> {
-    setIsDeleteOpen(false);
-    try {
-      await deleteFile(fileName);
-      const updatedPaper: string[] = myPaper(files).filter(
-        (f: string) => f !== fileName
-      );
-      removeFileFromList(fileName);
-      setItem("paper", JSON.stringify(updatedPaper));
-      editedFile();
-      notification("success", d.DeletedFile);
-    } catch {
-      notification("error", "Error al eliminar el archivo");
-    }
+    if (fileStore.getState().isEmptyingArchived) return;
+    await runExclusiveDeletion(fileName, {
+      setBusy: busy => fileStore.getState().setDeletingFile(fileName, busy),
+      retain: name => fileStore.getState().retainForExit(name, "paper"),
+      release: name => fileStore.getState().releaseRetainedExit(name),
+      deleteNote: deleteFile,
+      confirmed: name => {
+        if (mountedRef.current) setIsDeleteOpen(false);
+        notification("success", noteSuccessMessage(name, "deleted"));
+        fileStore.getState().scheduleExitAnimation(name, () => {
+          removeFileFromList(name);
+          editedFile();
+        });
+      },
+      failed: error => {
+        console.error("Could not delete note:", error);
+        if (mountedRef.current) setIsDeleteOpen(false);
+        notification("error", `No se pudo eliminar ${noteLabel(fileName)}`);
+      },
+    });
   }
 
   return (
@@ -315,23 +365,27 @@ function MenuPaperFile({ fileName }: Props): Component {
 
       <Modal
         isOpen={isRestoreOpen}
-        onClose={() => setIsRestoreOpen(false)}
+        onClose={() => { if (!isRestoring) setIsRestoreOpen(false); }}
         onConfirm={handleRestoreConfirm}
         title={d.RestoreQuestion}
-        description={`"${fileName.replace(/\.(txt|md)$/i, "")}"`}
+        description={`"${noteTitle(fileName)}"`}
         confirmText={d.Recover}
         cancelText={d.Cancel}
+        busy={isRestoring}
+        busyText="Recuperando..."
       />
 
       <Modal
         isOpen={isDeleteOpen}
-        onClose={() => setIsDeleteOpen(false)}
+        onClose={() => { if (!deletionBusy) setIsDeleteOpen(false); }}
         onConfirm={handleDeleteConfirm}
         title={d.DeleteQuestion}
-        description={`"${fileName.replace(/\.(txt|md)$/i, "")}"`}
+        description={`"${noteTitle(fileName)}"`}
         confirmText={d.Delete}
         cancelText={d.Cancel}
         variant="danger"
+        busy={deletionBusy}
+        busyText={isEmptyingArchived ? "Vaciando..." : "Eliminando..."}
       />
     </div>
   );

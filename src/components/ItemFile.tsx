@@ -8,8 +8,9 @@ import { PAGES } from "../utils/consts";
 import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types";
 import { setListScroll } from "../utils/listScroll";
+import { noteLabel, noteTitle } from "../utils/noteName";
 
-function ItemFile({ fileName }: Props): Component {
+function ItemFile({ fileName, isExiting = false }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
@@ -17,10 +18,11 @@ function ItemFile({ fileName }: Props): Component {
     setSelectedFile = fileStore(state => state.setSelectedFile);
 
   function getListLabel(name: string): string {
-    return name.replace(/\.(txt|md)$/i, "");
+    return noteTitle(name);
   }
 
   async function openFile(): Promise<void> {
+    if (isExiting) return;
     try {
       const currentY =
         window.pageYOffset ||
@@ -36,15 +38,19 @@ function ItemFile({ fileName }: Props): Component {
       setSelectedFile(newSelectedFile);
       goTo(PAGES.file);
     } catch {
-      notification("error", "No se pudo abrir el archivo");
+      notification("error", `No se pudo abrir ${noteLabel(fileName)}`);
     }
   }
 
   return (
     <li
-      onClick={openFile}
+      onClick={isExiting ? undefined : openFile}
       className={twMerge(
-        "group relative flex items-center justify-between w-full py-3.5 px-1 border-b cursor-pointer transition-colors duration-150 select-none",
+        "group relative flex items-center justify-between w-full px-1 border-b cursor-pointer select-none",
+        "transition-all duration-200 ease-out motion-reduce:transition-none",
+        isExiting
+          ? "opacity-0 -translate-y-1.5 scale-[0.98] max-h-0 py-0 border-transparent overflow-hidden pointer-events-none"
+          : "opacity-100 transform-none max-h-16 py-3.5",
         isDay
           ? "border-neutral-200/80 hover:bg-neutral-100/50 text-neutral-800"
           : "border-zinc-800/60 hover:bg-zinc-900/40 text-zinc-200"
@@ -69,4 +75,5 @@ export default ItemFile;
 
 interface Props {
   fileName: string;
+  isExiting?: boolean;
 }

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { fileStore } from "./fileStore.ts";
 
 export interface ConfigState {
   paperIsOpen: boolean;
@@ -15,8 +16,10 @@ export interface ConfigState {
 
 export const configStore = create<ConfigState>(set => ({
   paperIsOpen: false,
-  setPaperIsOpen: (isOpen?: boolean) =>
-    set(state => ({ paperIsOpen: typeof isOpen === "boolean" ? isOpen : !state.paperIsOpen })),
+  setPaperIsOpen: (isOpen?: boolean) => {
+    fileStore.getState().flushPendingExits();
+    set(state => ({ paperIsOpen: typeof isOpen === "boolean" ? isOpen : !state.paperIsOpen }));
+  },
   spellCheck: false,
   setSpellCheck: (newState: boolean) => set(() => ({ spellCheck: newState })),
   showHeader: true,

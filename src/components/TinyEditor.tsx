@@ -15,6 +15,7 @@ interface TinyEditorProps {
   content: string;
   onContentChange: (content: string) => void;
   initialCaretPos?: number;
+  readOnly?: boolean;
 }
 
 function getParagraphRange(
@@ -66,6 +67,7 @@ function TinyEditor({
   content,
   onContentChange,
   initialCaretPos,
+  readOnly = false,
 }: TinyEditorProps): Component {
   const textareaRef = useRef<HTMLTextAreaElement>(null),
     displayRef = useRef<HTMLDivElement>(null),
@@ -1033,6 +1035,7 @@ function TinyEditor({
       <textarea
         ref={textareaRef}
         value={content}
+        readOnly={readOnly}
         onChange={handleChange}
         onInput={markTyping}
         onKeyDown={handleKeyDown}

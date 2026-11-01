@@ -106,12 +106,35 @@ const keyPath = path.join(os.homedir(), ".tauri", "lyra.key");
 const hasKey = fs.existsSync(keyPath);
 const privateKey = hasKey ? fs.readFileSync(keyPath, "utf8").trim() : "";
 
+// Cargar variables OAuth desde el entorno o archivo .env local para compilación de release
+let envClientId = process.env.GOOGLE_CLIENT_ID;
+let envClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+const envPath = path.join(rootDir, ".env");
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, "utf8");
+  for (const line of envContent.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const [key, ...rest] = trimmed.split("=");
+    const val = rest.join("=").trim().replace(/^["']|["']$/g, "");
+    if (key === "GOOGLE_CLIENT_ID" && !envClientId) envClientId = val;
+    if (key === "GOOGLE_CLIENT_SECRET" && !envClientSecret) envClientSecret = val;
+  }
+}
+
+if (!envClientId || !envClientSecret) {
+  warn("No se detectaron GOOGLE_CLIENT_ID o GOOGLE_CLIENT_SECRET en el entorno ni en .env.");
+  warn("Los binarios producidos no contendrán credenciales OAuth embebidas en tiempo de compilación.");
+}
+
 const buildEnv = {
   TAURI_SIGNING_PRIVATE_KEY: privateKey,
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "",
   NO_STRIP: "1",
   APPIMAGE_EXTRACT_AND_RUN: "1",
   RUST_MIN_STACK: "67108864",
+  ...(envClientId ? { GOOGLE_CLIENT_ID: envClientId } : {}),
+  ...(envClientSecret ? { GOOGLE_CLIENT_SECRET: envClientSecret } : {}),
 };
 
 // 6. Verificación / Compilación

@@ -10,6 +10,8 @@
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-write-text-file",
+    "fs:allow-open",
+    "fs:allow-write",
     "fs:allow-read-dir",
     "fs:allow-mkdir",
     "fs:allow-remove",
@@ -21,9 +23,7 @@
       "allow": [
         "$DOCUMENT/lyra",
         "$DOCUMENT/lyra/*",
-        "$DOCUMENT/lyra/**",
-        "$DOCUMENT/lyra/.*",
-        "$DOCUMENT/lyra/**/.*"
+        "$DOCUMENT/lyra/**"
       ]
     },
     "core:window:allow-set-maximizable",
