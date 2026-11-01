@@ -8,13 +8,14 @@ import {
   accountLabel,
   hasManageableLocalNotes,
   nextPendingRequest,
-  shouldRefreshPending,
   type PendingAuthorizationRequest,
 } from "../utils/pendingAuthorization";
 import { fileStore } from "./fileStore";
-import { acceptsSyncCompletion, isVisibleSyncReason, shouldAcceptSyncStart, shouldShowSyncStart, type SyncReason } from "../utils/syncEventPolicy";
+import { acceptsSyncCompletion, isVisibleSyncReason, sameSyncContext, shouldAcceptSyncStart, shouldShowSyncStart, type SyncEventContext, type SyncReason } from "../utils/syncEventPolicy";
 import { useToastStore } from "./toastStore";
 import { noteLabel } from "../utils/noteName";
+import { currentSyncRequest } from "../utils/workspacePaths";
+import { getWorkspaceState } from "../utils/workspaceClient";
 
 export interface SyncStatusPayload {
   is_connected: boolean;
@@ -128,6 +129,30 @@ export function registerPreSyncHandler(handler: PreSyncHandler): () => void {
   };
 }
 
+export function resetSyncForWorkspace(): void {
+  connectionGeneration += 1;
+  if (autoSyncThrottleTimer) clearTimeout(autoSyncThrottleTimer);
+  autoSyncThrottleTimer = null;
+  syncQueued = false;
+  queuedIsManual = false;
+  queuedReason = "background";
+  lastAutoSyncTimestamp = 0;
+  frontendSyncInvokeActive = false;
+  isManualSyncActive = false;
+  activeBackendSyncId = null;
+  activeBackendRequestId = null;
+  activeBackendSyncReason = "background";
+  activeLoginRequestId = null;
+  visibleSyncRequests.clear();
+  dismissedPendingRequestIds.clear();
+  notifiedArchiveConflicts = new Set();
+  dismissSyncToast();
+  useSyncStore.setState({ isSyncing: false, lastError: null, lastSyncTimestamp: null,
+    pendingAuthorization: null, pendingAuthorizationError: null,
+    isAuthorizingPending: false, managementNotes: null,
+    managementAccountLabel: null, hasManageableNotes: false });
+}
+
 function showSyncToast(): void {
   const currentToasts = useToastStore.getState().toasts;
   if (activeSyncToastId !== null && currentToasts.some(t => t.id === activeSyncToastId)) {
@@ -151,8 +176,8 @@ function initSyncListeners(): Promise<void> {
 }
 
 async function registerSyncListeners(): Promise<void> {
-  const registrations = [listen<{ sync_id: string; reason: SyncReason; request_id?: string | null }>("gdrive:sync_started", event => {
-    if (!logoutInProgress && shouldAcceptSyncStart(
+  const registrations = [listen<{ sync_id: string; reason: SyncReason; request_id?: string | null } & SyncEventContext>("gdrive:sync_started", event => {
+    if (sameSyncContext(event.payload, currentSyncRequest()) && !logoutInProgress && shouldAcceptSyncStart(
       useSyncStore.getState().isConnected, loginInProgress,
       event.payload.reason, event.payload.request_id, visibleSyncRequests,
     )) {
@@ -165,11 +190,13 @@ async function registerSyncListeners(): Promise<void> {
       else dismissSyncToast();
     }
   }),
-  listen("gdrive:download_start", () => {
+  listen<SyncEventContext>("gdrive:download_start", event => {
+    if (!sameSyncContext(event.payload, currentSyncRequest())) return;
     console.log("[SyncListener] Evento gdrive:download_start recibido");
   }),
 
-  listen<{ name: string }>("gdrive:file_downloaded", event => {
+  listen<{ name: string } & SyncEventContext>("gdrive:file_downloaded", event => {
+    if (!sameSyncContext(event.payload, currentSyncRequest())) return;
     const fileName = event.payload?.name;
     console.log("[SyncListener] Evento gdrive:file_downloaded recibido:", fileName);
     if (fileName) {
@@ -178,11 +205,14 @@ async function registerSyncListeners(): Promise<void> {
     }
   }),
 
-  listen("gdrive:download_finish", () => {
+  listen<SyncEventContext>("gdrive:download_finish", event => {
+    if (!sameSyncContext(event.payload, currentSyncRequest())) return;
     console.log("[SyncListener] Evento gdrive:download_finish recibido");
   }),
 
-  listen<SyncResultPayload>("gdrive:sync_finished", event => {
+  listen<SyncResultPayload & SyncEventContext>("gdrive:sync_finished", event => {
+    if (!sameSyncContext(event.payload, currentSyncRequest())) return;
+    const eventContext = event.payload;
     console.log("[SyncListener] Evento gdrive:sync_finished recibido:", event.payload);
     if (logoutInProgress || !acceptsSyncCompletion(activeBackendSyncId, event.payload.sync_id, useSyncStore.getState().isConnected, loginInProgress)) return;
     const completedReason = activeBackendSyncReason;
@@ -209,23 +239,22 @@ async function registerSyncListeners(): Promise<void> {
       syncQueued = false;
       queuedIsManual = false;
       queuedReason = "background";
-      setTimeout(() => void useSyncStore.getState().syncNow(!manual, true, reason), 0);
+      setTimeout(() => {
+        if (sameSyncContext(eventContext, currentSyncRequest())) void useSyncStore.getState().syncNow(!manual, true, reason);
+      }, 0);
     }
-    if (shouldRefreshPending(res)) {
-      void useSyncStore.getState().refreshPendingAuthorization();
-    } else {
-      useSyncStore.setState({ pendingAuthorization: null, pendingAuthorizationError: null });
-    }
+    useSyncStore.setState({ pendingAuthorization: null, pendingAuthorizationError: null });
     if (res && (res.downloaded.length > 0 || res.conflicts.length > 0)) {
       void autoArchiveWelcomeOnSync(res.downloaded).then(archived => {
-        if (archived && useSyncStore.getState().isConnected && navigator.onLine) {
+        if (sameSyncContext(eventContext, currentSyncRequest()) && archived && useSyncStore.getState().isConnected && navigator.onLine) {
           void useSyncStore.getState().syncNow(true);
         }
       }).finally(() => {
-        fileStore.getState().editedFile();
+        if (sameSyncContext(eventContext, currentSyncRequest())) fileStore.getState().editedFile();
       });
     }
     void refreshArchiveState().then(projection => {
+      if (!sameSyncContext(eventContext, currentSyncRequest())) return;
       const current = new Set(projection.conflictNames);
       const fresh = projection.conflictNames.filter(name => !notifiedArchiveConflicts.has(name));
       notifiedArchiveConflicts = current;
@@ -235,7 +264,8 @@ async function registerSyncListeners(): Promise<void> {
     }).catch(error => console.warn("Could not refresh archive state", error));
   }),
 
-  listen<{ sync_id: string; message: string }>("gdrive:sync_error", event => {
+  listen<{ sync_id: string; message: string } & SyncEventContext>("gdrive:sync_error", event => {
+    if (!sameSyncContext(event.payload, currentSyncRequest())) return;
     console.error("[SyncListener] Evento gdrive:sync_error recibido:", event.payload);
     if (logoutInProgress || !acceptsSyncCompletion(activeBackendSyncId, event.payload.sync_id, useSyncStore.getState().isConnected, loginInProgress)) return;
     activeBackendSyncId = null;
@@ -281,14 +311,16 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
   fetchStatus: async () => {
     const generation = connectionGeneration;
+    const request = currentSyncRequest();
+    if (!request) return;
     try {
       await initSyncListeners();
     } catch (error) {
       console.warn("Google Drive listeners will be retried before sync", error);
     }
     try {
-      const status = await invoke<SyncStatusPayload>("gdrive_get_status");
-      if (generation !== connectionGeneration) return;
+      const status = await invoke<SyncStatusPayload>("gdrive_get_status", { request });
+      if (generation !== connectionGeneration || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return;
       console.log("[SyncStore] gdrive_get_status:", status);
       set({
         isConnected: status.is_connected,
@@ -305,14 +337,9 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
           ? {}
           : { pendingAuthorization: null, pendingAuthorizationError: null }),
       });
-      if (status.is_connected) {
-        void get().refreshPendingAuthorization();
-        void get().checkManageableNotes();
-      } else {
-        set({ hasManageableNotes: false });
-      }
+      set({ hasManageableNotes: false, pendingAuthorization: null, pendingAuthorizationError: null });
     } catch (err: any) {
-      if (generation !== connectionGeneration) return;
+      if (generation !== connectionGeneration || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return;
       console.warn("No se pudo obtener el estado de sincronización de Google Drive:", err);
       set({
         isInitialized: true,
@@ -327,6 +354,9 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   login: async () => {
+    const request = currentSyncRequest();
+    if (!request) return;
+    const stillCurrent = () => sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest());
     const loginRequestId = `login-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     activeLoginRequestId = loginRequestId;
     visibleSyncRequests.add(loginRequestId);
@@ -336,6 +366,10 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       await initSyncListeners();
       notification("info", "Preparando conexión segura con Google Drive...");
       const user = await invoke<UserProfilePayload>("gdrive_login", { clientRequestId: loginRequestId });
+      if (currentSyncRequest()?.workspaceId !== request.workspaceId) return;
+      const snapshot = await getWorkspaceState();
+      if (snapshot.workspace?.id !== request.workspaceId) return;
+      window.dispatchEvent(new Event("lyra:workspace_binding_changed"));
       connectionGeneration += 1;
       dismissedPendingRequestIds.clear();
       set({
@@ -353,6 +387,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       await get().fetchStatus();
       await refreshArchiveState();
     } catch (err: any) {
+      if (!stillCurrent()) return;
       visibleSyncRequests.delete(loginRequestId);
       if (activeLoginRequestId === loginRequestId) activeLoginRequestId = null;
       set({ isSyncing: false });
@@ -448,6 +483,9 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
   syncNow: async (silent = false, force = false, reason = "background") => {
     const state = get();
+    const request = currentSyncRequest();
+    if (!request) return;
+    const stillCurrent = () => sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest());
     const reqId = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const isManual = !silent;
     console.log(`[SyncStore ${reqId}] syncNow(silent=${silent}, force=${force}) invocado. isConnected=${state.isConnected}, isSyncing=${state.isSyncing}`);
@@ -482,7 +520,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       if (!autoSyncThrottleTimer) {
         autoSyncThrottleTimer = setTimeout(() => {
           autoSyncThrottleTimer = null;
-          void get().syncNow(true);
+          if (stillCurrent()) void get().syncNow(true);
         }, remainingMs);
       }
       return;
@@ -496,9 +534,10 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     try {
       await initSyncListeners();
     } catch (error) {
-      set({ lastError: String(error) });
+      if (stillCurrent()) set({ lastError: String(error) });
       return;
     }
+    if (!stillCurrent()) return;
     isManualSyncActive = isManual;
     set({ isSyncing: true, lastError: null });
 
@@ -510,6 +549,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     if (currentPreSync) {
       try {
         const canProceed = await currentPreSync();
+        if (!stillCurrent()) return;
         if (!canProceed) {
           console.warn(`[SyncStore ${reqId}] El guardado previo a la sincronización falló. Cancelando ejecución.`);
           set({ isSyncing: false });
@@ -521,6 +561,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
           return;
         }
       } catch (err) {
+        if (!stillCurrent()) return;
         console.error(`[SyncStore ${reqId}] Error en barrera preSyncHandler:`, err);
         set({ isSyncing: false });
         if (isManual) {
@@ -532,13 +573,15 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     }
 
     const startTime = Date.now();
+    if (!stillCurrent()) return;
     frontendSyncInvokeActive = true;
     let backendQueued = false;
     const visibleRequestId = reason === "authorization" ? reqId : null;
     if (visibleRequestId) visibleSyncRequests.add(visibleRequestId);
     try {
       console.log(`[SyncStore ${reqId}] Invocando 'gdrive_sync_now'...`);
-      const res = await invoke<SyncResultPayload>("gdrive_sync_now", { reason, requestId: visibleRequestId });
+      const res = await invoke<SyncResultPayload>("gdrive_sync_now", { request, reason, requestId: visibleRequestId });
+      if (!stillCurrent()) return;
       if (res.sync_id === "queued") {
         backendQueued = true;
         return;
@@ -553,11 +596,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         lastError: hasErrors ? res.errors[0] : null,
       });
 
-      if (shouldRefreshPending(res)) {
-        void get().refreshPendingAuthorization();
-      } else {
-        set({ pendingAuthorization: null, pendingAuthorizationError: null });
-      }
+      set({ pendingAuthorization: null, pendingAuthorizationError: null });
 
       const totalChanges = res.uploaded.length + res.downloaded.length + res.deleted_remote.length;
       if (hasErrors) {
@@ -591,6 +630,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         fileStore.getState().editedFile();
       }
     } catch (err: any) {
+      if (!stillCurrent()) return;
       if (visibleRequestId) visibleSyncRequests.delete(visibleRequestId);
       const durationMs = Date.now() - startTime;
       const errMsg = err?.message || String(err);
@@ -600,6 +640,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         notification("error", "No se pudo completar la sincronización");
       }
     } finally {
+      if (!stillCurrent()) return;
       frontendSyncInvokeActive = false;
       if (backendQueued) return;
       const willRunQueued = syncQueued;
@@ -621,7 +662,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
           isManualSyncActive = true;
         }
         setTimeout(() => {
-          void get().syncNow(!runManual, true, runReason);
+          if (stillCurrent()) void get().syncNow(!runManual, true, runReason);
         }, 300);
       }
     }
@@ -633,9 +674,11 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       return false;
     }
     const generation = connectionGeneration;
+    const request = currentSyncRequest();
+    if (!request) return false;
     try {
-      const view = await invoke<LocalNoteManagement>("gdrive_manage_local_notes", { reopenDeclined: false });
-      if (generation !== connectionGeneration || !get().isConnected) return false;
+      const view = await invoke<LocalNoteManagement>("gdrive_manage_local_notes", { reopenDeclined: false, request });
+      if (generation !== connectionGeneration || !get().isConnected || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return false;
       const has = hasManageableLocalNotes(view);
       set({ hasManageableNotes: has });
       return has;
@@ -651,11 +694,13 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       return;
     }
     const generation = connectionGeneration;
+    const context = currentSyncRequest();
+    if (!context) return;
     try {
       const request = await invoke<PendingAuthorizationRequest | null>(
-        "gdrive_get_pending_authorizations"
+        "gdrive_get_pending_authorizations", { request: context }
       );
-      if (generation !== connectionGeneration || !get().isConnected) return;
+      if (generation !== connectionGeneration || !get().isConnected || !sameSyncContext({ workspace_id: context.workspaceId, epoch: context.epoch }, currentSyncRequest())) return;
       set({
         pendingAuthorization: nextPendingRequest(request, dismissedPendingRequestIds),
       });
@@ -672,19 +717,23 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     if (!pendingAuthorization || isAuthorizingPending) return;
     const label = accountLabel(pendingAuthorization);
     const generation = connectionGeneration;
+    const request = currentSyncRequest();
+    if (!request) return;
     set({ isAuthorizingPending: true, pendingAuthorizationError: null });
     try {
       const authorized = await invoke<number>("gdrive_authorize_pending", {
         requestId: pendingAuthorization.requestId,
         selectedIds,
+        request,
       });
-      if (generation !== connectionGeneration) return;
+      if (generation !== connectionGeneration || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return;
       dismissedPendingRequestIds.delete(pendingAuthorization.requestId);
       set({ pendingAuthorization: null, isAuthorizingPending: false, managementNotes: null, managementAccountLabel: null });
       const noun = authorized === 1 ? "nota autorizada" : "notas autorizadas";
       notification("success", `${authorized} ${noun} para ${label}`, undefined, 6000);
       if (authorized > 0) void get().syncNow(true, true, "authorization");
     } catch (err: any) {
+      if (generation !== connectionGeneration || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return;
       const msg = err?.message || String(err);
       console.warn("[SyncStore] No se pudo autorizar las notas pendientes:", err);
       set({ isAuthorizingPending: false });
@@ -697,14 +746,17 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
   manageLocalNotes: async (reopenDeclined = true) => {
     const generation = connectionGeneration;
+    const request = currentSyncRequest();
+    if (!request) return;
     try {
-      const view = await invoke<LocalNoteManagement>("gdrive_manage_local_notes", { reopenDeclined });
-      if (generation !== connectionGeneration || !get().isConnected) return;
+      const view = await invoke<LocalNoteManagement>("gdrive_manage_local_notes", { reopenDeclined, request });
+      if (generation !== connectionGeneration || !get().isConnected || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return;
       dismissedPendingRequestIds.clear();
       set({ managementNotes: view.notes, managementAccountLabel: view.accountEmail || view.accountKey,
         pendingAuthorization: view.request, pendingAuthorizationError: null });
     } catch (err) {
-      notification("error", `No se pudieron consultar las notas locales: ${String(err)}`);
+      if (generation === connectionGeneration && sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest()))
+        notification("error", `No se pudieron consultar las notas locales: ${String(err)}`);
     }
   },
 
@@ -713,13 +765,15 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     if (isAuthorizingPending) return;
     if (pendingAuthorization) {
       const generation = connectionGeneration;
+      const request = currentSyncRequest();
+      if (!request) return;
       set({ isAuthorizingPending: true, pendingAuthorizationError: null });
       try {
-        await invoke("gdrive_decline_pending", { requestId: pendingAuthorization.requestId });
-        if (generation !== connectionGeneration) return;
+        await invoke("gdrive_decline_pending", { requestId: pendingAuthorization.requestId, request });
+        if (generation !== connectionGeneration || !sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) return;
         dismissedPendingRequestIds.add(pendingAuthorization.requestId);
       } catch (error) {
-        if (generation === connectionGeneration) {
+        if (generation === connectionGeneration && sameSyncContext({ workspace_id: request.workspaceId, epoch: request.epoch }, currentSyncRequest())) {
           set({ isAuthorizingPending: false, pendingAuthorizationError: String(error) });
         }
         return;

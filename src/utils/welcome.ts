@@ -1,4 +1,6 @@
-import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, WELCOME_ES } from "./consts.ts";
+import { BASE_DIRECTORY, INTRO_ES, WELCOME_ES } from "./consts.ts";
+import { currentLegacyWorkspaceId, currentNotesDir, currentSyncRequest, currentWorkspaceId, getNotesDir } from "./workspacePaths.ts";
+import { workspaceNoteKeys } from "./workspaceNoteKeys.ts";
 import {
   exists as tauriExists,
   mkdir as tauriMkdir,
@@ -15,7 +17,9 @@ export const WELCOME_FILE_NAME: string = WELCOME_ES;
 
 async function archiveWelcome(name: string, currentPaper: string[], storageOps: WelcomeStorageOps): Promise<void> {
   if (storageOps === defaultStorageOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    const origin = currentNotesDir();
     const { setArchiveState } = await import("./archiveState");
+    if (!origin || currentNotesDir() !== origin) return;
     await setArchiveState(name, true);
     return;
   }
@@ -76,15 +80,29 @@ const defaultFsOps: WelcomeFsOps = {
 const defaultStorageOps: WelcomeStorageOps = {
   getItem: (key: string) => {
     if (typeof window === "undefined" || !window.localStorage) return null;
-    return window.localStorage.getItem(key);
+    const keys = key.startsWith("welcome_")
+      ? workspaceNoteKeys([key], "", "", currentWorkspaceId(), currentLegacyWorkspaceId())
+      : [key];
+    for (const item of keys) {
+      const value = window.localStorage.getItem(item);
+      if (value !== null) return value;
+    }
+    return null;
   },
   setItem: (key: string, value: string) => {
     if (typeof window === "undefined" || !window.localStorage) return;
-    window.localStorage.setItem(key, value);
+    const keys = key.startsWith("welcome_")
+      ? workspaceNoteKeys([key], "", "", currentWorkspaceId(), currentLegacyWorkspaceId())
+      : [key];
+    window.localStorage.setItem(keys[0], value);
+    if (keys.length > 1) window.localStorage.setItem(keys[1], value);
   },
   removeItem: (key: string) => {
     if (typeof window === "undefined" || !window.localStorage) return;
-    window.localStorage.removeItem(key);
+    const keys = key.startsWith("welcome_")
+      ? workspaceNoteKeys([key], "", "", currentWorkspaceId(), currentLegacyWorkspaceId())
+      : [key];
+    keys.forEach(item => window.localStorage.removeItem(item));
   },
 };
 
@@ -108,7 +126,9 @@ export function isDefaultWelcomeContent(content: string): boolean {
 
 async function isInternalWelcome(name: string, content: string, fsOps: WelcomeFsOps): Promise<boolean> {
   if (fsOps === defaultFsOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
-    return invoke<boolean>("gdrive_is_internal_welcome", { fileName: name });
+    const request = currentSyncRequest();
+    if (!request) return false;
+    return invoke<boolean>("gdrive_is_internal_welcome", { fileName: name, request });
   }
   return isDefaultWelcomeContent(content);
 }
@@ -166,15 +186,25 @@ export async function ensureWelcomeFileState(
   storageOps: WelcomeStorageOps = defaultStorageOps
 ): Promise<WelcomeStateResult> {
   try {
-    const folderExists = await fsOps.exists(MAIN_FOLDER);
+    const notesDir = getNotesDir();
+    const workspaceId = currentWorkspaceId();
+    const isTauri = fsOps === defaultFsOps && typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+    const assertCurrent = () => {
+      if (isTauri && (currentNotesDir() !== notesDir || currentWorkspaceId() !== workspaceId)) {
+        throw new Error("Welcome operation belongs to another workspace");
+      }
+    };
+    const folderExists = await fsOps.exists(notesDir);
+    assertCurrent();
     if (!folderExists) {
+      if (isTauri) throw new Error("The active workspace directory is unavailable");
       storageOps.removeItem("welcome_dismissed");
       storageOps.removeItem("welcome_manually_restored");
       try {
         storageOps.setItem("paper", JSON.stringify([]));
       } catch {}
       try {
-        await fsOps.mkdir(MAIN_FOLDER, { recursive: true });
+        await fsOps.mkdir(notesDir, { recursive: true });
       } catch (mkdirErr: unknown) {
         const msg = String(mkdirErr);
         if (
@@ -187,7 +217,8 @@ export async function ensureWelcomeFileState(
       }
     }
 
-    const entries = await fsOps.readDir(MAIN_FOLDER);
+    const entries = await fsOps.readDir(notesDir);
+    assertCurrent();
     const validFiles = entries
       .filter(e => e.isFile && !e.name.startsWith("."))
       .map(e => e.name)
@@ -216,10 +247,12 @@ export async function ensureWelcomeFileState(
       // Si existe un archivo de bienvenida activo y no fue restaurado manualmente por el usuario
       if (existingWelcome && !isArchived && !isWelcomeManuallyRestored(storageOps)) {
         try {
-          const welcomePath = await resolveWelcomePath(MAIN_FOLDER, existingWelcome);
+          const welcomePath = await resolveWelcomePath(notesDir, existingWelcome);
           const content = await fsOps.readTextFile(welcomePath);
+          assertCurrent();
           // Autoarchivar sólo si el contenido es el predeterminado (no modificado por el usuario)
           if (await isInternalWelcome(existingWelcome, content, fsOps)) {
+            assertCurrent();
             await archiveWelcome(existingWelcome, localPaper, storageOps);
             try {
               fileStore.getState().editedFile();
@@ -244,10 +277,12 @@ export async function ensureWelcomeFileState(
       }
 
       // Crear el archivo de bienvenida
-      const welcomePath = await resolveWelcomePath(MAIN_FOLDER, WELCOME_FILE_NAME);
+      const welcomePath = await resolveWelcomePath(notesDir, WELCOME_FILE_NAME);
+      assertCurrent();
       const created = fsOps === defaultFsOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__
-        ? await invoke<boolean>("create_internal_welcome", { content: INTRO_ES })
+        ? await invoke<boolean>("create_internal_welcome", { content: INTRO_ES, expectedWorkspaceId: workspaceId })
         : await fsOps.writeTextFile(welcomePath, INTRO_ES, { createNew: true }).then(() => true);
+      assertCurrent();
 
       // Asegurarse de que el nuevo archivo de bienvenida no esté en archivados
       if (localPaper.some(name => isWelcomeFileName(name))) {
@@ -281,13 +316,16 @@ export async function autoArchiveWelcomeOnSync(
   fsOps: WelcomeFsOps = defaultFsOps,
   storageOps: WelcomeStorageOps = defaultStorageOps
 ): Promise<boolean> {
+  const origin = currentNotesDir();
+  if (!origin) return false;
   const hasRealNotes = (downloadedFiles || []).some(f => !isWelcomeFileName(f));
   if (!hasRealNotes) {
     return false;
   }
 
   try {
-    const entries = await fsOps.readDir(MAIN_FOLDER);
+    const entries = await fsOps.readDir(origin);
+    if (currentNotesDir() !== origin) return false;
     const validFiles = entries
       .filter(e => e.isFile && !e.name.startsWith("."))
       .map(e => e.name)
@@ -318,12 +356,16 @@ export async function autoArchiveWelcomeOnSync(
       return false;
     }
 
-    const welcomePath = await resolveWelcomePath(MAIN_FOLDER, existingWelcome);
+    const welcomePath = await resolveWelcomePath(origin, existingWelcome);
+    if (currentNotesDir() !== origin) return false;
     const content = await fsOps.readTextFile(welcomePath);
+    if (currentNotesDir() !== origin) return false;
 
     // Sólo autoarchivar si no fue modificado por el usuario
     if (await isInternalWelcome(existingWelcome, content, fsOps)) {
+      if (currentNotesDir() !== origin) return false;
       await archiveWelcome(existingWelcome, localPaper, storageOps);
+      if (currentNotesDir() !== origin) return false;
       try {
         fileStore.getState().editedFile();
       } catch {}

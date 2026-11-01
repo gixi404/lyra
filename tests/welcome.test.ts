@@ -11,7 +11,10 @@ import {
   type WelcomeFsOps,
   type WelcomeStorageOps,
 } from "../src/utils/welcome.ts";
-import { INTRO_ES, MAIN_FOLDER } from "../src/utils/consts.ts";
+import { INTRO_ES } from "../src/utils/consts.ts";
+import { setNotesDir } from "../src/utils/workspacePaths.ts";
+
+const MAIN_FOLDER = "lyra/workspaces/ws_001";
 
 test("FIX-001 edited welcome content is not treated as original", () => {
   assert.equal(isDefaultWelcomeContent(INTRO_ES), true);
@@ -20,6 +23,7 @@ test("FIX-001 edited welcome content is not treated as original", () => {
 });
 
 function createMockEnvironment(initialFiles: Record<string, string> = {}, initialStorage: Record<string, string> = {}) {
+  setNotesDir(MAIN_FOLDER);
   const fileMap = new Map<string, string>();
   for (const [k, v] of Object.entries(initialFiles)) {
     const fullKey = k.startsWith(`${MAIN_FOLDER}/`) ? k : `${MAIN_FOLDER}/${k}`;
@@ -255,6 +259,31 @@ test("11. Archivado automático: no genera tombstones incorrectos", async () => 
   // Verificar que el autoarchivado no involucró el canal de eliminación destructiva / tombstones
   assert.strictEqual(env.getTombstoneCount(), 0);
   assert.strictEqual(env.fileMap.has(`${MAIN_FOLDER}/${WELCOME_FILE_NAME}`), true);
+});
+
+test("F3: a delayed sync welcome check cannot archive after switching workspaces", async () => {
+  const env = createMockEnvironment({
+    [WELCOME_FILE_NAME]: INTRO_ES,
+    "Remote.md": "remote content",
+  });
+  const originalReadDir = env.fsOps.readDir;
+  let signalStarted: () => void = () => {};
+  let releaseRead: () => void = () => {};
+  const started = new Promise<void>(resolve => { signalStarted = resolve; });
+  const blocked = new Promise<void>(resolve => { releaseRead = resolve; });
+  env.fsOps.readDir = async path => {
+    signalStarted();
+    await blocked;
+    return originalReadDir(path);
+  };
+
+  const pending = autoArchiveWelcomeOnSync(["Remote.md"], env.fsOps, env.storageOps);
+  await started;
+  setNotesDir("lyra/workspaces/ws_002");
+  releaseRead();
+  assert.equal(await pending, false);
+  assert.equal(env.storageOps.getItem("paper"), null);
+  setNotesDir(MAIN_FOLDER);
 });
 
 test("12. Eliminación intencional del archivo: no provoca recreaciones infinitas", async () => {

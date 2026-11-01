@@ -30,6 +30,136 @@ pub struct DriveClient {
 }
 
 impl DriveClient {
+    /// The caller persists this generated ID before sending a create request.
+    pub async fn generate_file_id(&self, token: &str) -> Result<String, String> {
+        let url = format!("{}/drive/v3/files/generateIds?count=1&space=drive&type=files", self.base_url);
+        let response = self.execute_with_auth(token,
+            |bearer| self.client.get(&url).bearer_auth(bearer).send()).await?;
+        if !response.status().is_success() {
+            return Err(format!("Cannot generate Drive file ID (HTTP {})", response.status()));
+        }
+        let body: serde_json::Value = response.json().await
+            .map_err(|_| "Invalid generated Drive ID response")?;
+        let ids = body.get("ids").and_then(serde_json::Value::as_array)
+            .ok_or("Generated Drive ID response omitted ids")?;
+        let id = match ids.as_slice() {
+            [only] => only.as_str().ok_or("Generated Drive ID is not text")?,
+            _ => return Err("Drive did not generate exactly one ID".into()),
+        };
+        if !super::workspace_sync::safe_remote_id(id) {
+            return Err("Generated Drive ID is invalid".into());
+        }
+        Ok(id.to_string())
+    }
+
+    /// A 409 means the ID already exists; the caller must verify that object.
+    pub async fn create_workspace_folder_with_id(
+        &self, token: &str, workspace_id: &str, nonce: &str, id: &str,
+    ) -> Result<Option<String>, String> {
+        crate::workspaces::ids::validate_id(workspace_id)?;
+        if !super::workspace_sync::safe_remote_id(id) || nonce.len() != 32 ||
+            !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("Invalid workspace folder create identity".into());
+        }
+        let url = format!("{}/drive/v3/files?fields=id,mimeType,appProperties,parents,trashed", self.base_url);
+        let body = json!({
+            "id": id, "name": format!("Lyra {workspace_id}"),
+            "mimeType": "application/vnd.google-apps.folder",
+            "appProperties": {"lyra_workspace_nonce": nonce},
+        });
+        let response = self.execute_with_auth_idempotent(token, false,
+            |bearer| self.client.post(&url).bearer_auth(bearer).json(&body).send()).await?;
+        if response.status() == reqwest::StatusCode::CONFLICT { return Ok(None); }
+        if !response.status().is_success() {
+            return Err(format!("Cannot create workspace folder (HTTP {})", response.status()));
+        }
+        let created: serde_json::Value = response.json().await
+            .map_err(|_| "Invalid created workspace folder")?;
+        if created.get("id").and_then(serde_json::Value::as_str) != Some(id) ||
+            created.get("mimeType").and_then(serde_json::Value::as_str) !=
+                Some("application/vnd.google-apps.folder") ||
+            created.get("appProperties").and_then(|props| props.get("lyra_workspace_nonce"))
+                .and_then(serde_json::Value::as_str) != Some(nonce) {
+            return Err("Created workspace folder identity was not confirmed".into());
+        }
+        Ok(Some(id.to_string()))
+    }
+    /// Convenience for tests. Production must checkpoint between the search
+    /// and create calls because the workspace can change in that interval.
+    #[cfg(test)]
+    pub async fn get_or_create_workspace_folder(
+        &self, token: &str, workspace_id: &str, nonce: &str,
+    ) -> Result<String, String> {
+        if let Some(id) = self.find_workspace_folder(token, nonce).await? { return Ok(id); }
+        self.create_workspace_folder(token, workspace_id, nonce).await
+    }
+
+    /// Search only by a private nonce; no same-name legacy folder is adopted.
+    #[allow(dead_code)] // F4 remote engine calls this through SyncPermit.
+    pub async fn find_workspace_folder(&self, token: &str, nonce: &str) -> Result<Option<String>, String> {
+        if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("Invalid workspace folder identity".into());
+        }
+        let query = format!("appProperties has {{ key='lyra_workspace_nonce' and value='{nonce}' }} and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+        let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+        let list_url = format!("{}/drive/v3/files?q={encoded}&spaces=drive&fields=nextPageToken,files(id,mimeType,appProperties)&pageSize=1000", self.base_url);
+        let response = self.execute_with_auth(token, |bearer| self.client.get(&list_url).bearer_auth(bearer).send()).await?;
+        if !response.status().is_success() {
+            return Err(format!("Cannot find workspace folder (HTTP {})", response.status()));
+        }
+        let listing: serde_json::Value = response.json().await.map_err(|_| "Invalid workspace folder listing")?;
+        if listing.get("nextPageToken").and_then(|value| value.as_str()).is_some_and(|value| !value.is_empty()) {
+            return Err("Workspace folder search was incomplete".into());
+        }
+        let files = listing.get("files").and_then(|value| value.as_array())
+            .ok_or("Workspace folder search omitted files")?;
+        let mut matches = Vec::new();
+        for file in files {
+            if file.get("mimeType").and_then(|value| value.as_str()) != Some("application/vnd.google-apps.folder") ||
+                file.get("appProperties").and_then(|value| value.get("lyra_workspace_nonce"))
+                    .and_then(|value| value.as_str()) != Some(nonce) {
+                return Err("Workspace folder search returned a foreign folder".into());
+            }
+            let id = file.get("id").and_then(|value| value.as_str()).filter(|id| !id.is_empty())
+                .ok_or("Workspace folder search omitted an ID")?;
+            matches.push(id);
+        }
+        match matches.as_slice() {
+            [id] if !id.is_empty() => Ok(Some((*id).to_string())),
+            [] => Ok(None),
+            _ => Err("Multiple remote folders carry this workspace identity".into()),
+        }
+    }
+
+    #[allow(dead_code)] // F4 remote engine calls this through SyncPermit.
+    pub async fn create_workspace_folder(
+        &self, token: &str, workspace_id: &str, nonce: &str,
+    ) -> Result<String, String> {
+        crate::workspaces::ids::validate_id(workspace_id)?;
+        if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("Invalid workspace folder identity".into());
+        }
+        let create_url = format!("{}/drive/v3/files?fields=id,mimeType,appProperties", self.base_url);
+        let body = json!({
+            "name": format!("Lyra {workspace_id}"),
+            "mimeType": "application/vnd.google-apps.folder",
+            "appProperties": {"lyra_workspace_nonce": nonce},
+        });
+        let created = self.execute_with_auth_idempotent(token, false, |bearer| {
+            self.client.post(&create_url).bearer_auth(bearer).json(&body).send()
+        }).await?;
+        if !created.status().is_success() {
+            return Err(format!("Cannot create workspace folder (HTTP {})", created.status()));
+        }
+        let metadata: serde_json::Value = created.json().await.map_err(|_| "Invalid created workspace folder")?;
+        if metadata.get("mimeType").and_then(|value| value.as_str()) != Some("application/vnd.google-apps.folder") ||
+            metadata.get("appProperties").and_then(|value| value.get("lyra_workspace_nonce"))
+                .and_then(|value| value.as_str()) != Some(nonce) {
+            return Err("Created workspace folder identity was not confirmed".into());
+        }
+        metadata.get("id").and_then(|value| value.as_str()).filter(|id| !id.is_empty())
+            .map(str::to_string).ok_or("Created workspace folder has no ID".into())
+    }
     #[allow(dead_code)]
     pub fn new() -> Result<Self, String> {
         let client = reqwest::Client::builder()
@@ -115,7 +245,7 @@ impl DriveClient {
     /// Ejecuta una petición HTTP con autorización Bearer:
     /// - Si la respuesta es HTTP 401 y hay un `token_provider` configurado, renueva el token
     ///   y reintenta la petición exactamente una sola vez.
-    /// - Si la respuesta es HTTP 429 o error de servidor (500, 502, 503, 504), aplica reintento
+    /// - Reintenta 429 y errores de servidor solo para solicitudes idempotentes.
     ///   con retroceso exponencial y jitter (respetando la cabecera Retry-After si existe).
     async fn execute_with_auth<F, Fut>(&self, token_override: &str, make_req: F) -> Result<reqwest::Response, String>
     where
@@ -172,10 +302,10 @@ impl DriveClient {
                 || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
                 || status == reqwest::StatusCode::GATEWAY_TIMEOUT;
 
-            // Para solicitudes no idempotentes (POST), reintentar únicamente ante 429
-            // (rechazado por cuota antes de procesar). Evita crear duplicados si Google
-            // ejecutó la creación pero falló al confirmar (500/503).
-            let should_retry = is_rate_limit || (is_idempotent && is_server_error);
+            // A failed response does not prove that a POST was never applied.
+            // The durable creation intent, not an automatic retry, resolves
+            // its uncertain outcome.
+            let should_retry = is_idempotent && (is_rate_limit || is_server_error);
 
             if should_retry && attempt < max_transient_retries {
                 attempt += 1;
@@ -203,6 +333,7 @@ impl DriveClient {
         }
     }
 
+    #[cfg(test)]
     pub async fn get_or_create_lyra_folder(&self, token: &str) -> Result<String, String> {
         let query = "name = 'lyra' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
         let list_url = format!(
@@ -301,7 +432,7 @@ impl DriveClient {
 
         loop {
             let mut list_url = format!(
-                "{}/drive/v3/files?q={}&pageSize=1000&fields=nextPageToken,files(id,name,mimeType,modifiedTime,md5Checksum,trashed)",
+                "{}/drive/v3/files?q={}&pageSize=1000&fields=nextPageToken,files(id,name,mimeType,modifiedTime,md5Checksum,trashed,appProperties,parents)",
                 self.base_url, encoded_query
             );
             if let Some(ref pt) = page_token {
@@ -356,12 +487,73 @@ impl DriveClient {
         content: &[u8],
         mtime_rfc3339: &str,
     ) -> Result<DriveFileMetadata, String> {
-        let boundary = "-------LyraMultipartBoundary7MA4YWxkTrZu0gW";
-        let metadata = json!({
+        self.upload_file_with_properties(token, folder_id, file_name, content, mtime_rfc3339,
+            None, None, None).await?.ok_or("Unexpected conflict on non-idempotent upload".into())
+    }
+
+    pub async fn upload_workspace_file(
+        &self,
+        token: &str,
+        folder_id: &str,
+        file_name: &str,
+        content: &[u8],
+        mtime_rfc3339: &str,
+        folder_nonce: &str,
+        note_id: &str,
+    ) -> Result<DriveFileMetadata, String> {
+        if folder_nonce.len() != 32 || !folder_nonce.bytes().all(|c| c.is_ascii_hexdigit()) ||
+            note_id.is_empty() || note_id.len() > 120 || !note_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+            return Err("Invalid workspace note identity".into());
+        }
+        self.upload_file_with_properties(token, folder_id, file_name, content, mtime_rfc3339,
+            Some((folder_nonce, note_id)), None, None).await?
+            .ok_or("Unexpected conflict on non-idempotent workspace upload".into())
+    }
+
+    /// Returns `None` on 409. A caller must verify the existing ID before
+    /// committing its local manifest; a matching status code alone is not proof.
+    pub async fn upload_workspace_file_with_id(
+        &self, token: &str, folder_id: &str, file_name: &str, content: &[u8],
+        mtime_rfc3339: &str, folder_nonce: &str, note_id: &str,
+        remote_id: &str, previous_id: Option<&str>,
+    ) -> Result<Option<DriveFileMetadata>, String> {
+        if !super::workspace_sync::safe_remote_id(folder_id) ||
+            !super::workspace_sync::safe_remote_id(remote_id) ||
+            previous_id.is_some_and(|id| !super::workspace_sync::safe_remote_id(id)) ||
+            folder_nonce.len() != 32 || !folder_nonce.bytes().all(|c| c.is_ascii_hexdigit()) ||
+            note_id.is_empty() || note_id.len() > 120 ||
+            !note_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+            return Err("Invalid immutable workspace upload identity".into());
+        }
+        self.upload_file_with_properties(token, folder_id, file_name, content, mtime_rfc3339,
+            Some((folder_nonce, note_id)), Some(remote_id), previous_id).await
+    }
+
+    async fn upload_file_with_properties(
+        &self,
+        token: &str,
+        folder_id: &str,
+        file_name: &str,
+        content: &[u8],
+        mtime_rfc3339: &str,
+        properties: Option<(&str, &str)>,
+        remote_id: Option<&str>,
+        previous_id: Option<&str>,
+    ) -> Result<Option<DriveFileMetadata>, String> {
+        let boundary = format!("lyra-{:032x}", rand::random::<u128>());
+        let mut metadata = json!({
             "name": file_name,
             "parents": [folder_id],
             "modifiedTime": mtime_rfc3339,
         });
+        if let Some((nonce, note_id)) = properties {
+            metadata["appProperties"] = json!({
+                "lyra_workspace_nonce": nonce,
+                "lyra_note_id": note_id,
+            });
+        }
+        if let Some(id) = remote_id { metadata["id"] = json!(id); }
+        if let Some(id) = previous_id { metadata["appProperties"]["lyra_previous_id"] = json!(id); }
 
         let mime = if file_name.ends_with(".md") {
             "text/markdown; charset=utf-8"
@@ -377,7 +569,7 @@ impl DriveClient {
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
         let upload_url = format!(
-            "{}/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,md5Checksum,trashed",
+            "{}/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,md5Checksum,trashed,appProperties,parents",
             self.upload_url
         );
         let content_type = format!("multipart/related; boundary={boundary}");
@@ -393,6 +585,7 @@ impl DriveClient {
             })
             .await?;
 
+        if remote_id.is_some() && res.status() == reqwest::StatusCode::CONFLICT { return Ok(None); }
         if !res.status().is_success() {
             let status = res.status();
             let err = res.text().await.unwrap_or_default();
@@ -404,7 +597,7 @@ impl DriveClient {
             .await
             .map_err(|e| format!("Error decodificando metadatos de subida para '{file_name}': {e}"))?;
 
-        Ok(meta)
+        Ok(Some(meta))
     }
 
     pub async fn update_file(
@@ -415,7 +608,7 @@ impl DriveClient {
         content: &[u8],
         mtime_rfc3339: &str,
     ) -> Result<DriveFileMetadata, String> {
-        let boundary = "-------LyraMultipartBoundary7MA4YWxkTrZu0gW";
+        let boundary = format!("lyra-{:032x}", rand::random::<u128>());
         let metadata = json!({
             "name": file_name,
             "modifiedTime": mtime_rfc3339,
@@ -435,7 +628,7 @@ impl DriveClient {
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
         let update_url = format!(
-            "{}/files/{file_id}?uploadType=multipart&fields=id,name,mimeType,modifiedTime,md5Checksum,trashed",
+            "{}/files/{file_id}?uploadType=multipart&fields=id,name,mimeType,modifiedTime,md5Checksum,trashed,appProperties",
             self.upload_url
         );
         let content_type = format!("multipart/related; boundary={boundary}");
@@ -539,7 +732,7 @@ impl DriveClient {
             return Err("El identificador del archivo remoto en Drive está vacío".to_string());
         }
         let rename_url = format!(
-            "{}/drive/v3/files/{clean_id}?fields=id,name,mimeType,modifiedTime,md5Checksum,trashed",
+            "{}/drive/v3/files/{clean_id}?fields=id,name,mimeType,modifiedTime,md5Checksum,trashed,appProperties,parents",
             self.base_url
         );
         let body = json!({ "name": new_name });
@@ -575,7 +768,7 @@ impl DriveClient {
         }
 
         let url = format!(
-            "{}/drive/v3/files/{clean_id}?fields=id,name,mimeType,modifiedTime,md5Checksum,trashed",
+            "{}/drive/v3/files/{clean_id}?fields=id,name,mimeType,modifiedTime,md5Checksum,trashed,appProperties,parents",
             self.base_url
         );
 
@@ -612,6 +805,49 @@ impl DriveClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const NONCE: &str = "0123456789abcdef0123456789abcdef";
+
+    #[tokio::test]
+    async fn workspace_folder_search_ignores_legacy_names_and_creates_its_own_marker() {
+        let (base_url, handle) = spawn_mock_server(|server| {
+            let request = server.recv().unwrap();
+            assert_eq!(request.method(), &tiny_http::Method::Get);
+            let query = url::Url::parse(&format!("http://localhost{}", request.url())).unwrap();
+            let filter = query.query_pairs().find(|(key, _)| key == "q").unwrap().1;
+            assert!(filter.contains("appProperties has"));
+            assert!(filter.contains(NONCE));
+            request.respond(tiny_http::Response::from_string(r#"{"files":[]}"#)).unwrap();
+
+            let mut request = server.recv().unwrap();
+            assert_eq!(request.method(), &tiny_http::Method::Post);
+            let mut body = String::new();
+            request.as_reader().read_to_string(&mut body).unwrap();
+            let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(body["appProperties"]["lyra_workspace_nonce"], NONCE);
+            assert_eq!(body["name"], "Lyra ws_002");
+            request.respond(tiny_http::Response::from_string(format!(
+                r#"{{"id":"new-folder","mimeType":"application/vnd.google-apps.folder","appProperties":{{"lyra_workspace_nonce":"{NONCE}"}}}}"#
+            ))).unwrap();
+        });
+        let client = DriveClient::new_with_base_url(base_url).unwrap();
+        assert_eq!(client.get_or_create_workspace_folder("fake", "ws_002", NONCE).await.unwrap(), "new-folder");
+        handle.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn duplicate_workspace_folder_identity_fails_closed() {
+        let (base_url, handle) = spawn_mock_server(|server| {
+            let request = server.recv().unwrap();
+            request.respond(tiny_http::Response::from_string(format!(
+                r#"{{"files":[{{"id":"one","mimeType":"application/vnd.google-apps.folder","appProperties":{{"lyra_workspace_nonce":"{NONCE}"}}}},{{"id":"two","mimeType":"application/vnd.google-apps.folder","appProperties":{{"lyra_workspace_nonce":"{NONCE}"}}}}]}}"#
+            ))).unwrap();
+        });
+        let client = DriveClient::new_with_base_url(base_url).unwrap();
+        assert!(client.get_or_create_workspace_folder("fake", "ws_002", NONCE).await
+            .unwrap_err().contains("Multiple remote folders"));
+        handle.join().unwrap();
+    }
 
     fn spawn_mock_server<F>(handler: F) -> (String, std::thread::JoinHandle<()>)
     where
@@ -1170,6 +1406,23 @@ mod tests {
         assert_eq!(meta.md5_checksum.as_deref(), Some("abc123md5"));
 
         let _ = handle.join();
+    }
+
+    #[tokio::test]
+    async fn non_idempotent_upload_does_not_retry_an_uncertain_429() {
+        let (base_url, handle) = spawn_mock_server(|server| {
+            let request = server.recv().unwrap();
+            assert_eq!(request.method(), &tiny_http::Method::Post);
+            request.respond(tiny_http::Response::from_string("quota")
+                .with_status_code(429)).unwrap();
+            // Closing the server makes an accidental second POST observable as
+            // a network error, but the first 429 must be returned directly.
+        });
+        let client = DriveClient::new_with_base_url(base_url).unwrap();
+        let error = client.upload_file("fake", "folder", "Note.md", b"content",
+            "2026-10-28T12:00:00Z").await.unwrap_err();
+        assert!(error.contains("429"), "{error}");
+        handle.join().unwrap();
     }
 
     #[tokio::test]

@@ -46,7 +46,7 @@ function scheduleCloudSync(onSyncStart?: () => void): void {
 
 
 function getDraftKey(fileName: string): string {
-  return `${DRAFT_STORAGE_PREFIX}:${fileName}`;
+  return getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX)[0];
 }
 
 function readDraft(fileName: string): DraftPayload | null {

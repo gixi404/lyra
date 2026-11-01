@@ -50,6 +50,7 @@ export interface FileStoreState {
   setSelectedFile: (file: File) => void;
   fileIsEdited: boolean;
   editedFile: () => void;
+  resetForWorkspace: () => void;
 }
 
 export const fileStore = create<FileStoreState>(set => ({
@@ -198,4 +199,14 @@ export const fileStore = create<FileStoreState>(set => ({
   fileIsEdited: false,
   editedFile: () =>
     set(state => ({ fileIsEdited: !state.fileIsEdited })),
+  resetForWorkspace: () => {
+    for (const pending of pendingExits) clearTimeout(pending.timerId);
+    pendingExits = [];
+    set(state => ({
+      files: [], statsMap: {}, isInitialized: false, selectedFile: { name: "", content: "" },
+      selectionGeneration: state.selectionGeneration + 1, retainedExits: [],
+      renderedOrder: { active: [], paper: [] }, deletingFiles: [], isEmptyingArchived: false,
+      exitingFiles: [], fileIsEdited: !state.fileIsEdited,
+    }));
+  },
 }));

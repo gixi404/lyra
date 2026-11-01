@@ -3,14 +3,15 @@ import translations from "./dictionary";
 import usePreferences from "../hooks/usePreferences";
 import { configStore } from "../store/configStore";
 import { scheduleSavePersistentPreferences } from "./persistentPreferences";
-import { exists, mkdir } from "@tauri-apps/plugin-fs";
+import { exists } from "@tauri-apps/plugin-fs";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
   BASE_DIRECTORY,
-  MAIN_FOLDER,
   PAGES,
   THEMES,
 } from "./consts";
+import { currentLegacyWorkspaceId, currentNotesDir, currentWorkspaceId, getNotesDir } from "./workspacePaths";
+import { workspaceNoteKeys } from "./workspaceNoteKeys";
 import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
 import { noteTitle, SUPPORTED_NOTE_EXTENSIONS } from "./noteName";
 
@@ -124,10 +125,7 @@ function getCompatibleFileNames(fileName: string): string[] {
 }
 
 function getCompatibleStorageKeys(fileName: string, suffix: string = "", prefix: string = ""): string[] {
-  return getCompatibleFileNames(fileName).map(name => {
-    const scopedName = prefix ? `${prefix}:${name}` : name;
-    return `${scopedName}${suffix}`;
-  });
+  return workspaceNoteKeys(getCompatibleFileNames(fileName), suffix, prefix, currentWorkspaceId(), currentLegacyWorkspaceId());
 }
 
 function resolveStoredFileName(fileName: string, files: string[]): string | null {
@@ -177,27 +175,12 @@ async function verifyMainFolder(): Promise<void> {
 
 async function verifyMainFolderInternal(): Promise<void> {
   try {
-    const mainFolderExists: boolean = await exists(MAIN_FOLDER, BASE_DIRECTORY);
+    const directory = getNotesDir();
+    const mainFolderExists: boolean = await exists(directory, BASE_DIRECTORY);
+    if (currentNotesDir() !== directory) return;
 
     if (!mainFolderExists) {
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.removeItem("welcome_dismissed");
-        window.localStorage.removeItem("welcome_manually_restored");
-        window.localStorage.setItem("paper", JSON.stringify([]));
-        configStore.getState().bumpPrefTick();
-      }
-      try {
-        await mkdir(MAIN_FOLDER, { ...BASE_DIRECTORY, recursive: true });
-      } catch (mkdirErr: unknown) {
-        const msg = String(mkdirErr);
-        if (
-          !msg.includes("os error 17") &&
-          !msg.includes("ya existe") &&
-          !msg.includes("AlreadyExists")
-        ) {
-          throw mkdirErr;
-        }
-      }
+      throw new Error("The active workspace directory is unavailable");
     }
 
     // Comprobación y creación/autoarchivado autoritativo del archivo de bienvenida

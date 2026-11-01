@@ -1,5 +1,5 @@
 use super::types::{OAuthTokens, StoredAuthState, UserProfile};
-use super::credential_store::{CredentialStore, SystemCredentialStore};
+use super::credential_store::{CredentialStore, SystemCredentialStore, WorkspaceCredentialStore};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use rand::RngCore;
@@ -334,7 +334,39 @@ pub fn migrate_auth_state_at<S: CredentialStore>(
 }
 
 fn load_auth_state_unlocked(app: &tauri::AppHandle) -> Result<Option<StoredAuthState>, String> {
-    migrate_auth_state_at(&SystemCredentialStore, &get_token_file_path(app)?, &get_legacy_token_file_path(app)?)
+    // Preserve AUD-014's verified JSON migration without attaching the old
+    // global session to any workspace. The old secure entry is inert in F4.
+    migrate_legacy_global_state(app)?;
+    let Some((store, bound_sub)) = active_workspace_store(app)? else { return Ok(None); };
+    let Some(sub) = bound_sub else { return Ok(None); };
+    let state = read_secure_state(&store)?;
+    if state.as_ref().is_some_and(|state| state.user.sub.as_deref() != Some(sub.as_str())) {
+        return Err("La credencial no corresponde al espacio de trabajo vinculado".into());
+    }
+    Ok(state)
+}
+
+fn migrate_legacy_global_state(app: &tauri::AppHandle) -> Result<(), String> {
+    let config = get_token_file_path(app)?;
+    let documents = get_legacy_token_file_path(app)?;
+    let exists = |path: &Path| match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("No se pudo inspeccionar un JSON antiguo de credenciales".to_string()),
+    };
+    if !exists(&config)? && !exists(&documents)? { return Ok(()); }
+    migrate_auth_state_at(&SystemCredentialStore, &config, &documents)?;
+    Ok(())
+}
+
+fn active_workspace_store(app: &tauri::AppHandle) -> Result<Option<(WorkspaceCredentialStore, Option<String>)>, String> {
+    let runtime = crate::workspaces::Runtime::from_app(app)?;
+    let ctx = runtime.ctx();
+    let loaded = crate::workspaces::registry::load(&ctx.documents, &ctx.config)?;
+    let registry = loaded.registry().ok_or("No hay un espacio de trabajo activo")?;
+    let workspace = registry.active().ok_or("No hay un espacio de trabajo activo")?;
+    if workspace.kind == crate::workspaces::types::WorkspaceKind::Local { return Ok(None); }
+    Ok(Some((WorkspaceCredentialStore::new(&workspace.id)?, workspace.account.as_ref().map(|binding| binding.sub.clone()))))
 }
 
 pub fn load_auth_state(app: &tauri::AppHandle) -> Result<Option<StoredAuthState>, String> {
@@ -361,15 +393,40 @@ fn write_secure_state_at<S: CredentialStore>(store: &S, state: &StoredAuthState)
     Ok(())
 }
 
-fn write_secure_state(state: &StoredAuthState) -> Result<(), String> {
-    write_secure_state_at(&SystemCredentialStore, state)
+fn write_secure_state(app: &tauri::AppHandle, state: &StoredAuthState) -> Result<(), String> {
+    let (store, sub) = active_workspace_store(app)?.ok_or("Este espacio no utiliza Google Drive")?;
+    if sub.as_deref() != state.user.sub.as_deref() { return Err("La cuenta no corresponde al espacio".into()); }
+    write_secure_state_at(&store, state)
 }
 
 pub fn prepare_new_auth(app: &tauri::AppHandle) -> Result<u64, String> {
     let _guard = auth_lock()?;
+    migrate_legacy_global_state(app)?;
     let epoch = account_epoch();
-    prepare_new_auth_at(&SystemCredentialStore, &get_token_file_path(app)?, &get_legacy_token_file_path(app)?)?;
+    let (store, _) = active_workspace_store(app)?.ok_or("Selecciona un espacio de Google Drive")?;
+    let runtime = crate::workspaces::Runtime::from_app(app)?;
+    let ctx = runtime.ctx();
+    let loaded = crate::workspaces::registry::load(&ctx.documents, &ctx.config)?;
+    let lost = loaded.registry().and_then(|registry| registry.active()).is_some_and(|workspace| workspace.linkage_lost);
+    if !lost && read_secure_state(&store)?.is_some() {
+        return Err("Este espacio ya tiene una cuenta conectada".into());
+    }
+    store.probe()?;
     Ok(epoch)
+}
+
+pub fn read_workspace_candidate(workspace_id: &str) -> Result<Option<StoredAuthState>, String> {
+    let _guard = auth_lock()?;
+    read_secure_state(&WorkspaceCredentialStore::new(workspace_id)?)
+}
+
+pub fn restore_workspace_candidate(workspace_id: &str, prior: Option<&StoredAuthState>) -> Result<(), String> {
+    let _guard = auth_lock()?;
+    let store = WorkspaceCredentialStore::new(workspace_id)?;
+    match prior {
+        Some(state) => write_secure_state_at(&store, state),
+        None => store.delete(),
+    }
 }
 
 fn prepare_new_auth_at<S: CredentialStore>(store: &S, app_config_json: &Path, documents_json: &Path) -> Result<(), String> {
@@ -379,12 +436,12 @@ fn prepare_new_auth_at<S: CredentialStore>(store: &S, app_config_json: &Path, do
     store.probe()
 }
 
-fn save_new_auth_state(app: &tauri::AppHandle, state: &StoredAuthState, expected_epoch: u64) -> Result<(), String> {
+pub fn write_workspace_candidate(workspace_id: &str, state: &StoredAuthState, expected_epoch: u64) -> Result<(), String> {
     let _guard = auth_lock()?;
-    if OAUTH_CANCEL_REQUESTED.load(Ordering::SeqCst) {
-        return Err("El inicio de sesión fue cancelado".to_string());
+    if OAUTH_CANCEL_REQUESTED.load(Ordering::SeqCst) || account_epoch() != expected_epoch {
+        return Err("La conexión cambió o fue cancelada".into());
     }
-    save_new_auth_state_at(&SystemCredentialStore, &get_token_file_path(app)?, &get_legacy_token_file_path(app)?, state, expected_epoch, account_epoch())?;
+    write_secure_state_at(&WorkspaceCredentialStore::new(workspace_id)?, state)?;
     bump_account_epoch();
     Ok(())
 }
@@ -398,7 +455,16 @@ fn save_new_auth_state_at<S: CredentialStore>(store: &S, app_config_json: &Path,
 
 fn save_auth_state_bound(app: &tauri::AppHandle, state: &StoredAuthState, expected_epoch: u64, original_refresh: &str) -> Result<(), String> {
     let _guard = auth_lock()?;
-    save_auth_state_bound_at(&SystemCredentialStore, &get_token_file_path(app)?, &get_legacy_token_file_path(app)?, state, expected_epoch, account_epoch(), original_refresh)
+    if expected_epoch != account_epoch() { return Err("La sesión cambió durante la renovación".into()); }
+    let (store, sub) = active_workspace_store(app)?.ok_or("No hay un espacio de Drive activo")?;
+    if sub.as_deref() != state.user.sub.as_deref() { return Err("La cuenta cambió durante la renovación".into()); }
+    let current = read_secure_state(&store)?.ok_or("La sesión se cerró durante la renovación")?;
+    if current.user.sub != state.user.sub || current.tokens.refresh_token.as_deref() != Some(original_refresh) {
+        return Err("La credencial cambió durante la renovación".into());
+    }
+    let mut next = state.clone();
+    next.auto_sync_enabled = current.auto_sync_enabled;
+    write_secure_state_at(&store, &next)
 }
 
 fn save_auth_state_bound_at<S: CredentialStore>(store: &S, app_config_json: &Path, documents_json: &Path, state: &StoredAuthState, expected_epoch: u64, actual_epoch: u64, original_refresh: &str) -> Result<(), String> {
@@ -419,7 +485,7 @@ pub fn set_auto_sync_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<()
     let _guard = auth_lock()?;
     if let Some(mut state) = load_auth_state_unlocked(app)? {
         state.auto_sync_enabled = enabled;
-        write_secure_state(&state)?;
+        write_secure_state(app, &state)?;
     }
     Ok(())
 }
@@ -430,13 +496,17 @@ fn clear_auth_state_bound(app: &tauri::AppHandle, expected_epoch: u64, expected_
     let current = load_auth_state_unlocked(app)?;
     if current.as_ref().map(|state| &state.user.sub) != Some(expected_sub) { return Ok(()); }
     bump_account_epoch();
-    remove_legacy_files(&[&get_token_file_path(app)?, &get_legacy_token_file_path(app)?])?;
-    SystemCredentialStore.delete()
+    let (store, _) = active_workspace_store(app)?.ok_or("No hay un espacio de Drive activo")?;
+    store.delete()
 }
 
 pub fn take_auth_state_for_logout(app: &tauri::AppHandle) -> Result<(Option<StoredAuthState>, bool), String> {
     let _guard = auth_lock()?;
-    take_auth_state_at(&SystemCredentialStore, &get_token_file_path(app)?, &get_legacy_token_file_path(app)?)
+    let Some((store, _)) = active_workspace_store(app)? else { return Ok((None, false)); };
+    bump_account_epoch();
+    let state = read_secure_state(&store)?;
+    store.delete()?;
+    Ok((state, true))
 }
 
 fn take_auth_state_at<S: CredentialStore>(store: &S, app_config_json: &Path, documents_json: &Path) -> Result<(Option<StoredAuthState>, bool), String> {
@@ -641,7 +711,7 @@ pub fn wait_for_oauth_callback(
     }
 }
 
-pub async fn start_oauth_flow(app: &tauri::AppHandle) -> Result<UserProfile, String> {
+pub async fn start_oauth_candidate(app: &tauri::AppHandle) -> Result<StoredAuthState, String> {
     if OAUTH_IN_PROGRESS.swap(true, Ordering::SeqCst) {
         return Err("Ya hay un proceso de inicio de sesión en curso. Por favor, completa o cancela el intento actual.".to_string());
     }
@@ -657,8 +727,6 @@ pub async fn start_oauth_flow(app: &tauri::AppHandle) -> Result<UserProfile, Str
     let _guard = OAuthProgressGuard;
 
     // Refuse to open the browser unless the native store can persist a session.
-    let expected_epoch = prepare_new_auth(app)?;
-
     let (client_id, client_secret) = get_client_credentials(Some(app))?;
 
     let (code_verifier, code_challenge) = generate_pkce();
@@ -783,9 +851,7 @@ pub async fn start_oauth_flow(app: &tauri::AppHandle) -> Result<UserProfile, Str
     if OAUTH_CANCEL_REQUESTED.load(Ordering::SeqCst) {
         return Err("El inicio de sesión fue cancelado".to_string());
     }
-    save_new_auth_state(app, &auth_state, expected_epoch)?;
-
-    Ok(user_profile)
+    Ok(auth_state)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

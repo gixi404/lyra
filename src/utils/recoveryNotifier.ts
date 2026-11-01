@@ -10,6 +10,7 @@ let batchTimeout: ReturnType<typeof setTimeout> | null = null;
 let isInitialized = false;
 let initPromise: Promise<void> | null = null;
 let unlistenRecovered: (() => void) | null = null;
+let recoveryDirectory: string | null = null;
 
 export interface RecoveryNotifierTransport {
   available: () => boolean;
@@ -95,6 +96,31 @@ export function initRecoveryNotifier(transport: RecoveryNotifierTransport = defa
   return initPromise;
 }
 
+/** Recheck the Rust queue when the active workspace changes or regains focus. */
+export async function initRecoveryNotifierForWorkspace(
+  directory: string,
+  transport: RecoveryNotifierTransport = defaultTransport,
+): Promise<void> {
+  if (!transport.available()) return;
+  const alreadyInitialized = isInitialized;
+  if (recoveryDirectory !== directory) {
+    flushRecoveredBatch();
+    recoveryDirectory = directory;
+    notifiedNotes.clear();
+    pendingBatch = [];
+    if (batchTimeout) clearTimeout(batchTimeout);
+    batchTimeout = null;
+  }
+  await initRecoveryNotifier(transport);
+  if (alreadyInitialized && isInitialized) {
+    try {
+      handleRecoveredNotes(await transport.drain());
+    } catch (error) {
+      console.warn("[RecoveryNotifier] Could not recheck recovered notes:", error);
+    }
+  }
+}
+
 async function initializeRecoveryNotifier(transport: RecoveryNotifierTransport): Promise<void> {
   let unlisten: (() => void) | null = null;
   try {
@@ -132,4 +158,5 @@ export function _resetRecoveryNotifierForTesting(): void {
   pendingBatch = [];
   notifiedNotes.clear();
   isInitialized = false;
+  recoveryDirectory = null;
 }

@@ -1,14 +1,21 @@
-use super::auth;
-use super::client::{DriveClient, RemoteFileStatus};
-use super::provenance::{AuthorizationSource, SyncAccountContext};
-use super::types::{DriveFileMetadata, FileManifestItem, SyncManifest, SyncResult};
+use super::client::RemoteFileStatus;
+use super::provenance::SyncAccountContext;
+use super::types::{SyncManifest, SyncResult};
+#[cfg(test)]
+use super::client::DriveClient;
+#[cfg(test)]
+use super::provenance::AuthorizationSource;
+#[cfg(test)]
+use super::types::{DriveFileMetadata, FileManifestItem};
 use chrono::Utc;
 use md5::{Digest, Md5};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::fs;
 use std::path::PathBuf;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
 pub struct DownloadedFilePayload {
@@ -65,24 +72,31 @@ pub trait SyncProgressEmitter: Send + Sync {
     fn emit_download_finish(&self);
 }
 
-pub struct TauriSyncEmitter<'a>(pub &'a tauri::AppHandle);
+pub struct TauriSyncEmitter<'a> {
+    pub app: &'a tauri::AppHandle,
+    pub request: crate::workspaces::sync_context::SyncRequest,
+}
 
 impl<'a> SyncProgressEmitter for TauriSyncEmitter<'a> {
     fn emit_download_start(&self) {
-        let _ = self.0.emit("gdrive:download_start", ());
+        let _ = self.app.emit("gdrive:download_start", crate::workspaces::sync_context::SyncEvent::new(
+            &self.request, serde_json::json!({}),
+        ));
     }
 
     fn emit_file_downloaded(&self, file_name: &str) {
-        let _ = self.0.emit(
+        let _ = self.app.emit(
             "gdrive:file_downloaded",
-            DownloadedFilePayload {
+            crate::workspaces::sync_context::SyncEvent::new(&self.request, DownloadedFilePayload {
                 name: file_name.to_string(),
-            },
+            }),
         );
     }
 
     fn emit_download_finish(&self) {
-        let _ = self.0.emit("gdrive:download_finish", ());
+        let _ = self.app.emit("gdrive:download_finish", crate::workspaces::sync_context::SyncEvent::new(
+            &self.request, serde_json::json!({}),
+        ));
     }
 }
 
@@ -244,19 +258,6 @@ pub fn load_manifest_for_account_dir(
         account_email: account_email.map(|s| s.to_string()),
         ..SyncManifest::default()
     }
-}
-
-pub fn load_manifest(app: &tauri::AppHandle) -> SyncManifest {
-    if let Ok(doc_dir) = app.path().document_dir() {
-        let lyra_dir = doc_dir.join("lyra");
-        if ensure_safe_base_dir(&lyra_dir).is_err() { return SyncManifest::default(); }
-        if let Ok(Some(auth_state)) = auth::load_auth_state(app) {
-            let key = auth::get_account_key(&auth_state.user);
-            return load_manifest_for_account_dir(&lyra_dir, &key, Some(&auth_state.user.email));
-        }
-        return load_manifest_from_path(&get_legacy_manifest_path(&lyra_dir));
-    }
-    SyncManifest::default()
 }
 
 const WINDOWS_RESERVED_NAMES: &[&str] = &[
@@ -1017,75 +1018,10 @@ fn merge_concurrent_manifest_changes(
     }
 }
 
-pub async fn run_sync_with_id(app: &tauri::AppHandle, sync_id: &str) -> Result<SyncResult, String> {
-    let doc_dir = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("No se pudo resolver la carpeta Documentos: {e}"))?;
-    let lyra_dir = doc_dir.join("lyra");
-    if !lyra_dir.exists() {
-        fs::create_dir_all(&lyra_dir)
-            .map_err(|e| format!("Error creando carpeta local de Lyra: {e}"))?;
-    }
-    ensure_safe_base_dir(&lyra_dir)?;
-
-    // La identidad de la cuenta se verifica desde el backend (sub de Google),
-    // nunca desde parámetros del frontend.
-    let account = auth::verify_current_account(app)?;
-    let account_key = account.account_key.clone();
-    let account_email = account.email.clone();
-    let epoch = account.epoch;
-
-    // Ruta de manifiesto capturada al inicio: aunque la cuenta cambie durante
-    // la sincronización, se guarda exactamente en el manifiesto de esta cuenta.
-    let manifest_path = get_manifest_path_for_account(&lyra_dir, &account_key);
-    let client = DriveClient::new_with_app_for_account(app, &account_key, epoch)?;
-
-    let mut manifest = {
-        let _guard = MANIFEST_LOCK.lock().await;
-        // Carga con migración segura desde el manifiesto heredado: un manifiesto
-        // antiguo sin cuenta asignada nunca se transfiere a ciegas a otra cuenta.
-        load_manifest_for_account_dir(&lyra_dir, &account_key, Some(&account_email))
-    };
-    let mut ctx = SyncAccountContext::open(&lyra_dir, &account_key, Some(account_email), epoch)?;
-    let baseline_manifest = manifest.clone();
-
-    let emitter = TauriSyncEmitter(app);
-    let run_result = run_sync_with_client_and_emitter_with_id(
-        &lyra_dir,
-        &mut manifest,
-        &client,
-        Some(&emitter),
-        &mut ctx,
-        sync_id,
-    )
-    .await;
-
-    // Guardado seguro con re-fusión de tombstones registrados concurrentemente
-    // durante la sincronización, siempre sobre la ruta capturada.
-    {
-        let _guard = MANIFEST_LOCK.lock().await;
-        if manifest_path.exists() || manifest_path.with_extension("json.bak").exists() {
-            let disk_manifest = load_manifest_from_path(&manifest_path);
-            merge_concurrent_manifest_changes(&baseline_manifest, &disk_manifest, &mut manifest);
-        }
-        save_manifest_to_path(&manifest_path, &manifest)?;
-    }
-
-    let mut result = run_result?;
-    {
-        // Serializado con eliminación, renombrado y consentimiento: al persistir se
-        // re-fusionan los cambios concurrentes en lugar de sobrescribirlos.
-        let _guard = MANIFEST_LOCK.lock().await;
-        ctx.record_manifest_links(&manifest, &result.uploaded);
-        ctx.persist()?;
-    }
-    if let Err(e) = super::archive::sync_remote(&lyra_dir, &account_key, &manifest.drive_folder_id, &client).await {
-        result.errors.push(format!("Archive metadata sync: {e}"));
-    } else if let Ok(view) = super::archive::projection(&lyra_dir, Some(&account_key)) {
-        result.archive_conflicts = view.conflict_names;
-    }
-    Ok(result)
+/// The legacy remote entrypoint is quarantined until F4 supplies a validated
+/// workspace permit, workspace-scoped paths, and checkpoints for every effect.
+pub async fn run_sync_with_id(_app: &tauri::AppHandle, _sync_id: &str) -> Result<SyncResult, String> {
+    Err("SyncPaused: Google Drive permanece en pausa hasta F4".into())
 }
 
 #[cfg(test)]
@@ -1111,6 +1047,7 @@ pub async fn run_sync_with_client_and_emitter(
     run_sync_with_client_and_emitter_with_id(lyra_dir, manifest, client, emitter, &mut ctx, "default").await
 }
 
+#[cfg(test)]
 pub async fn run_sync_with_client_and_emitter_with_id(
     lyra_dir: &std::path::Path,
     manifest: &mut SyncManifest,
@@ -2364,6 +2301,8 @@ mod tests {
             modified_time: None,
             md5_checksum: None,
             trashed: Some(false),
+            app_properties: Default::default(),
+            parents: Vec::new(),
         };
 
         // Si sigue activo y hubo cambios locales -> UpdateRemote

@@ -5,11 +5,10 @@ import { twMerge } from "tailwind-merge";
 import { downloadDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import useFile from "../hooks/useFile";
-import useStorage from "../hooks/useStorage";
 import { fileStore } from "../store/fileStore";
 import translations from "../utils/dictionary";
 import { notification, themes } from "../utils/helpers";
-import { isWelcomeFileName, setWelcomeManuallyRestored } from "../utils/welcome";
+import { isWelcomeFileName, isWelcomeManuallyRestored, setWelcomeManuallyRestored } from "../utils/welcome";
 import { setArchiveState } from "../utils/archiveState";
 import { useSyncStore } from "../store/syncStore";
 import type { Component } from "../utils/types";
@@ -22,7 +21,6 @@ import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
 function MenuPaperFile({ fileName }: Props): Component {
   const d = translations(),
     { isDay } = themes(),
-    { getItem } = useStorage(),
     { deleteFile, readFile } = useFile(),
     { editedFile, removeFileFromList } = fileStore(
       useShallow(state => ({
@@ -163,7 +161,7 @@ function MenuPaperFile({ fileName }: Props): Component {
     let prevWelcomeRestored = "false";
 
     try {
-      prevWelcomeRestored = getItem("welcome_manually_restored", "false");
+      prevWelcomeRestored = String(isWelcomeManuallyRestored());
       if (isWelcome) setWelcomeManuallyRestored(true);
       const projection = await setArchiveState(restoringName, false);
       if (projection.archivedNames.includes(restoringName)) {

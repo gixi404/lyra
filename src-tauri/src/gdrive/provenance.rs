@@ -335,7 +335,7 @@ pub fn save_ledger(path: &Path, ledger: &ProvenanceLedger) -> Result<(), String>
     Ok(())
 }
 
-fn new_note_id() -> String {
+pub(crate) fn new_note_id() -> String {
     format!("note_{:032x}", rand::random::<u128>())
 }
 
@@ -454,6 +454,13 @@ pub fn record_local_write(
     account_key: Option<&str>,
     created: bool,
 ) -> Result<(), String> {
+    record_local_write_with_id(lyra_dir, name, account_key, created, None)
+}
+
+fn record_local_write_with_id(
+    lyra_dir: &Path, name: &str, account_key: Option<&str>,
+    created: bool, planned_note_id: Option<&str>,
+) -> Result<(), String> {
     let path = get_ledger_path(lyra_dir);
     let mut ledger = load_ledger(&path)?.unwrap_or_default();
     let file_path = lyra_dir.join(name);
@@ -476,7 +483,7 @@ pub fn record_local_write(
                 old.missing_since = Some(now);
             }
         }
-        new_note_id()
+        planned_note_id.map(str::to_owned).unwrap_or_else(new_note_id)
     } else {
         existing.filter(|id| ledger.notes.get(id).map(|r| !r.retired).unwrap_or(false))
             .unwrap_or_else(new_note_id)
@@ -549,6 +556,26 @@ pub fn create_local_note(
         eprintln!("[create_local_note] Note is local only: {e}");
     }
     Ok(())
+}
+
+/// Exclusively creates a downloaded note with the identity committed in a
+/// durable download intent before this filesystem operation begins.
+pub(crate) fn create_local_note_with_id(
+    lyra_dir: &Path, name: &str, content: &[u8], note_id: &str,
+) -> Result<(), String> {
+    if note_id.is_empty() { return Err("Missing planned note identity".into()); }
+    let ledger_path = get_ledger_path(lyra_dir);
+    if load_ledger(&ledger_path)?.is_some_and(|ledger| ledger.notes.contains_key(note_id)) {
+        return Err("Planned note identity is already in use".into());
+    }
+    let target = lyra_dir.join(name);
+    let mut file = fs::OpenOptions::new().write(true).create_new(true)
+        .open(&target).map_err(|e| format!("Cannot create note: {e}"))?;
+    file.write_all(content).map_err(|e| format!("Cannot write note: {e}"))?;
+    file.sync_all().map_err(|e| format!("Cannot sync note: {e}"))?;
+    // A failed ledger write leaves the file and intent intact. Recovery
+    // blocks instead of adopting a file whose identity was never confirmed.
+    record_local_write_with_id(lyra_dir, name, None, true, Some(note_id))
 }
 
 /// Before a Lyra save, invalidate a record if the on-disk bytes were changed

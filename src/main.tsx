@@ -1,18 +1,24 @@
 import { RouterProvider } from "react-router-dom";
 import { StrictMode, Suspense } from "react";
 import Toast from "./components/Toast";
-import PendingAuthorizationDialog from "./components/PendingAuthorizationDialog";
 import "./styles.css";
 import { type Container, createRoot } from "react-dom/client";
 import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater";
 import { initPersistentPreferences } from "./utils/persistentPreferences";
-import { initializeArchiveState } from "./utils/archiveState";
-import { initRecoveryNotifier } from "./utils/recoveryNotifier";
+import { initializeArchiveState, resetArchiveStateForWorkspace } from "./utils/archiveState";
+import { initRecoveryNotifierForWorkspace } from "./utils/recoveryNotifier";
 import { useSyncStore } from "./store/syncStore";
 import { configStore } from "./store/configStore";
 import { router } from "./router";
+import WorkspaceGate from "./components/WorkspaceGate";
+import { isDriveSyncPaused } from "./utils/workspaceClient";
+import type { WorkspaceSnapshot } from "./utils/workspaceState";
+import { currentNotesDir, currentSyncRequest } from "./utils/workspacePaths";
+import { sameSyncContext } from "./utils/syncEventPolicy";
+import { createWorkspaceRecoveryLifecycle } from "./utils/workspaceRecoveryLifecycle";
 
 const root = document.getElementById("root") as Container;
+const workspaceRecovery = createWorkspaceRecoveryLifecycle(currentNotesDir, initRecoveryNotifierForWorkspace);
 
 if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
   window.history.scrollRestoration = "manual";
@@ -59,16 +65,14 @@ try {
 
 createRoot(root).render(
   <StrictMode>
-    <Suspense fallback={<div className="w-full min-h-screen bg-[#101010] light:bg-[#e0e0e0]" />}>
-      <RouterProvider router={router} future={{ v7_startTransition: true }} />
-    </Suspense>
+    <WorkspaceGate onReady={bootstrapWorkspace}>
+      <Suspense fallback={<div className="w-full min-h-screen bg-[#101010] light:bg-[#e0e0e0]" />}>
+        <RouterProvider router={router} future={{ v7_startTransition: true }} />
+      </Suspense>
+    </WorkspaceGate>
     <Toast />
-    <PendingAuthorizationDialog />
   </StrictMode>
 );
-
-// Inicializar notificador y drenado de recuperaciones de archivos temporales
-void initRecoveryNotifier();
 
 // Notificar si la app acaba de ser actualizada
 setTimeout(() => {
@@ -82,21 +86,38 @@ if (typeof navigator !== "undefined" && navigator.onLine) {
   }, 2500);
 }
 
-// Inicializar estado de Google Drive y sincronizar si está conectado
-void initPersistentPreferences().then(async () => {
-  await initializeArchiveState();
+// Inicializar estado de Google Drive y sincronizar si está conectado.
+// Se ejecuta solo cuando la puerta de espacios de trabajo se ha abierto: antes
+// de eso la carpeta de notas todavía se está migrando.
+let preferencesInitialized = false;
+
+async function bootstrapWorkspace(snapshot: WorkspaceSnapshot): Promise<void> {
+  // The backend queue retains early recovery events until this first drain.
+  await workspaceRecovery.onReady(snapshot);
+  if (!preferencesInitialized) {
+    await initPersistentPreferences();
+    preferencesInitialized = true;
+  }
+  resetArchiveStateForWorkspace();
+  await initializeArchiveState(snapshot.workspace?.id === snapshot.legacyWorkspaceId &&
+    snapshot.workspaces.length === 1);
   await useSyncStore.getState().fetchStatus();
   const syncState = useSyncStore.getState();
   if (
-    syncState.isConnected &&
-    typeof navigator !== "undefined" &&
-    navigator.onLine
+    snapshot.drivePaused ||
+    isDriveSyncPaused() ||
+    !syncState.isConnected ||
+    typeof navigator === "undefined" ||
+    !navigator.onLine
   ) {
-    setTimeout(() => {
-      void useSyncStore.getState().syncNow(true);
-    }, 1500);
+    return;
   }
-}).catch(error => console.error("Could not initialize archive state", error));
+  setTimeout(() => {
+    if (snapshot.workspace && sameSyncContext({ workspace_id: snapshot.workspace.id, epoch: snapshot.epoch }, currentSyncRequest())) {
+      void useSyncStore.getState().syncNow(true);
+    }
+  }, 1500);
+}
 
 let lastFocusSyncTimestamp = Date.now();
 const FOCUS_SYNC_THROTTLE_MS = 180_000; // 3 minutos de throttle
@@ -105,13 +126,13 @@ if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
     void checkAndApplyUpdate(false);
     const syncState = useSyncStore.getState();
-    if (syncState.isConnected) {
+    if (syncState.isConnected && !isDriveSyncPaused()) {
       void syncState.syncNow(true, true);
     }
   });
 
   window.addEventListener("focus", () => {
-    void initRecoveryNotifier();
+    void workspaceRecovery.onFocus();
     const now = Date.now();
     if (now - lastFocusSyncTimestamp < FOCUS_SYNC_THROTTLE_MS) {
       return;
@@ -119,6 +140,7 @@ if (typeof window !== "undefined") {
     const syncState = useSyncStore.getState();
     if (
       syncState.isConnected &&
+      !isDriveSyncPaused() &&
       typeof navigator !== "undefined" &&
       navigator.onLine
     ) {

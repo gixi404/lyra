@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use super::client::DriveClient;
 use super::provenance::{self, AccountLinkState, NoteRecord, ProvenanceLedger};
 use super::sync;
+use super::workspace_sync::{self, WorkspaceIdentity};
+use crate::workspaces::sync_context::{SyncPermit, SyncRequest};
 
 const FILE_NAME: &str = ".lyra_archive_state.json";
 const SCHEMA_VERSION: u32 = 1;
@@ -243,6 +245,37 @@ pub fn set_archived(lyra_dir: &Path, name: &str, archived: bool, account_key: Op
     save(lyra_dir, &mut ledger)
 }
 
+/// F4 archive actions use the workspace manifest's note identity, not a
+/// per-note upload grant. An unpaired note remains locally archived and its
+/// action is queued until the note obtains a remote ID in this workspace.
+pub fn set_archived_workspace(
+    lyra_dir: &Path, name: &str, archived: bool,
+    identity: &WorkspaceIdentity, account_key: &str,
+) -> Result<(), String> {
+    if account_key != super::auth::sanitize_account_key(&identity.account_sub) {
+        return Err("Archive account does not match the bound workspace".into());
+    }
+    let note = note_record(lyra_dir, name)?;
+    let manifest = workspace_sync::load(lyra_dir, identity)?;
+    let remote_id = manifest.files.get(name)
+        .filter(|file| file.note_id == note.note_id).map(|file|
+            manifest.archive_anchors.get(&file.drive_id).unwrap_or(&file.drive_id).clone());
+    let mut ledger = load(lyra_dir)?;
+    ledger.last_account = Some(account_key.to_string());
+    let device_id = ledger.device_id.clone();
+    let state = ledger.accounts.entry(account_key.to_string()).or_default();
+    if let Some(remote_id) = remote_id {
+        let parents = heads(state, &remote_id).iter().map(|op| op.operation_id.clone()).collect();
+        let op = new_operation(&device_id, account_key, &remote_id, archived, parents);
+        state.operations.insert(op.operation_id.clone(), op);
+        state.pending.remove(&note.note_id);
+    } else {
+        state.pending.insert(note.note_id.clone(), PendingChange { archived, parents: Vec::new() });
+        ledger.local_only.insert(note.note_id, archived);
+    }
+    save(lyra_dir, &mut ledger)
+}
+
 pub fn initialize_legacy(lyra_dir: &Path, archived_names: &[String]) -> Result<(), String> {
     let mut ledger = load(lyra_dir)?;
     if ledger.migrated_legacy { return Ok(()) }
@@ -290,6 +323,59 @@ pub fn projection(lyra_dir: &Path, account_key: Option<&str>) -> Result<ArchiveP
     Ok(output)
 }
 
+/// Disconnected Drive workspaces display only their local archive choices.
+/// Historical account state in this directory never selects an account by
+/// `last_account` while the verified binding is unavailable.
+pub fn projection_local_only(lyra_dir: &Path) -> Result<ArchiveProjection, String> {
+    let ledger = load(lyra_dir)?;
+    let provenance = provenance::load_ledger(&provenance::get_ledger_path(lyra_dir))?.unwrap_or_default();
+    let mut output = ArchiveProjection { revision: ledger.revision, ..Default::default() };
+    for (name, note_id) in &provenance.by_name {
+        let Some(record) = provenance.notes.get(note_id) else { continue };
+        if !record.retired && lyra_dir.join(name).is_file() &&
+            ledger.local_only.get(note_id).copied().unwrap_or(false) {
+            output.archived_names.push(name.clone());
+        }
+    }
+    Ok(output)
+}
+
+/// Projection for a verified workspace binding. Other accounts' historical
+/// operations in a copied ledger are never consulted for this workspace.
+pub fn projection_workspace(
+    lyra_dir: &Path, identity: &WorkspaceIdentity, account_key: &str,
+) -> Result<ArchiveProjection, String> {
+    if account_key != super::auth::sanitize_account_key(&identity.account_sub) {
+        return Err("Archive account does not match the bound workspace".into());
+    }
+    let ledger = load(lyra_dir)?;
+    let provenance = provenance::load_ledger(&provenance::get_ledger_path(lyra_dir))?.unwrap_or_default();
+    let manifest = workspace_sync::load(lyra_dir, identity)?;
+    let state = ledger.accounts.get(account_key);
+    let mut output = ArchiveProjection { revision: ledger.revision, ..Default::default() };
+    for (name, note_id) in &provenance.by_name {
+        let Some(record) = provenance.notes.get(note_id) else { continue };
+        if record.retired || !lyra_dir.join(name).is_file() { continue }
+        let mut value = ledger.local_only.get(note_id).copied().unwrap_or(false);
+        let mut conflict = false;
+        if let Some(state) = state {
+            if let Some(pending) = state.pending.get(note_id) {
+                value = pending.archived;
+            } else if let Some(remote_id) = manifest.files.get(name)
+                .filter(|file| file.note_id == *note_id).map(|file|
+                    manifest.archive_anchors.get(&file.drive_id).unwrap_or(&file.drive_id).as_str()) {
+                if let Some((archived, is_conflict)) = resolved(state, remote_id) {
+                    value = archived;
+                    conflict = is_conflict;
+                }
+            }
+        }
+        if value { output.archived_names.push(name.clone()); }
+        if conflict { output.conflict_names.push(name.clone()); }
+    }
+    Ok(output)
+}
+
 fn parse_remote_operation(bytes: &[u8], file_name: &str, account_key: &str) -> Result<ArchiveOperation, String> {
     if bytes.len() > 16_384 { return Err("Archive operation exceeds size limit".to_string()) }
     let op: ArchiveOperation = serde_json::from_slice(bytes).map_err(|e| format!("Invalid remote archive operation: {e}"))?;
@@ -305,6 +391,7 @@ fn parse_remote_operation(bytes: &[u8], file_name: &str, account_key: &str) -> R
 
 /// Merge all remote operations before publishing pending local operations.
 /// Separate immutable files avoid replacing another device's changes.
+#[cfg(test)]
 pub async fn sync_remote(
     lyra_dir: &Path,
     account_key: &str,
@@ -314,6 +401,109 @@ pub async fn sync_remote(
     sync_remote_with_token(lyra_dir, account_key, folder_id, client, "").await
 }
 
+/// F4 archive synchronization. The workspace manifest supplies the only
+/// note-to-remote mapping. Every HTTP call and ledger write is checked against
+/// the originating F3 owner, and the parent folder must match that manifest.
+#[allow(dead_code)] // Called by the F4 remote runner after content effects are connected.
+pub async fn sync_remote_workspace<F>(
+    lyra_dir: &Path,
+    identity: &WorkspaceIdentity,
+    account_key: &str,
+    client: &DriveClient,
+    token: &str,
+    permit: &SyncPermit<'_>,
+    current: F,
+) -> Result<(), String>
+where F: Fn() -> Result<SyncRequest, String> {
+    if account_key != super::auth::sanitize_account_key(&identity.account_sub) {
+        return Err("Archive account does not match the bound workspace".into());
+    }
+    let _effect_lease = workspace_sync::EFFECT_LOCK.lock().await;
+    let manifest = workspace_sync::load(lyra_dir, identity)?;
+    let folder_id = manifest.folder_id.as_deref().ok_or("Workspace has no confirmed remote folder")?;
+    let mut note_to_remote = BTreeMap::new();
+    let mut valid_ids = BTreeSet::new();
+    for file in manifest.files.values() {
+        let archive_id = manifest.archive_anchors.get(&file.drive_id).unwrap_or(&file.drive_id);
+        note_to_remote.insert(file.note_id.clone(), archive_id.clone());
+        valid_ids.insert(archive_id.clone());
+    }
+    if valid_ids.is_empty() { return Ok(()); }
+
+    let folders = permit.effect(|| current(), || client.list_child_folders(token, folder_id, REMOTE_FOLDER)).await?;
+    if folders.len() > 1 { return Err("Multiple archive folders exist in this workspace".into()); }
+    let mut remote_ops = BTreeMap::new();
+    for folder in &folders {
+        let files = permit.effect(|| current(), || client.list_files_in_folder(token, folder)).await?;
+        for file in files {
+            if !file.name.starts_with("op-") || !file.name.ends_with(".json") { continue }
+            let bytes = permit.effect(|| current(), || client.download_file(token, &file.id)).await?;
+            let op = parse_remote_operation(&bytes, &file.name, account_key)?;
+            if !valid_ids.contains(&op.remote_note_id) { continue }
+            if let Some(existing) = remote_ops.insert(op.operation_id.clone(), op.clone()) {
+                if existing != op { return Err("Conflicting archive operations share an ID".into()); }
+            }
+        }
+    }
+
+    let unpublished = permit.effect(|| current(), || async {
+        let _guard = ARCHIVE_LOCK.lock().await;
+        let mut ledger = load(lyra_dir)?;
+        ledger.last_account = Some(account_key.to_string());
+        let device_id = ledger.device_id.clone();
+        let legacy_local = ledger.local_only.clone();
+        let state = ledger.accounts.entry(account_key.to_string()).or_default();
+        for (id, op) in &remote_ops {
+            if state.operations.get(id).is_some_and(|existing| existing != op) {
+                return Err("Remote archive operation changed after publication".into());
+            }
+            state.operations.insert(id.clone(), op.clone());
+            state.published.insert(id.clone());
+        }
+        for (note_id, archived) in &legacy_local {
+            if !archived { continue }
+            if let Some(remote_id) = note_to_remote.get(note_id) {
+                if !state.operations.values().any(|op| op.remote_note_id == *remote_id) {
+                    let op = new_operation(&device_id, account_key, remote_id, true, Vec::new());
+                    state.operations.insert(op.operation_id.clone(), op);
+                }
+            }
+        }
+        for (note_id, pending) in std::mem::take(&mut state.pending) {
+            if let Some(remote_id) = note_to_remote.get(&note_id) {
+                let op = new_operation(&device_id, account_key, remote_id, pending.archived, pending.parents);
+                state.operations.insert(op.operation_id.clone(), op);
+            } else {
+                state.pending.insert(note_id, pending);
+            }
+        }
+        validate_graph(state)?;
+        save(lyra_dir, &mut ledger)?;
+        let mut unpublished: Vec<ArchiveOperation> = ledger.accounts.get(account_key).into_iter()
+            .flat_map(|state| state.operations.values().filter(|op| !state.published.contains(&op.operation_id)))
+            .filter(|op| valid_ids.contains(&op.remote_note_id)).cloned().collect();
+        if let Some(state) = ledger.accounts.get(account_key) {
+            fn depth(id: &str, state: &AccountArchiveState, cache: &mut BTreeMap<String, usize>) -> usize {
+                if let Some(value) = cache.get(id) { return *value; }
+                let value = state.operations.get(id).map(|op| 1 + op.parents.iter()
+                    .map(|parent| depth(parent, state, cache)).max().unwrap_or(0)).unwrap_or(0);
+                cache.insert(id.to_string(), value);
+                value
+            }
+            let mut cache = BTreeMap::new();
+            unpublished.sort_by_key(|op| depth(&op.operation_id, state, &mut cache));
+        }
+        Ok(unpublished)
+    }).await?;
+
+    if unpublished.is_empty() { return Ok(()); }
+    // Folder and operation-file POSTs are not yet backed by a durable create
+    // intent or a pre-generated Drive ID. Keep the immutable local operations
+    // for a later, idempotent publication protocol.
+    Err("SyncPaused: archive publication needs idempotent create intents".into())
+}
+
+#[cfg(test)]
 async fn sync_remote_with_token(
     lyra_dir: &Path,
     account_key: &str,
@@ -414,6 +604,8 @@ async fn sync_remote_with_token(
 mod tests {
     use super::*;
     use super::super::provenance::{AccountBinding, AuthorizationSource, NoteOrigin};
+    use super::super::workspace_sync::{WorkspaceFile, WorkspaceManifest};
+    use crate::workspaces::sync_context::{Admission, SyncCoordinator};
 
     struct TestDir(PathBuf);
     impl TestDir {
@@ -448,6 +640,109 @@ mod tests {
         ArchiveOperation { schema_version: 1, operation_id: id.into(), account_key: "a".into(),
             remote_note_id: "remote".into(), device_id: "d".into(), archived,
             parents: parents.iter().map(|s| s.to_string()).collect() }
+    }
+
+    #[test]
+    fn workspace_archive_uses_manifest_identity_without_note_authorization() {
+        let dir = TestDir::new();
+        let note_id = add_note(&dir.0, "Note.md", None);
+        let identity = WorkspaceIdentity {
+            workspace_id: "ws_002".into(), account_sub: "verified-sub".into(),
+            folder_nonce: "0123456789abcdef0123456789abcdef".into(),
+        };
+        let mut manifest = WorkspaceManifest::new(&identity).unwrap();
+        manifest.files.insert("Note.md".into(), WorkspaceFile {
+            drive_id: "remote-note".into(), digest: "digest".into(), note_id: note_id.clone(),
+        });
+        fs::write(dir.0.join(".lyra_workspace_drive_manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(set_archived_workspace(&dir.0, "Note.md", true, &identity, "wrong-account").is_err());
+        set_archived_workspace(&dir.0, "Note.md", true, &identity, "verified-sub").unwrap();
+        assert_eq!(projection_workspace(&dir.0, &identity, "verified-sub").unwrap().archived_names, ["Note.md"]);
+        set_archived_workspace(&dir.0, "Note.md", false, &identity, "verified-sub").unwrap();
+        assert!(projection_workspace(&dir.0, &identity, "verified-sub").unwrap().archived_names.is_empty());
+        let ledger = load(&dir.0).unwrap();
+        assert_eq!(ledger.accounts["verified-sub"].operations.len(), 2);
+        assert_eq!(resolved(&ledger.accounts["verified-sub"], "remote-note"), Some((false, false)));
+        let provenance = provenance::load_ledger(&provenance::get_ledger_path(&dir.0)).unwrap().unwrap();
+        assert!(provenance.notes[&note_id].bindings.is_empty());
+    }
+
+    #[test]
+    fn immutable_content_version_preserves_causal_archive_anchor() {
+        let dir = TestDir::new();
+        let note_id = add_note(&dir.0, "Note.md", None);
+        let identity = WorkspaceIdentity {
+            workspace_id: "ws_002".into(), account_sub: "verified-sub".into(),
+            folder_nonce: "0123456789abcdef0123456789abcdef".into(),
+        };
+        let mut manifest = WorkspaceManifest::new(&identity).unwrap();
+        manifest.files.insert("Note.md".into(), WorkspaceFile {
+            drive_id: "new-version".into(), digest: "digest".into(), note_id,
+        });
+        manifest.archive_anchors.insert("new-version".into(), "original-version".into());
+        manifest.historical_versions.insert("original-version".into(), "old-digest".into());
+        fs::write(dir.0.join(".lyra_workspace_drive_manifest.json"),
+            serde_json::to_vec(&manifest).unwrap()).unwrap();
+        set_archived_workspace(&dir.0, "Note.md", true, &identity, "verified-sub").unwrap();
+        let ledger = load(&dir.0).unwrap();
+        assert_eq!(ledger.accounts["verified-sub"].operations.values().next().unwrap().remote_note_id,
+            "original-version");
+        assert_eq!(projection_workspace(&dir.0, &identity, "verified-sub").unwrap().archived_names,
+            ["Note.md"]);
+    }
+
+    #[test]
+    fn disconnected_workspace_projection_never_uses_previous_account_state() {
+        let dir = TestDir::new();
+        let note_id = add_note(&dir.0, "Note.md", None);
+        let mut ledger = ArchiveLedger::default();
+        ledger.last_account = Some("old-account".into());
+        ledger.accounts.entry("old-account".into()).or_default().pending.insert(
+            note_id.clone(), PendingChange { archived: true, parents: Vec::new() });
+        save(&dir.0, &mut ledger).unwrap();
+        assert!(projection_local_only(&dir.0).unwrap().archived_names.is_empty());
+        ledger.local_only.insert(note_id, true);
+        save(&dir.0, &mut ledger).unwrap();
+        assert_eq!(projection_local_only(&dir.0).unwrap().archived_names, ["Note.md"]);
+    }
+
+    #[tokio::test]
+    async fn workspace_archive_keeps_unpublished_operation_without_create_intent() {
+        let dir = TestDir::new();
+        let note_id = add_note(&dir.0, "Note.md", None);
+        let identity = WorkspaceIdentity {
+            workspace_id: "ws_002".into(), account_sub: "verified-sub".into(),
+            folder_nonce: "0123456789abcdef0123456789abcdef".into(),
+        };
+        let mut manifest = WorkspaceManifest::new(&identity).unwrap();
+        manifest.folder_id = Some("workspace-folder".into());
+        manifest.files.insert("Note.md".into(), WorkspaceFile {
+            drive_id: "remote-note".into(), digest: "digest".into(), note_id,
+        });
+        fs::write(dir.0.join(".lyra_workspace_drive_manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        set_archived_workspace(&dir.0, "Note.md", true, &identity, "verified-sub").unwrap();
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let base = format!("http://127.0.0.1:{}", server.server_addr().to_ip().unwrap().port());
+        let handle = std::thread::spawn(move || {
+            let request = server.recv().unwrap();
+            assert_eq!(request.method(), &tiny_http::Method::Get);
+            request.respond(tiny_http::Response::from_string(r#"{"files":[]}"#)).unwrap();
+        });
+        let client = DriveClient::new_with_base_url(base).unwrap();
+        let coordinator = SyncCoordinator::default();
+        let request = SyncRequest { workspace_id: "ws_002".into(), epoch: 7 };
+        let permit = match coordinator.submit(request.clone(), &request).unwrap() {
+            Admission::Active(permit) => permit,
+            Admission::Queued => panic!("expected owner"),
+        };
+        assert!(sync_remote_workspace(&dir.0, &identity, "verified-sub", &client, "fake", &permit,
+            || Ok(request.clone())).await.unwrap_err().contains("SyncPaused"));
+        handle.join().unwrap();
+        let state = load(&dir.0).unwrap().accounts.remove("verified-sub").unwrap();
+        assert_eq!(state.operations.len(), 1);
+        assert!(state.published.is_empty());
+        assert_eq!(resolved(&state, "remote-note"), Some((true, false)));
     }
 
     #[test]

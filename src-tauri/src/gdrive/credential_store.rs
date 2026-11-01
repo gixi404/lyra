@@ -13,6 +13,44 @@ pub trait CredentialStore {
 
 pub struct SystemCredentialStore;
 
+/// F4 credentials are isolated by the local workspace ID. The legacy global
+/// key remains available only to the old migration tests and is never used to
+/// authenticate a workspace implicitly.
+pub struct WorkspaceCredentialStore {
+    user: String,
+}
+
+impl WorkspaceCredentialStore {
+    pub fn new(workspace_id: &str) -> Result<Self, String> {
+        crate::workspaces::ids::validate_id(workspace_id)?;
+        Ok(Self { user: format!("workspace-{workspace_id}") })
+    }
+}
+
+impl CredentialStore for WorkspaceCredentialStore {
+    fn read(&self) -> Result<Option<Vec<u8>>, String> {
+        match SystemCredentialStore::entry(&self.user)?.get_secret() {
+            Ok(value) => Ok(Some(value)),
+            Err(Error::NoEntry) => Ok(None),
+            Err(_) => Err(STORE_ERROR.to_string()),
+        }
+    }
+
+    fn write(&self, value: &[u8]) -> Result<(), String> {
+        SystemCredentialStore::entry(&self.user)?.set_secret(value)
+            .map_err(|_| STORE_ERROR.to_string())
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        match SystemCredentialStore::entry(&self.user)?.delete_credential() {
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
+            Err(_) => Err(STORE_ERROR.to_string()),
+        }
+    }
+
+    fn probe(&self) -> Result<(), String> { SystemCredentialStore.probe() }
+}
+
 impl SystemCredentialStore {
     fn entry(user: &str) -> Result<Entry, String> {
         if !cfg!(any(target_os = "windows", target_os = "linux")) {

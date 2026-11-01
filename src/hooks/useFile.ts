@@ -1,9 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import useStorage from "./useStorage";
-import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, PAGES } from "../utils/consts";
+import { BASE_DIRECTORY, INTRO_ES, PAGES } from "../utils/consts";
+import { currentNotesDir, currentWorkspaceId, getNotesDir, notesPath } from "../utils/workspacePaths";
 import { fileStore, type FileItemStats } from "../store/fileStore";
 import { clearDetachedSaveFailure, moveDetachedSaveFailure } from "../utils/editorPersistence";
-import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import {
   getCompatibleStorageKeys,
@@ -36,14 +36,24 @@ function useFile(): Files {
   const { getItem, removeItem, setItem } = useStorage();
   const editedFile = fileStore(state => state.editedFile);
   const files = fileStore(state => state.files);
+  const boundDirectory = useRef(currentNotesDir()).current;
+  const boundWorkspaceId = useRef(currentWorkspaceId()).current;
+  const assertBound = () => {
+    if (!boundDirectory || !boundWorkspaceId || currentNotesDir() !== boundDirectory || currentWorkspaceId() !== boundWorkspaceId) {
+      throw new Error("La operación pertenece a otro espacio de trabajo");
+    }
+  };
 
   const getFilePath = useCallback(async (fileName: string): Promise<{ pathFile: string }> => {
     if (!fileName) throw new Error("File name is required");
-    const pathFile: string = await join(MAIN_FOLDER, resolveFileName(fileName));
+    assertBound();
+    const pathFile: string = await notesPath(resolveFileName(fileName));
+    assertBound();
     return { pathFile };
   }, []);
 
   async function renameFile(oldName: string, newName: string): Promise<string> {
+    assertBound();
     if (!oldName || !newName) throw new Error("Both old and new names are required");
     const nextDisplayName: string = resolveDisplayName(newName, oldName);
     if (oldName !== nextDisplayName) {
@@ -52,7 +62,9 @@ function useFile(): Files {
         throw new Error(`File "${nextDisplayName}" already exists`);
       }
     }
-    await invoke("gdrive_note_renamed", { oldName, newName: nextDisplayName });
+    assertBound();
+    await invoke("gdrive_note_renamed", { oldName, newName: nextDisplayName, expectedWorkspaceId: boundWorkspaceId });
+    assertBound();
 
     moveCompatibleValue(oldName, nextDisplayName, "", DRAFT_STORAGE_PREFIX);
     moveCompatibleValue(oldName, nextDisplayName, "-modified");
@@ -65,13 +77,15 @@ function useFile(): Files {
   }
 
   async function deleteFile(name: string): Promise<void> {
+    assertBound();
     if (!name) throw new Error("File name is required");
     if (isWelcomeFileName(name)) {
       handleWelcomeFileDeleted(name);
     }
     // Eliminación autoritativa e íntegra vía gdrive_delete_file (registra tombstone antes del borrado físico).
     // No se utiliza fallback que omita el tombstone, garantizando que no haya desincronizaciones ni resurrecciones.
-    await invoke("gdrive_delete_file", { fileName: name });
+    await invoke("gdrive_delete_file", { fileName: name, expectedWorkspaceId: boundWorkspaceId });
+    assertBound();
     removeCompatibleKeys(name, "", DRAFT_STORAGE_PREFIX);
     removeCompatibleKeys(name, "-modified");
     removeCompatibleKeys(name, "-scroll");
@@ -80,11 +94,13 @@ function useFile(): Files {
   }
 
   const createFile = useCallback(async (name: string, content: string = ""): Promise<string> => {
+    assertBound();
     if (!name) throw new Error("File name is required");
     const isTauri = typeof window !== "undefined" &&
       Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
     if (isTauri) {
-      await invoke("create_note", { fileName: name, content });
+      await invoke("create_note", { fileName: name, content, expectedWorkspaceId: boundWorkspaceId });
+      assertBound();
     } else {
       const { pathFile } = await getFilePath(name);
       await writeTextFile(pathFile, content, { createNew: true, baseDir: BASE_DIRECTORY.baseDir });
@@ -94,7 +110,9 @@ function useFile(): Files {
   }, [getFilePath]);
 
   const getFiles = useCallback(async (): Promise<string[]> => {
-    let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
+    assertBound();
+    let dir: DirEntry[] = await readDir(getNotesDir(), BASE_DIRECTORY);
+    assertBound();
     return dir
       .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
       .map((f: DirEntry) => f.name)
@@ -107,12 +125,16 @@ function useFile(): Files {
   }, []);
 
   const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats> }> => {
+    assertBound();
     const isTauri = typeof window !== "undefined" &&
       Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
     if (isTauri) {
-      return invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
+      const result = await invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
+      assertBound();
+      return result;
     }
-    let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
+    let dir: DirEntry[] = await readDir(getNotesDir(), BASE_DIRECTORY);
+    assertBound();
     const validNames = dir
       .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
       .map((f: DirEntry) => f.name)
@@ -147,10 +169,12 @@ function useFile(): Files {
   const fileExists = useCallback(async (name: string): Promise<boolean> => {
     const { pathFile } = await getFilePath(name);
     const file: boolean = await exists(pathFile, BASE_DIRECTORY);
+    assertBound();
     return file;
   }, [getFilePath]);
 
   const writeFile = useCallback(async (name: string, text: string): Promise<void> => {
+    assertBound();
     const isTauri =
       typeof window !== "undefined" &&
       Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
@@ -159,7 +183,7 @@ function useFile(): Files {
       // En entorno de producción de Tauri, se invoca save_note_atomic directamente sin capturar ni enmascarar errores.
       // Si falla (I/O, disco lleno, ruta insegura o symlink), el error debe propagarse directamente a
       // EditorSyncCoordinator para retener el borrador en localStorage y disparar onSaveError sin degradar a escrituras no atómicas.
-      await invoke("save_note_atomic", { fileName: name, content: text });
+      await invoke("save_note_atomic", { fileName: name, content: text, expectedWorkspaceId: boundWorkspaceId });
       return;
     }
 
@@ -180,6 +204,7 @@ function useFile(): Files {
   const readFile = useCallback(async (name: string): Promise<string> => {
     const { pathFile } = await getFilePath(name);
     let content: string = await readTextFile(pathFile, BASE_DIRECTORY);
+    assertBound();
     if (
       isWelcomeFileName(name) &&
       (content.includes("<p>") || (content.includes("&oacute;") && content.includes("&ntilde;")))

@@ -17,7 +17,8 @@ import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
-import { MAIN_FOLDER, THEMES } from "../utils/consts";
+import { THEMES } from "../utils/consts";
+import { getNotesDir } from "../utils/workspacePaths";
 import translations from "../utils/dictionary";
 import { scrollToNovedades, themes } from "../utils/helpers";
 import {
@@ -132,7 +133,6 @@ function Preferences(): Component {
       login,
       logout,
       syncNow,
-      hasManageableNotes,
     } = useSyncStore();
   const logoutConfirmationRef = useRef(createLogoutConfirmation(logout));
 
@@ -221,7 +221,7 @@ function Preferences(): Component {
   async function openFolder(): Promise<void> {
     try {
       const docPath: string = await documentDir();
-      const path: string = await join(docPath, MAIN_FOLDER);
+      const path: string = await join(docPath, getNotesDir());
       await invoke("open_folder", { path });
     } catch (err: any) {
       console.error(`catch 'openFolder' ${err?.message || err}`);
@@ -337,12 +337,6 @@ function Preferences(): Component {
                   </button>
                 )}
               </div>
-
-              {isConnected && hasManageableNotes && <button type="button" onClick={() => void useSyncStore.getState().manageLocalNotes()}
-                disabled={isSyncing}
-                className={`self-start text-xs underline underline-offset-2 disabled:opacity-50 ${isDay ? "text-indigo-700" : "text-sky-400"}`}>
-                Gestionar notas locales
-              </button>}
 
               {lastError && (
                 <div
@@ -671,7 +665,7 @@ function Preferences(): Component {
         onClose={() => { if (!isLoggingOut) { logoutConfirmationRef.current.cancel(); setLogoutDialogOpen(false); } }}
         onConfirm={() => { void confirmLogout(); }}
         title="¿Cerrar sesión de Google Drive?"
-        description={`Se desconectará Google Drive. Tus notas locales permanecerán disponibles. Los cambios pendientes podrán sincronizarse cuando vuelvas a conectar esta cuenta.${isSyncing ? " Hay una sincronización en curso que puede quedar interrumpida." : ""}${useSyncStore.getState().pendingAuthorization ? " Hay notas pendientes de autorización para sincronizar." : ""}`}
+        description={`Se desconectará Google Drive. Tus notas locales permanecerán disponibles. Los cambios pendientes podrán sincronizarse cuando vuelvas a conectar esta cuenta.${isSyncing ? " Hay una sincronización en curso que puede quedar interrumpida." : ""}`}
         confirmText={isLoggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
         cancelText="Cancelar"
         variant="danger"

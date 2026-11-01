@@ -4,7 +4,9 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 use tauri::Manager;
 
+#[cfg_attr(not(test), allow(dead_code))] // F3 quarantines the remote engine until F4.
 mod gdrive;
+mod workspaces;
 
 #[derive(serde::Serialize)]
 struct NoteStats {
@@ -52,7 +54,8 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
 async fn list_note_files_with_stats(app: tauri::AppHandle) -> Result<NoteListing, String> {
     let documents = app.path().document_dir()
         .map_err(|e| format!("Could not resolve Documents: {e}"))?;
-    let dir = documents.join("lyra");
+    // Notes live in the active workspace, never in the legacy root.
+    let dir = workspaces::notes_dir_for(&app)?;
     gdrive::sync::ensure_safe_base_dir(&dir)?;
     let allowed = documents.canonicalize().map_err(|e| format!("Could not inspect Documents: {e}"))?;
     let actual = dir.canonicalize().map_err(|e| format!("Could not inspect notes folder: {e}"))?;
@@ -305,12 +308,22 @@ async fn create_note(
     app: tauri::AppHandle,
     file_name: String,
     content: String,
+    expected_workspace_id: String,
 ) -> Result<(), String> {
-    let doc_dir = app.path().document_dir().map_err(|e| format!("Cannot resolve Documents: {e}"))?;
-    let lyra_dir = doc_dir.join("lyra");
-    gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)?;
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
-    let account = gdrive::auth::verify_current_account(&app).ok();
+    workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = workspaces::editable_notes_dir_for(&app)?;
+    gdrive::sync::ensure_safe_base_dir(&lyra_dir)?;
+    gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)?;
+    let runtime = workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let request = workspaces::sync_context::current(&ctx.documents, &ctx.config)?;
+    let kind = workspaces::sync_context::resolve(&ctx.documents, &ctx.config, &request)?.kind;
+    let account = if kind == workspaces::types::WorkspaceKind::GoogleDrive {
+        None // F4 authorizes the workspace, never a newly created note.
+    } else {
+        gdrive::auth::verify_current_account(&app).ok()
+    };
     gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
         gdrive::provenance::create_local_note(
             &lyra_dir, &file_name, content.as_bytes(),
@@ -319,17 +332,36 @@ async fn create_note(
     })
 }
 
+/// Migration recovery notes are local-only, even when an OAuth session exists.
 #[tauri::command]
-async fn create_internal_welcome(app: tauri::AppHandle, content: String) -> Result<bool, String> {
+async fn workspace_rescue_draft(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+    expected_workspace_id: String,
+) -> Result<(), String> {
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = workspaces::editable_notes_dir_for(&app)?;
+    gdrive::sync::ensure_safe_base_dir(&lyra_dir)?;
+    gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)?;
+    gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
+        gdrive::provenance::create_local_note(&lyra_dir, &file_name, content.as_bytes(), None)
+    })
+}
+
+#[tauri::command]
+async fn create_internal_welcome(app: tauri::AppHandle, content: String, expected_workspace_id: String) -> Result<bool, String> {
     use sha2::{Digest, Sha256};
     const NAME: &str = "¡Bienvenid@ a Lyra!.txt";
     const ORIGINAL_SHA256: &str = "abacc64832e3b1767687bc2bca1070b0413119090b229c70c7e8c162f6a76fa5";
     let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
     if digest != ORIGINAL_SHA256 { return Err("Invalid welcome content".into()); }
-    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = workspaces::editable_notes_dir_for(&app)?;
     gdrive::sync::ensure_safe_base_dir(&lyra_dir)?;
     let target = gdrive::sync::resolve_safe_path(&lyra_dir, NAME)?;
-    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
     gdrive::sync::get_file_lock_coordinator().with_file_lock(NAME, || {
         if target.exists() { return Ok(false); }
         gdrive::provenance::create_local_note(&lyra_dir, NAME, content.as_bytes(), None)?;
@@ -343,18 +375,16 @@ async fn save_note_atomic(
     app: tauri::AppHandle,
     file_name: String,
     content: String,
+    expected_workspace_id: String,
 ) -> Result<i64, String> {
-    let doc_dir = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
-    let lyra_dir = doc_dir.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = workspaces::editable_notes_dir_for(&app)?;
     let target_path = gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)
         .map_err(|e| format!("Ruta o nombre de archivo inválido: {e}"))?;
 
     // Coordinación exclusiva por archivo para prevenir condiciones de carrera TOCTOU
     // con descargas o reemplazos concurrentes del motor de Google Drive.
-    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
     let mtime = gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
         // If the file was replaced externally, its old permissions are retired
         // before writing any new Lyra content into it.
@@ -380,11 +410,7 @@ async fn save_note_atomic(
 
 #[tauri::command]
 fn check_and_drain_recovered_notes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    let doc_dir = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
-    let lyra_dir = doc_dir.join("lyra");
+    let lyra_dir = workspaces::notes_dir_for(&app)?;
 
     // Escanear temporales huérfanos que hayan superado el TTL
     gdrive::sync::clean_stale_tmp_save_files(&lyra_dir);
@@ -468,10 +494,17 @@ fn main() {
 
             gdrive::sync::set_app_handle_for_recovery(app.handle().clone());
 
+            // A missing system directory is shown by the workspace gate and
+            // can be retried without selecting an alternate notes folder.
+            let runtime_state = workspaces::RuntimeState::default();
+            if let Err(error) = runtime_state.resolve(app.handle()) {
+                eprintln!("[workspaces] {error}");
+            }
+            app.manage(runtime_state);
+
             let cleanup_handle = app.handle().clone();
             std::thread::spawn(move || {
-                if let Ok(doc_dir) = cleanup_handle.path().document_dir() {
-                    let lyra_dir = doc_dir.join("lyra");
+                if let Ok(lyra_dir) = workspaces::notes_dir_for(&cleanup_handle) {
                     gdrive::sync::clean_stale_tmp_save_files(&lyra_dir);
                 }
             });
@@ -500,8 +533,19 @@ fn main() {
             save_note_atomic,
             list_note_files_with_stats,
             create_note,
+            workspace_rescue_draft,
             create_internal_welcome,
             check_and_drain_recovered_notes,
+            workspaces::workspace_get_state,
+            workspaces::migration_retry,
+            workspaces::migration_resolve_item,
+            workspaces::migration_import_stray,
+            workspaces::migration_defer_stray,
+            workspaces::migration_resolve_retire,
+            workspaces::workspace_create,
+            workspaces::workspace_rename,
+            workspaces::workspace_select,
+            workspaces::workspace_delete,
             gdrive::get_backend_build_info,
             gdrive::gdrive_login,
             gdrive::gdrive_logout,

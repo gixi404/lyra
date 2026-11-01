@@ -5,20 +5,28 @@ pub mod credential_store;
 pub mod provenance;
 pub mod sync;
 pub mod types;
+pub mod workspace_sync;
 
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use types::{SyncResult, SyncStatus, UserProfile};
 use provenance::{PendingAuthorizationView, LocalNoteManagementView};
+use crate::workspaces::sync_context::{self, SyncRequest};
 
+#[cfg(test)]
 static IS_SYNCING: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 static SYNC_QUEUED: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 static SYNC_QUEUED_CONTEXT: std::sync::Mutex<Option<(SyncReason, Option<String>)>> = std::sync::Mutex::new(None);
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SyncReason { Background = 0, InitialConnection = 1, Authorization = 2 }
 
+#[cfg(test)]
 fn prefer_queued_context(
     current: Option<(SyncReason, Option<String>)>,
     reason: SyncReason,
@@ -32,14 +40,18 @@ fn prefer_queued_context(
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, serde::Serialize)]
 struct SyncStartPayload<'a> { sync_id: &'a str, reason: SyncReason, request_id: Option<&'a str> }
 
+#[cfg(test)]
 struct SyncRunningGuard<'a>(&'a AtomicBool);
 
+#[cfg(test)]
 #[derive(Clone, serde::Serialize)]
 struct SyncErrorPayload<'a> { sync_id: &'a str, message: &'a str }
 
+#[cfg(test)]
 impl Drop for SyncRunningGuard<'_> {
     fn drop(&mut self) {
         *SYNC_QUEUED_CONTEXT.lock().unwrap() = None;
@@ -47,10 +59,12 @@ impl Drop for SyncRunningGuard<'_> {
     }
 }
 
+#[cfg(test)]
 fn begin_sync(flag: &AtomicBool) -> Option<SyncRunningGuard<'_>> {
     if flag.swap(true, Ordering::SeqCst) { None } else { Some(SyncRunningGuard(flag)) }
 }
 
+#[cfg(test)]
 async fn update_manifest_last_error(
     path: &std::path::Path,
     last_error: Option<String>,
@@ -74,37 +88,52 @@ pub fn get_backend_build_info() -> serde_json::Value {
 
 #[tauri::command]
 pub async fn gdrive_login(app: tauri::AppHandle, client_request_id: Option<String>) -> Result<UserProfile, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
-    let profile = auth::start_oauth_flow(&app).await?;
-
-    // La sesión se abre con la identidad verificada (sub) recién guardada.
-    // Iniciar sesión NO autoriza ninguna nota existente.
-    let account = auth::verify_current_account(&app)?;
-    {
-        // Serializado con sincronización, borrado y consentimiento: la sesión
-        // nueva nunca se pisa con un guardado concurrente del libro.
-        let _guard = sync::MANIFEST_LOCK.lock().await;
-        provenance::start_account_session(&lyra_dir, &account.account_key, account.epoch)?;
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let request = sync_context::current(&ctx.documents, &ctx.config)?;
+    let resolved = sync_context::resolve(&ctx.documents, &ctx.config, &request)?;
+    if resolved.kind != crate::workspaces::types::WorkspaceKind::GoogleDrive {
+        return Err("Selecciona un espacio de Google Drive para conectar una cuenta".into());
     }
-
-    // Trigger initial sync in background
+    let auth_epoch = auth::prepare_new_auth(&app)?;
+    let candidate = auth::start_oauth_candidate(&app).await?;
+    let sub = candidate.user.sub.as_deref().ok_or("Google no devolvió un sub verificado")?;
+    let _transition = sync_context::COORDINATOR.begin_transition().await?;
+    let _manifest = sync::MANIFEST_LOCK.lock().await;
+    sync_context::resolve(&ctx.documents, &ctx.config, &request)?;
+    let previous = auth::read_workspace_candidate(&request.workspace_id)?;
+    auth::write_workspace_candidate(&request.workspace_id, &candidate, auth_epoch)?;
+    if let Err(error) = crate::workspaces::management::bind_drive_account(
+        &ctx, &request.workspace_id, sub, &candidate.user.email,
+    ) {
+        auth::restore_workspace_candidate(&request.workspace_id, previous.as_ref())
+            .map_err(|rollback| format!("No se pudo vincular el espacio ({error}); tampoco restaurar la credencial anterior ({rollback})"))?;
+        return Err(error);
+    }
+    let profile = candidate.user;
+    drop(_manifest);
+    drop(_transition);
+    let next_request = sync_context::current(&ctx.documents, &ctx.config)?;
     let app_clone = app.clone();
     tokio::spawn(async move {
-        let _ = run_sync_with_reason(app_clone, SyncReason::InitialConnection, client_request_id).await;
+        let _ = gdrive_sync_now(app_clone, next_request, Some("initial_connection".into()), client_request_id).await;
     });
     Ok(profile)
 }
 
 #[tauri::command]
 pub async fn gdrive_logout(app: tauri::AppHandle) -> Result<bool, String> {
+    // Cancel and drain an active F3 effect before invalidating the account.
+    // A request that already entered its critical section may finish, but no
+    // later remote effect can use a credential after this point.
+    let _transition = sync_context::COORDINATOR.begin_transition().await?;
     // Invalidate credentials and the account epoch while serialized with manifest work.
     let (state, readable) = {
         let _guard = sync::MANIFEST_LOCK.lock().await;
         let (state, readable) = auth::take_auth_state_for_logout(&app)?;
         if let Some(ref state) = state {
         let account_key = auth::get_account_key(&state.user);
-        if let Ok(doc_dir) = app.path().document_dir() {
-            let lyra_dir = doc_dir.join("lyra");
+        if let Ok(lyra_dir) = crate::workspaces::notes_dir_for(&app) {
             if sync::ensure_safe_base_dir(&lyra_dir).is_ok() {
                 let _ = provenance::end_account_session(&lyra_dir, &account_key);
             }
@@ -122,7 +151,11 @@ pub async fn gdrive_cancel_login() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn gdrive_get_status(app: tauri::AppHandle) -> Result<SyncStatus, String> {
+pub async fn gdrive_get_status(app: tauri::AppHandle, request: SyncRequest) -> Result<SyncStatus, String> {
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let _guard = sync::MANIFEST_LOCK.lock().await;
+    sync_context::resolve(&ctx.documents, &ctx.config, &request)?;
     let auth_state = auth::load_auth_state(&app)?;
     let is_connected = auth_state.is_some();
     let user_email = auth_state.as_ref().map(|s| s.user.email.clone());
@@ -133,38 +166,125 @@ pub async fn gdrive_get_status(app: tauri::AppHandle) -> Result<SyncStatus, Stri
         .map(|s| s.auto_sync_enabled)
         .unwrap_or(true);
 
-    let manifest = sync::load_manifest(&app);
-    let last_sync_timestamp = if manifest.last_sync_timestamp > 0 {
-        Some(manifest.last_sync_timestamp)
-    } else {
-        None
-    };
-
     Ok(SyncStatus {
         is_connected,
-        is_syncing: IS_SYNCING.load(Ordering::SeqCst),
+        is_syncing: sync_context::COORDINATOR.is_owner(&request),
         user_email,
         user_name,
         user_photo,
-        last_sync_timestamp,
-        last_error: manifest.last_error,
+        last_sync_timestamp: None,
+        last_error: None,
         auto_sync_enabled,
         backend_version: Some(BACKEND_VERSION.to_string()),
         backend_build_timestamp: Some(BACKEND_BUILD_TIMESTAMP.to_string()),
     })
 }
 
-#[tauri::command]
-pub async fn gdrive_sync_now(app: tauri::AppHandle, reason: Option<String>, request_id: Option<String>) -> Result<SyncResult, String> {
-    let reason = if reason.as_deref() == Some("authorization") {
-        SyncReason::Authorization
-    } else {
-        SyncReason::Background
-    };
-    run_sync_with_reason(app, reason, request_id).await
+fn scoped_current(
+    app: &tauri::AppHandle,
+    ctx: &crate::workspaces::migration::Ctx,
+    request: &SyncRequest,
+    identity: &workspace_sync::WorkspaceIdentity,
+    account: &auth::VerifiedAccount,
+) -> Result<SyncRequest, String> {
+    let current = sync_context::current(&ctx.documents, &ctx.config)?;
+    if &current != request { return Err("SyncStale: workspace epoch changed".into()); }
+    let (now_identity, _) = workspace_sync::resolve_identity(ctx, &current)?;
+    let now_account = auth::verify_current_account(app)?;
+    if &now_identity != identity || now_account.sub != account.sub ||
+        now_account.account_key != account.account_key || now_account.epoch != account.epoch {
+        return Err("SyncStale: Drive account or workspace binding changed".into());
+    }
+    Ok(current)
 }
 
+async fn run_scoped_once(
+    app: &tauri::AppHandle,
+    ctx: &crate::workspaces::migration::Ctx,
+    request: &SyncRequest,
+    permit: &sync_context::SyncPermit<'_>,
+    sync_id: &str,
+    reason: Option<&str>,
+    request_id: Option<&str>,
+) -> Result<SyncResult, String> {
+    let (identity, notes_dir) = workspace_sync::resolve_identity(ctx, request)?;
+    let account = auth::verify_current_account(app)?;
+    if account.sub != identity.account_sub {
+        return Err("Drive credential does not match the bound workspace".into());
+    }
+    let client = client::DriveClient::new_with_app_for_account(app, &account.account_key, account.epoch)?;
+    permit.effect(|| scoped_current(app, ctx, request, &identity, &account), || async {
+        app.emit("gdrive:sync_started", sync_context::SyncEvent::new(request,
+            serde_json::json!({"sync_id": sync_id, "reason": reason.unwrap_or("background"),
+                "request_id": request_id}))).map_err(|error| error.to_string())
+    }).await?;
+    let session = workspace_sync::content::ContentSession::new(ctx, request.clone(),
+        || scoped_current(app, ctx, request, &identity, &account).map(|_| ()), &client, permit)?;
+    let mut result = session.run().await?;
+    archive::sync_remote_workspace(&notes_dir, &identity, &account.account_key, &client, "", permit,
+        || scoped_current(app, ctx, request, &identity, &account)).await?;
+    result.sync_id = sync_id.to_string();
+    permit.effect(|| scoped_current(app, ctx, request, &identity, &account), || async {
+        app.emit("gdrive:sync_finished", sync_context::SyncEvent::new(request, &result))
+            .map_err(|error| error.to_string())
+    }).await?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn gdrive_sync_now(app: tauri::AppHandle, request: SyncRequest, reason: Option<String>, request_id: Option<String>) -> Result<SyncResult, String> {
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let resolved = {
+        let _guard = sync::MANIFEST_LOCK.lock().await;
+        let resolved = sync_context::resolve(&ctx.documents, &ctx.config, &request)?;
+        sync::ensure_safe_base_dir(&resolved.notes_dir)?;
+        resolved
+    };
+    if resolved.kind == crate::workspaces::types::WorkspaceKind::Local {
+        return sync_context::sync_gate(resolved.kind).map(|_| SyncResult::default());
+    }
+    // Remains closed until the complete content path and interruption recovery
+    // are proven. The legacy engine is never used by this command.
+    sync_context::sync_gate(resolved.kind)?;
+    let mut permit = match sync_context::COORDINATOR.submit(request.clone(), &resolved.request)? {
+        sync_context::Admission::Active(permit) => permit,
+        sync_context::Admission::Queued => return Ok(SyncResult { sync_id: "queued".into(), ..Default::default() }),
+    };
+    loop {
+        let sync_id = format!("sync-{:032x}", rand::random::<u128>());
+        let outcome = run_scoped_once(&app, &ctx, &request, &permit, &sync_id,
+            reason.as_deref(), request_id.as_deref()).await;
+        let result = match outcome {
+            Ok(result) => result,
+            Err(error) => {
+                let sanitized = sync::sanitize_error_message(&error);
+                if let Ok((identity, _)) = workspace_sync::resolve_identity(&ctx, &request) {
+                    if let Ok(account) = auth::verify_current_account(&app) {
+                        let _ = permit.effect(|| scoped_current(&app, &ctx, &request, &identity, &account), || async {
+                            app.emit("gdrive:sync_error", sync_context::SyncEvent::new(&request,
+                                serde_json::json!({"sync_id": sync_id, "message": sanitized})))
+                                .map_err(|emit_error| emit_error.to_string())
+                        }).await;
+                    }
+                }
+                return Err(sanitized);
+            }
+        };
+        let current = sync_context::current(&ctx.documents, &ctx.config).unwrap_or_else(|_| request.clone());
+        match permit.finish(&current) {
+            Some(next) => permit = next,
+            None => return Ok(result),
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
 async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut request_id: Option<String>) -> Result<SyncResult, String> {
+    if crate::workspaces::drive_sync_paused_for(&app) {
+        return Err("La sincronización con Google Drive permanece en pausa durante F1".to_string());
+    }
     let Some(_sync_guard) = begin_sync(&IS_SYNCING) else {
         eprintln!("[GDrive Sync] Sincronización en curso. Marcando SYNC_QUEUED=true para trailing sync.");
         let mut queued = SYNC_QUEUED_CONTEXT.lock().unwrap();
@@ -250,18 +370,23 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
 }
 
 #[tauri::command]
-pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String) -> Result<(), String> {
-    let doc_dir = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
-    let lyra_dir = doc_dir.join("lyra");
-    let local_file_path = sync::resolve_safe_path(&lyra_dir, &file_name)
-        .map_err(|e| format!("Nombre de archivo inválido o peligroso: {e}"))?;
-
-    let remote_deletion = {
+pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String, expected_workspace_id: String) -> Result<(), String> {
+    let _f4_effect = workspace_sync::EFFECT_LOCK.lock().await;
+    let (lyra_dir, remote_deletion) = {
         // 1. Cargar manifiesto con bloqueo
         let _guard = sync::MANIFEST_LOCK.lock().await;
+        crate::workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+        let runtime = crate::workspaces::Runtime::from_app(&app)?;
+        let ctx = runtime.ctx();
+        let request = sync_context::current(&ctx.documents, &ctx.config)?;
+        let resolved = sync_context::resolve(&ctx.documents, &ctx.config, &request)?;
+        if resolved.kind == crate::workspaces::types::WorkspaceKind::GoogleDrive {
+            crate::workspaces::editable_notes_dir(&ctx.documents, &ctx.config)?;
+            return workspace_sync::delete_local_note(&ctx, &request, &file_name, &_guard);
+        }
+        let lyra_dir = crate::workspaces::notes_dir_for(&app)?;
+        let local_file_path = sync::resolve_safe_path(&lyra_dir, &file_name)
+            .map_err(|e| format!("Nombre de archivo inválido o peligroso: {e}"))?;
         let account = auth::verify_current_account(&app).ok();
         let manifest_path = account.as_ref()
             .map(|a| sync::get_manifest_path_for_account(&lyra_dir, &a.account_key))
@@ -321,12 +446,12 @@ pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String) -> Res
             }
         }
 
-        account.zip(pending_for_remote).map(|(account, pending)| (account, pending, manifest_path))
+        (lyra_dir, account.zip(pending_for_remote).map(|(account, pending)| (account, pending, manifest_path)))
     };
 
     // 6. Si hay drive_id y credenciales activas, intentar enviar a papelera inmediatamente
     // La nota eliminada deja de estar asociada a esta cuenta.
-    if let Some((account, pending, manifest_path)) = remote_deletion {
+    if let Some((account, pending, manifest_path)) = remote_deletion.filter(|_| !crate::workspaces::drive_sync_paused_for(&app)) {
         if let Ok(client) = client::DriveClient::new_with_app_for_account(&app, &account.account_key, account.epoch) {
             let did = pending.drive_id.clone().ok_or("Missing remote deletion ID")?;
             if let Err(e) = execute_remote_deletion(
@@ -383,21 +508,26 @@ pub async fn gdrive_set_auto_sync(app: tauri::AppHandle, enabled: bool) -> Resul
 }
 
 fn resolve_lyra_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let doc_dir = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
-    let lyra_dir = doc_dir.join("lyra");
-    if !lyra_dir.exists() {
-        std::fs::create_dir_all(&lyra_dir)
-            .map_err(|e| format!("Cannot create notes directory: {e}"))?;
+    // Every note-scoped operation follows the notes into the active workspace.
+    let lyra_dir = crate::workspaces::notes_dir_for(app)?;
+    if !lyra_dir.is_dir() {
+        return Err("El espacio de trabajo activo no está disponible".to_string());
     }
     sync::ensure_safe_base_dir(&lyra_dir)?;
     Ok(lyra_dir)
 }
 
+fn resolve_sync_request_dir(app: &tauri::AppHandle, request: &SyncRequest) -> Result<std::path::PathBuf, String> {
+    let runtime = crate::workspaces::Runtime::from_app(app)?;
+    let ctx = runtime.ctx();
+    let resolved = sync_context::resolve(&ctx.documents, &ctx.config, request)?;
+    sync::ensure_safe_base_dir(&resolved.notes_dir)?;
+    Ok(resolved.notes_dir)
+}
+
 /// Resuelve la ruta del manifiesto que corresponde a la cuenta verificada en este
 /// instante. Se usa para capturar la ruta antes de iniciar una sincronización.
+#[cfg(test)]
 fn resolve_sync_manifest_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let lyra_dir = resolve_lyra_dir(app)?;
     if let Ok(account) = auth::verify_current_account(app) {
@@ -413,13 +543,10 @@ fn resolve_sync_manifest_path(app: &tauri::AppHandle) -> Result<std::path::PathB
 #[tauri::command]
 pub async fn gdrive_get_pending_authorizations(
     app: tauri::AppHandle,
+    request: SyncRequest,
 ) -> Result<Option<PendingAuthorizationView>, String> {
-    let account = match auth::verify_current_account(&app) {
-        Ok(account) => account,
-        Err(_) => return Ok(None),
-    };
-    let lyra_dir = resolve_lyra_dir(&app)?;
-    provenance::load_pending_view(&lyra_dir, &account.account_key)
+    resolve_sync_request_dir(&app, &request)?;
+    Ok(None)
 }
 
 /// Autoriza explícitamente las notas de una solicitud concreta.
@@ -431,27 +558,25 @@ pub async fn gdrive_authorize_pending(
     app: tauri::AppHandle,
     request_id: String,
     selected_ids: Vec<String>,
+    request: SyncRequest,
 ) -> Result<usize, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
-    let _guard = sync::MANIFEST_LOCK.lock().await;
-    let account = auth::verify_current_account(&app)?;
-    provenance::authorize_selected_pending(&lyra_dir, &account.account_key, &request_id, &selected_ids, account.epoch)
+    resolve_sync_request_dir(&app, &request)?;
+    let _ = (request_id, selected_ids);
+    Err("La autorización por nota no se utiliza en espacios de Google Drive".into())
 }
 
 #[tauri::command]
-pub async fn gdrive_manage_local_notes(app: tauri::AppHandle, reopen_declined: bool) -> Result<LocalNoteManagementView, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
-    let _guard = sync::MANIFEST_LOCK.lock().await;
-    let account = auth::verify_current_account(&app)?;
-    let manifest = sync::load_manifest_for_account_dir(&lyra_dir, &account.account_key, Some(&account.email));
-    provenance::inspect_local_notes(&lyra_dir, &account.account_key, Some(account.email), account.epoch, &manifest, reopen_declined)
+pub async fn gdrive_manage_local_notes(app: tauri::AppHandle, reopen_declined: bool, request: SyncRequest) -> Result<LocalNoteManagementView, String> {
+    resolve_sync_request_dir(&app, &request)?;
+    let _ = reopen_declined;
+    Err("La autorización por nota no se utiliza en espacios de Google Drive".into())
 }
 
 #[tauri::command]
-pub async fn gdrive_is_internal_welcome(app: tauri::AppHandle, file_name: String) -> Result<bool, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+pub async fn gdrive_is_internal_welcome(app: tauri::AppHandle, file_name: String, request: SyncRequest) -> Result<bool, String> {
+    let _guard = sync::MANIFEST_LOCK.lock().await;
+    let lyra_dir = resolve_sync_request_dir(&app, &request)?;
     sync::resolve_safe_path(&lyra_dir, &file_name)?;
-    let _guard = sync::MANIFEST_LOCK.lock().await;
     provenance::is_verified_internal_welcome(&lyra_dir, &file_name)
 }
 
@@ -460,11 +585,11 @@ pub async fn gdrive_is_internal_welcome(app: tauri::AppHandle, file_name: String
 pub async fn gdrive_decline_pending(
     app: tauri::AppHandle,
     request_id: String,
+    request: SyncRequest,
 ) -> Result<(), String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
-    let _guard = sync::MANIFEST_LOCK.lock().await;
-    let account = auth::verify_current_account(&app)?;
-    provenance::decline_pending(&lyra_dir, &account.account_key, &request_id)
+    resolve_sync_request_dir(&app, &request)?;
+    let _ = request_id;
+    Err("La autorización por nota no se utiliza en espacios de Google Drive".into())
 }
 
 /// Conserva la identidad y autorizaciones de una nota al renombrarla localmente.
@@ -473,15 +598,36 @@ pub async fn gdrive_note_renamed(
     app: tauri::AppHandle,
     old_name: String,
     new_name: String,
+    expected_workspace_id: String,
 ) -> Result<bool, String> {
+    let _f4_effect = workspace_sync::EFFECT_LOCK.lock().await;
+    let _guard = sync::MANIFEST_LOCK.lock().await;
+    crate::workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
     let lyra_dir = resolve_lyra_dir(&app)?;
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let request = sync_context::current(&ctx.documents, &ctx.config)?;
+    let drive_identity = if sync_context::resolve(&ctx.documents, &ctx.config, &request)?.kind == crate::workspaces::types::WorkspaceKind::GoogleDrive {
+        let (identity, _) = workspace_sync::resolve_identity(&ctx, &request)?;
+        let manifest = workspace_sync::load(&lyra_dir, &identity)?;
+        if manifest.files.contains_key(&new_name) || manifest.pending_deletions.contains_key(&new_name) {
+            return Err("Destination note already has a Drive identity".into());
+        }
+        if let Some(file) = manifest.files.get(&old_name) {
+            let ledger = provenance::load_ledger(&provenance::get_ledger_path(&lyra_dir))?
+                .ok_or("Missing identity ledger for mapped note")?;
+            if ledger.by_name.get(&old_name) != Some(&file.note_id) {
+                return Err("Mapped note identity changed before rename".into());
+            }
+        }
+        Some(identity)
+    } else { None };
     let old_path = sync::resolve_safe_path(&lyra_dir, &old_name)?;
     let new_path = sync::resolve_safe_path(&lyra_dir, &new_name)?;
-    let _guard = sync::MANIFEST_LOCK.lock().await;
     if new_path.exists() {
         return Err("Destination note already exists".to_string());
     }
-    sync::get_file_lock_coordinator().with_file_lock(&old_name, || {
+    let renamed = sync::get_file_lock_coordinator().with_file_lock(&old_name, || {
         provenance::invalidate_changed_note(&lyra_dir, &old_name)?;
         // Creating a hard link fails if the destination was created by an
         // external process after the existence check. Both paths are in the
@@ -493,35 +639,75 @@ pub async fn gdrive_note_renamed(
             return Err(format!("Cannot complete note rename: {e}"));
         }
         provenance::rename_note(&lyra_dir, &old_name, &new_name)
-    })
+    })?;
+    if renamed {
+        if let Some(identity) = drive_identity {
+            workspace_sync::record_local_rename(&lyra_dir, &identity, &old_name, &new_name, &_guard)?;
+        }
+    }
+    Ok(renamed)
 }
 
 #[tauri::command]
-pub async fn archive_initialize(app: tauri::AppHandle, archived_names: Vec<String>) -> Result<archive::ArchiveProjection, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+pub async fn archive_initialize(app: tauri::AppHandle, archived_names: Vec<String>, expected_workspace_id: String) -> Result<archive::ArchiveProjection, String> {
     let _guard = sync::MANIFEST_LOCK.lock().await;
+    crate::workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = resolve_lyra_dir(&app)?;
     let _archive_guard = archive::ARCHIVE_LOCK.lock().await;
     archive::initialize_legacy(&lyra_dir, &archived_names)?;
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let request = sync_context::current(&ctx.documents, &ctx.config)?;
+    if sync_context::resolve(&ctx.documents, &ctx.config, &request)?.kind == crate::workspaces::types::WorkspaceKind::GoogleDrive {
+        if auth::load_auth_state(&app)?.is_some() {
+            let account = auth::verify_current_account(&app)?;
+            let (identity, _) = workspace_sync::resolve_identity(&ctx, &request)?;
+            return archive::projection_workspace(&lyra_dir, &identity, &account.account_key);
+        }
+        return archive::projection_local_only(&lyra_dir);
+    }
     let account = auth::verify_current_account(&app).ok();
     archive::projection(&lyra_dir, account.as_ref().map(|a| a.account_key.as_str()))
 }
 
 #[tauri::command]
-pub async fn archive_set(app: tauri::AppHandle, file_name: String, archived: bool) -> Result<archive::ArchiveProjection, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+pub async fn archive_set(app: tauri::AppHandle, file_name: String, archived: bool, expected_workspace_id: String) -> Result<archive::ArchiveProjection, String> {
     let _guard = sync::MANIFEST_LOCK.lock().await;
+    crate::workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = resolve_lyra_dir(&app)?;
     let _archive_guard = archive::ARCHIVE_LOCK.lock().await;
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let request = sync_context::current(&ctx.documents, &ctx.config)?;
+    if sync_context::resolve(&ctx.documents, &ctx.config, &request)?.kind == crate::workspaces::types::WorkspaceKind::GoogleDrive {
+        crate::workspaces::editable_notes_dir(&ctx.documents, &ctx.config)?;
+        let (identity, _) = workspace_sync::resolve_identity(&ctx, &request)?;
+        let account = auth::verify_current_account(&app)?;
+        archive::set_archived_workspace(&lyra_dir, &file_name, archived, &identity, &account.account_key)?;
+        return archive::projection_workspace(&lyra_dir, &identity, &account.account_key);
+    }
     let account = auth::verify_current_account(&app).ok();
     archive::set_archived(&lyra_dir, &file_name, archived, account.as_ref().map(|a| a.account_key.as_str()))?;
-    if IS_SYNCING.load(Ordering::SeqCst) { SYNC_QUEUED.store(true, Ordering::SeqCst); }
     archive::projection(&lyra_dir, account.as_ref().map(|a| a.account_key.as_str()))
 }
 
 #[tauri::command]
-pub async fn archive_get_projection(app: tauri::AppHandle) -> Result<archive::ArchiveProjection, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+pub async fn archive_get_projection(app: tauri::AppHandle, expected_workspace_id: String) -> Result<archive::ArchiveProjection, String> {
     let _guard = sync::MANIFEST_LOCK.lock().await;
+    crate::workspaces::ensure_active_workspace_for(&app, &expected_workspace_id)?;
+    let lyra_dir = resolve_lyra_dir(&app)?;
     let _archive_guard = archive::ARCHIVE_LOCK.lock().await;
+    let runtime = crate::workspaces::Runtime::from_app(&app)?;
+    let ctx = runtime.ctx();
+    let request = sync_context::current(&ctx.documents, &ctx.config)?;
+    if sync_context::resolve(&ctx.documents, &ctx.config, &request)?.kind == crate::workspaces::types::WorkspaceKind::GoogleDrive {
+        if auth::load_auth_state(&app)?.is_some() {
+            let account = auth::verify_current_account(&app)?;
+            let (identity, _) = workspace_sync::resolve_identity(&ctx, &request)?;
+            return archive::projection_workspace(&lyra_dir, &identity, &account.account_key);
+        }
+        return archive::projection_local_only(&lyra_dir);
+    }
     let account = auth::verify_current_account(&app).ok();
     archive::projection(&lyra_dir, account.as_ref().map(|a| a.account_key.as_str()))
 }

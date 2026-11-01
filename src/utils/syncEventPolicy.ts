@@ -36,3 +36,15 @@ export function acceptsSyncCompletion(
   return acceptsSyncStart(connected, loginInProgress) &&
     activeId !== null && eventId === activeId;
 }
+
+export interface SyncEventContext {
+  workspace_id: string;
+  epoch: number;
+}
+
+export function sameSyncContext(
+  event: SyncEventContext | null | undefined,
+  active: { workspaceId: string; epoch: number } | null,
+): boolean {
+  return Boolean(event && active && event.workspace_id === active.workspaceId && event.epoch === active.epoch);
+}

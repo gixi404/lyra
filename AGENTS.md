@@ -3,8 +3,8 @@
 ## What matters here
 
 - This is a Tauri v2 + React 18 + TypeScript + Tailwind app. The UI boots from `src/main.tsx`; routes live in `src/pages/*`.
-- Persistent app files live in `~/Documents/lyra/`. `verifyMainFolder()` creates the folder and the welcome file (`¡Bienvenid@ a Lyra!.txt`) on first run or when empty.
-- `pnpm run build` is the repo’s verification gate; it is the only TypeScript type-check path defined here. There is no separate test script.
+- Persistent app files live in `~/Documents/lyra/`. Las notas viven en `~/Documents/lyra/workspaces/<id>/`; la raíz `lyra/` conserva preferencias, `rescatados/` y el log de depuración.
+- `pnpm run build` is the repo’s verification gate for the app. Backend: `cd src-tauri && cargo test`. Frontend tests: `pnpm test` (Node `node:test`, archivos `tests/*.test.ts`); el type-check de tests es `pnpm run typecheck:test` (`tsconfig.test.json`).
 - `pnpm run dev` starts Vite on port `1420`; Tauri expects that port.
 - `pnpm run tauri build` is the full Rust build producing DEB, RPM, AppImage (Linux) and MSI (Windows).
 
@@ -82,11 +82,37 @@ pnpm run tauri dev      # desarrollo con hot-reload
 - **Sin formato Markdown**: Al agregar o redactar funcionalidades en la sección de novedades (`defaultChangelog` en `src/pages/Preferences.tsx` o notas de actualización de versiones para `lyra_release_notes`), **NO usar formato markdown** (evitar negritas `**texto**`, cursivas `*texto*`, enlaces `[texto](url)`, viñetas manuales, etc.).
 - Las novedades se renderizan como texto plano directo en elementos `<li>{item}</li>` dentro de la interfaz; redactar siempre texto plano, simple y directo.
 
+## Espacios de Trabajo y Migración (Fase F1)
+
+- **Layout uniforme**: las notas de la cuenta activa viven en `~/Documents/lyra/workspaces/<id>/` (`ws_001`, `ws_002`, …). Los ids son monotónicos y nunca se reutilizan.
+- **Puerta de arranque**: `WorkspaceGate` (`src/components/WorkspaceGate.tsx`) solo renderiza la app cuando `workspace_get_state` responde `required: false`; mientras tanto se muestra `MigrationScreen`. La decisión es siempre del backend (`Snapshot.required`), nunca de estado local. Sin puente Tauri (navegador/Node) la puerta se omite.
+- **Migración recuperable** (`src-tauri/src/workspaces/migration.rs`): diario `.lyra_migration.json` (`schema_version: 2`) con fases `preparing → copied → prepared → activated → retired`. El estado de cada nota se deriva del disco; solo se persisten las decisiones del usuario. Nunca se sobrescribe una nota: si el destino ya existe con otro contenido se conservan ambas (`KeepBoth`) o se adopta la del espacio (`AdoptDestination`), y la original va a `rescatados/`.
+- **Originales**: se mueven a `lyra/rescatados/migracion-<ts>/` con `.lyra_retired.json`. Un conflicto al retirar no borra nada: la nota queda pendiente en la raíz y se resuelve de forma no destructiva (`keep_as_pending` | `move_to_rescatados`), sin bloquear el arranque indefinidamente.
+- **Notas aplazadas**: siguen intactas en la raíz y se reportan como pendientes; nunca cuentan como migradas y el aviso persiste hasta resolverlas.
+- **Enlaces simbólicos**: nunca se siguen ni se importan; se informan como pendientes no importables.
+- **Registro**: `workspaces.json` en `app_config_dir()` (con `.bak`), reconstruible desde los marcadores `.lyra_workspace.json` de cada espacio. El marcador solo se escribe al activar (`activate`), nunca al materializar la carpeta.
+- **Google Drive en F1**: la sincronización permanece bloqueada desde Rust durante toda F1, incluso si falta el diario. La sincronización y las eliminaciones remotas requieren una implementación posterior vinculada a un espacio de trabajo.
+- **Rutas en el frontend**: todo acceso a notas pasa por `src/utils/workspacePaths.ts` (`getNotesDir`, `notesPath`). Antes de una instantánea válida del backend no hay directorio de notas; solo se acepta `lyra/workspaces/ws_\d{3,}`.
+- **Concurrencia de migración**: el plugin de instancia única va primero; un bloqueo de archivo en `app_config_dir()` se mantiene durante la vida del proceso para cubrir sesiones Linux sin D-Bus compartido. Un error al resolver Documentos o configuración deja visible la puerta de migración y admite reintento.
+
+## Gestión de espacios (Fase F2)
+
+- `src-tauri/src/workspaces/management.rs` implementa creación, renombrado, selección y eliminación. Rust limita a cinco espacios y mantiene IDs monotónicos.
+- El cambio de espacio espera guardados efectivos del editor. Los comandos que mutan notas reciben `expectedWorkspaceId` y Rust lo verifica bajo `MANIFEST_LOCK` antes de resolver rutas.
+- Los borradores, el scroll y el estado de bienvenida se separan por ID de espacio; el espacio migrado en F1 conserva acceso a sus claves anteriores.
+- Eliminar un espacio inactivo mueve su directorio completo a `rescatados/` con un diario recuperable; no borra notas. Drive permanece pausado hasta F4.
+
+## Aislamiento de sincronización (Fase F3)
+
+- Cada solicitud de sincronización usa `SyncRequest { workspace_id, epoch }`, validado por Rust contra el registro activo. La ruta se deriva del ID validado. Los espacios locales responden `SyncDisabled`; Google Drive sigue en pausa hasta F4.
+- `src-tauri/src/workspaces/sync_context.rs` coordina propietario, solicitud rezagada, cancelación y secciones críticas. El cambio de espacio cancela la solicitud anterior y espera los efectos críticos antes de cambiar el registro.
+- El frontend descarta eventos y respuestas con identidad o epoch anterior. El motor Drive heredado permanece inaccesible en producción; véase `docs/F3-sync-isolation.md` antes de conectarlo en F4.
+
 ## Motor de Sincronización Google Drive y Protección Antiperdida
 
 - **Arquitectura Backend**: Ubicado en `src-tauri/src/gdrive/` (`auth.rs`, `client.rs`, `sync.rs`, `types.rs`, `mod.rs`).
 - **Comandos Tauri**:
-  - `gdrive_sync_now`: Orquesta la sincronización bidireccional no bloqueante con trailing sync (`SYNC_QUEUED`).
+  - `gdrive_sync_now`: valida `SyncRequest`; responde `SyncDisabled` para espacios locales y `SyncPaused` para Drive durante F3. El motor bidireccional se conectará en F4.
   - `gdrive_delete_file`: Registra un tombstone persistente en `manifest.pending_deletions` antes de eliminar el archivo local, propagándolo inmediatamente a la papelera de Drive si hay conexión.
   - `gdrive_get_status`, `gdrive_start_auth`, `gdrive_logout`: Gestión de autenticación OAuth 2.0 PKCE.
 - **Regla Fundamental Antiperdida**: La eliminación de notas o de la carpeta `lyra` directamente en Google Drive NUNCA borra archivos locales. El motor des-papela (`untrash_file`) o regenera la copia remota.

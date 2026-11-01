@@ -144,4 +144,8 @@ pub struct DriveFileMetadata {
     pub md5_checksum: Option<String>,
     #[serde(default)]
     pub trashed: Option<bool>,
+    #[serde(default)]
+    pub app_properties: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub parents: Vec<String>,
 }

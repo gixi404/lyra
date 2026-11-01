@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Lyra is a focused writing application built with Tauri v2, React 18, TypeScript, and Tailwind CSS. It's a distraction-free text editor that stores files locally in the user's Documents folder (`Documents/lyra/`). The app works offline and supports bilingual content (Spanish/English).
+Lyra is a focused writing application built with Tauri v2, React 18, TypeScript, and Tailwind CSS. It's a distraction-free text editor that stores notes locally in the active workspace folder inside the user's Documents folder (`Documents/lyra/workspaces/<id>/`, migrating from `Documents/lyra/`). The app works offline and supports bilingual content (Spanish/English).
 
 ## Build & Development Commands
 
@@ -78,7 +78,7 @@ pnpm newversion 2.0.5   # Specific version
 
 **File Storage:**
 - Base directory: User's Documents folder
-- Main folder: `Documents/lyra/`
+- Notes folder: `Documents/lyra/workspaces/<id>/` (resolved by the workspace runtime; root `Documents/lyra/` keeps preferences, `rescatados/` and debug logs)
 - File format: Plain text `.txt` files
 - Auto-creates welcome file on first run (language-dependent)
 
