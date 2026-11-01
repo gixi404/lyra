@@ -1,3 +1,6 @@
+packages:
+  - '.'
+
 overrides:
   dompurify: "^3.4.17"
   rollup: "^4.22.4"
