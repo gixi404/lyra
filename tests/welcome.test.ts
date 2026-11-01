@@ -294,3 +294,44 @@ test("13. Residuo de 'paper' en localStorage con carpeta vacía: se crea el arch
   const paper = JSON.parse(env.storageOps.getItem("paper") || "[]");
   assert.strictEqual(paper.some((n: string) => isWelcomeFileName(n)), false);
 });
+
+test("14. Crear una nota nueva no archiva ni oculta el archivo de bienvenida", async () => {
+  const env = createMockEnvironment({
+    [WELCOME_FILE_NAME]: INTRO_ES,
+    "Mi nueva nota.txt": "Contenido",
+  });
+  await ensureWelcomeFileState(env.fsOps, env.storageOps);
+
+  const res = await ensureWelcomeFileState(env.fsOps, env.storageOps);
+  assert.strictEqual(res.created, false);
+  assert.strictEqual(res.activeWelcome, WELCOME_FILE_NAME);
+
+  const paper = JSON.parse(env.storageOps.getItem("paper") || "[]");
+  assert.strictEqual(paper.includes(WELCOME_FILE_NAME), false);
+
+  const dir = await env.fsOps.readDir(MAIN_FOLDER);
+  assert.ok(dir.some(f => isWelcomeFileName(f.name)), "La bienvenida debe seguir en el listado");
+});
+
+test("15. Crear varias notas mantiene la bienvenida visible tras reiniciar", async () => {
+  const env = createMockEnvironment({
+    [WELCOME_FILE_NAME]: INTRO_ES,
+    "Nota 1.txt": "A",
+    "Nota 2.txt": "B",
+    "Nota 3.txt": "C",
+  });
+
+  // Primer inicio
+  const first = await ensureWelcomeFileState(env.fsOps, env.storageOps);
+  assert.strictEqual(first.activeWelcome, WELCOME_FILE_NAME);
+
+  // Segundo inicio (reinicio)
+  const second = await ensureWelcomeFileState(env.fsOps, env.storageOps);
+  assert.strictEqual(second.activeWelcome, WELCOME_FILE_NAME);
+
+  const paper = JSON.parse(env.storageOps.getItem("paper") || "[]");
+  assert.strictEqual(paper.includes(WELCOME_FILE_NAME), false);
+
+  const dir = await env.fsOps.readDir(MAIN_FOLDER);
+  assert.ok(dir.some(f => isWelcomeFileName(f.name)), "La bienvenida debe seguir visible tras reiniciar");
+});
