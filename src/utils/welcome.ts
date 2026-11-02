@@ -10,12 +10,12 @@ import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import { scheduleSavePersistentPreferences } from "./persistentPreferences.ts";
 import { fileStore } from "../store/fileStore.ts";
+import { setArchiveState } from "./archiveState.ts";
 
 export const WELCOME_FILE_NAME: string = WELCOME_ES;
 
 async function archiveWelcome(name: string, currentPaper: string[], storageOps: WelcomeStorageOps): Promise<void> {
   if (storageOps === defaultStorageOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
-    const { setArchiveState } = await import("./archiveState");
     await setArchiveState(name, true);
     return;
   }

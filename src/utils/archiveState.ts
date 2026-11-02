@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { configStore } from "../store/configStore";
-import { fileStore } from "../store/fileStore";
-import { savePersistentPreferencesNow } from "./persistentPreferences";
+import { configStore } from "../store/configStore.ts";
+import { fileStore } from "../store/fileStore.ts";
+import { savePersistentPreferencesNow } from "./persistentPreferences.ts";
 
 export interface ArchiveProjection {
   archivedNames: string[];
