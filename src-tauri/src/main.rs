@@ -5,6 +5,8 @@ use std::time::UNIX_EPOCH;
 use tauri::Manager;
 
 mod gdrive;
+mod native_updater;
+
 
 #[derive(serde::Serialize)]
 struct NoteStats {
@@ -301,80 +303,85 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_installation_info() -> native_updater::InstallationInfo {
+    native_updater::detect_installation_format()
+}
+
+#[tauri::command]
+async fn check_native_update(
+    format: Option<String>,
+    current_version: Option<String>,
+) -> Result<Option<native_updater::NativeUpdateInfo>, String> {
+    let install_info = native_updater::detect_installation_format();
+    let fmt = match format.as_deref() {
+        Some("rpm") => native_updater::InstallationFormat::Rpm,
+        Some("deb") => native_updater::InstallationFormat::Deb,
+        _ => install_info.format,
+    };
+    let cur_ver = current_version.unwrap_or_else(|| gdrive::BACKEND_VERSION.to_string());
+    native_updater::check_native_update(fmt, &cur_ver).await
+}
+
+#[tauri::command]
+async fn apply_native_update(
+    url: String,
+    signature: String,
+    format: String,
+) -> Result<(), String> {
+    let fmt = match format.as_str() {
+        "rpm" => native_updater::InstallationFormat::Rpm,
+        "deb" => native_updater::InstallationFormat::Deb,
+        _ => return Err(format!("Formato de actualización no soportado: {format}")),
+    };
+    let (_tmp_dir, pkg_path) = native_updater::download_and_verify_package(&url, &signature, fmt).await?;
+    native_updater::install_package_elevated(&pkg_path, fmt)
+}
+
+#[tauri::command]
 fn is_rpm_install() -> bool {
-    let rpm_ok = std::process::Command::new("rpm")
-        .args(["-q", "lyra"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let exe_rpm = std::env::current_exe()
-        .ok()
-        .map(|p| p.to_string_lossy().contains("/usr/"))
-        .unwrap_or(false);
-    rpm_ok || exe_rpm
+    matches!(
+        native_updater::detect_installation_format().format,
+        native_updater::InstallationFormat::Rpm
+    )
 }
 
 #[tauri::command]
 async fn rpm_latest_info() -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .get("https://api.github.com/repos/gixi404/lyra/releases/latest")
-        .header("User-Agent", "lyra-updater")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
+    match native_updater::check_native_update(
+        native_updater::InstallationFormat::Rpm,
+        gdrive::BACKEND_VERSION,
+    )
+    .await?
+    {
+        Some(info) => Ok((info.version, info.url)),
+        None => Err("No newer RPM version available".to_string()),
     }
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let tag = json["tag_name"]
-        .as_str()
-        .ok_or("no tag")?
-        .trim_start_matches('v')
-        .to_string();
-    let assets = json["assets"].as_array().ok_or("no assets")?;
-    let url = assets
-        .iter()
-        .filter_map(|a| {
-            let name = a["name"].as_str()?;
-            if name.ends_with(".rpm") && name.contains("x86_64") {
-                a["browser_download_url"].as_str().map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .next()
-        .ok_or("no rpm asset")?;
-    Ok((tag, url))
 }
 
 #[tauri::command]
 async fn download_rpm(url: String) -> Result<String, String> {
-    let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-    let dir = std::env::temp_dir().join("lyra-update");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("lyra-update.rpm");
-    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+    let update = native_updater::check_native_update(native_updater::InstallationFormat::Rpm, "0.0.0")
+        .await?
+        .ok_or("No RPM update information available")?;
+    let (_tmp_dir, pkg_path) = native_updater::download_and_verify_package(
+        &url,
+        &update.signature,
+        native_updater::InstallationFormat::Rpm,
+    )
+    .await?;
+    let persistent_path = std::env::temp_dir().join(format!("lyra_update_{}.rpm", rand::random::<u32>()));
+    std::fs::copy(&pkg_path, &persistent_path).map_err(|e| e.to_string())?;
+    Ok(persistent_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 async fn install_rpm(path: String) -> Result<(), String> {
-    let status = std::process::Command::new("pkexec")
-        .args(["dnf", "install", "-y", &path])
-        .status()
-        .map_err(|e| e.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("install failed".to_string())
-    }
+    let p = std::path::PathBuf::from(&path);
+    let res = native_updater::install_package_elevated(&p, native_updater::InstallationFormat::Rpm);
+    let _ = std::fs::remove_file(&p);
+    res
 }
+
 
 #[tauri::command]
 async fn create_note(
@@ -576,6 +583,9 @@ fn main() {
             save_note_atomic,
             list_note_files_with_stats,
             create_note,
+            get_installation_info,
+            check_native_update,
+            apply_native_update,
             is_rpm_install,
             rpm_latest_info,
             download_rpm,

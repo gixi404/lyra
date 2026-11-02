@@ -1,6 +1,6 @@
 [package]
 name = "lyra"
-version = "2.0.18"
+version = "2.0.21"
 description = "lyra: focused writing"
 authors = ["gixi"]
 edition = "2021"
@@ -33,6 +33,9 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 keyring = { version = "3.6", default-features = false, features = ["windows-native", "sync-secret-service"] }
 bincode = "1.3"
+minisign-verify = "0.3"
+tempfile = "3"
+
 
 
 [features]

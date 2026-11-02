@@ -10,6 +10,17 @@ import { setListScroll } from "./listScroll";
 import { prepareEditorsForRelaunch, runPreparedInstall, runPreparedRelaunch } from "./editorPersistence";
 import { savePersistentPreferencesNow } from "./persistentPreferences";
 
+import {
+  compareVersions,
+  type InstallationFormat,
+  type InstallationInfo,
+  type NativeUpdateInfo,
+} from "./updaterVersion";
+
+export type { InstallationFormat, InstallationInfo, NativeUpdateInfo };
+export { compareVersions };
+
+
 let isChecking = false;
 let pendingRestartVersion: string | null = null;
 let restartInProgress = false;
@@ -106,37 +117,50 @@ export async function notifyIfJustUpdated(): Promise<void> {
   }
 }
 
-async function compareVersions(a: string, b: string): Promise<number> {
-  const pa = a.replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
-  const pb = b.replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i] || 0;
-    const y = pb[i] || 0;
-    if (x !== y) return x - y;
-  }
-  return 0;
-}
 
-export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
-    if (isManual) notification("info", "No hay conexión a internet.", undefined, 5000);
-    return;
-  }
-
+export async function checkAndApplyNativePackageUpdate(
+  format: "rpm" | "deb",
+  isManual = false
+): Promise<boolean> {
   try {
     const currentVersion = await getVersion();
-    const [latestVersion, rpmUrl] = await invoke<[string, string]>("rpm_latest_info");
+    const update = await invoke<NativeUpdateInfo | null>("check_native_update", {
+      format,
+      currentVersion,
+    });
 
-    if (await compareVersions(latestVersion, currentVersion) <= 0) {
+    if (!update || compareVersions(update.version, currentVersion) <= 0) {
       if (isManual) {
-        notification("info", "Lyra está en la última versión disponible.", { label: "Ver novedades", onClick: openNovedades }, 5000);
+        notification(
+          "info",
+          "Lyra está en la última versión disponible.",
+          { label: "Ver novedades", onClick: openNovedades },
+          5000
+        );
       }
-      return;
+      return false;
     }
 
-    notification("info", `Actualizando a v${latestVersion}...`, undefined, 120000);
+    if (getPendingRestartVersion() === update.version) {
+      if (isManual) {
+        notification(
+          "success",
+          `La versión v${update.version} está lista para usar`,
+          { label: "Reiniciar Lyra", onClick: restartInstalledUpdate },
+          8000
+        );
+      }
+      return true;
+    }
 
-    const rpmPath = await invoke<string>("download_rpm", { url: rpmUrl });
+    if (update.notes) {
+      try {
+        window.localStorage.setItem("lyra_release_notes", update.notes);
+        window.localStorage.setItem("lyra_release_version", update.version);
+      } catch {}
+    }
+
+    notification("info", `Actualizando a v${update.version}...`, undefined, 120000);
 
     const installed = await runPreparedInstall(
       () => prepareEditorsForRelaunch(),
@@ -147,8 +171,12 @@ export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
         if (appRoot) appRoot.inert = true;
         try {
           window.localStorage.setItem("lyra_just_updated", "true");
-          window.localStorage.setItem("lyra_pending_install_version", latestVersion);
-          await invoke("install_rpm", { path: rpmPath });
+          window.localStorage.setItem("lyra_pending_install_version", update.version);
+          await invoke("apply_native_update", {
+            url: update.url,
+            signature: update.signature,
+            format,
+          });
         } catch (error) {
           window.localStorage.removeItem("lyra_just_updated");
           window.localStorage.removeItem("lyra_pending_install_version");
@@ -156,17 +184,24 @@ export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
         } finally {
           if (appRoot) appRoot.inert = wasInert;
         }
-      },
+      }
     );
 
     if (!installed) {
       useToastStore.getState().clearToasts();
-      notification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización", undefined, 8000);
-      return;
+      notification(
+        "error",
+        "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización",
+        undefined,
+        8000
+      );
+      return false;
     }
 
-    pendingRestartVersion = latestVersion;
-    try { window.sessionStorage.setItem("lyra_pending_restart_version", latestVersion); } catch {}
+    pendingRestartVersion = update.version;
+    try {
+      window.sessionStorage.setItem("lyra_pending_restart_version", update.version);
+    } catch {}
     useToastStore.getState().clearToasts();
     notification(
       "success",
@@ -174,15 +209,36 @@ export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
       { label: "Reiniciar Lyra", onClick: restartInstalledUpdate },
       8000
     );
+    return true;
   } catch (error: any) {
     useToastStore.getState().clearToasts();
     const errorMsg = String(error?.message || error || "");
-    if (isManual) {
-      notification("error", `No se pudo actualizar Lyra: ${errorMsg}`, undefined, 6000);
+    const isCancelled =
+      errorMsg.includes("cancelada por el usuario") ||
+      errorMsg.includes("permisos no otorgados");
+
+    if (isCancelled) {
+      notification(
+        "info",
+        "Actualización cancelada o permisos de administrador no otorgados.",
+        undefined,
+        6000
+      );
+    } else if (isManual) {
+      notification("error", `No se pudo actualizar Lyra: ${errorMsg}`, undefined, 7000);
     } else {
-      console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
+      console.warn("Comprobación automática de fondo falló:", errorMsg);
     }
+    return false;
   }
+}
+
+export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
+  await checkAndApplyNativePackageUpdate("rpm", isManual);
+}
+
+export async function checkAndApplyDebUpdate(isManual = false): Promise<void> {
+  await checkAndApplyNativePackageUpdate("deb", isManual);
 }
 
 export async function checkAndApplyUpdate(isManual = false): Promise<void> {
@@ -208,21 +264,6 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
     return;
   }
 
-  // 2b. Instalaciones RPM: usar actualizador propio (pkexec dnf)
-  let isRpm = false;
-  try {
-    isRpm = await invoke<boolean>("is_rpm_install");
-  } catch {}
-  if (isRpm) {
-    isChecking = true;
-    try {
-      await checkAndApplyRpmUpdate(isManual);
-    } finally {
-      isChecking = false;
-    }
-    return;
-  }
-
   // 3. Si no hay conexión a internet, salir silenciosamente (o avisar si fue clic manual)
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     if (isManual) {
@@ -232,151 +273,186 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
   }
 
   isChecking = true;
-  let checkedUpdate: Awaited<ReturnType<typeof check>> = null;
 
   try {
-    const update = await check();
-    checkedUpdate = update;
-    if (!update) {
-      if (isManual) {
-        notification(
-          "info",
-          "Lyra está en la última versión disponible.",
-          {
-            label: "Ver novedades",
-            onClick: openNovedades,
-          },
-          5000
-        );
-      }
-      return;
-    }
-
-    // Si la actualización detectada coincide con la que ya instalamos en memoria
-    if (getPendingRestartVersion() === update.version) {
-      if (isManual) {
-        notification(
-          "success",
-          `La versión v${update.version} está lista para usar`,
-          {
-            label: "Reiniciar Lyra",
-            onClick: restartInstalledUpdate,
-          },
-          8000
-        );
-      }
-      return;
-    }
-
-    // 4. Notificar inicio de descarga de la nueva versión
-    notification("info", `Actualizando a v${update.version}...`, undefined, 120000);
-
-    // Guardar notas de la versión en almacenamiento local para mostrarlas en Preferencias
-    if (update.body) {
-      try {
-        window.localStorage.setItem("lyra_release_notes", update.body);
-        window.localStorage.setItem("lyra_release_version", update.version);
-      } catch {}
-    }
-
-    // Downloading is safe while editing. On Windows, install exits the process.
-    await update.download(event => {
-      if (event.event === "Finished") {
-        console.log("Descarga de actualización finalizada exitosamente.");
-      }
-    });
-
-    const installed = await runPreparedInstall(
-      () => prepareEditorsForRelaunch(),
-      savePersistentPreferencesNow,
-      async () => {
-        const appRoot = document.getElementById("root");
-        const wasInert = appRoot?.inert ?? false;
-        if (appRoot) appRoot.inert = true;
-        try {
-          window.localStorage.setItem("lyra_just_updated", "true");
-          window.localStorage.setItem("lyra_pending_install_version", update.version);
-          await update.install();
-        } catch (error) {
-          window.localStorage.removeItem("lyra_just_updated");
-          window.localStorage.removeItem("lyra_pending_install_version");
-          throw error;
-        } finally {
-          if (appRoot) appRoot.inert = wasInert;
-        }
-      },
-    );
-    if (!installed) {
-      useToastStore.getState().clearToasts();
-      notification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización", undefined, 8000);
-      return;
-    }
-
-    // 6. Marcar que la actualización ya fue instalada en disco para evitar descargas infinitas
-    pendingRestartVersion = update.version;
+    let installInfo: InstallationInfo | null = null;
     try {
-      window.sessionStorage.setItem("lyra_pending_restart_version", update.version);
-    } catch {}
+      installInfo = await invoke<InstallationInfo>("get_installation_info");
+    } catch (e) {
+      console.warn("No se pudo obtener información de instalación:", e);
+    }
 
-    // Remover el toast de "Actualizando..."
-    useToastStore.getState().clearToasts();
+    // Si es un paquete RPM o DEB que no cuenta con soporte nativo directo del actualizador oficial
+    // (por ejemplo, cuando bundle_type no fue embebido o es una instalación personalizada en /usr)
+    if (installInfo && !installInfo.supports_official_updater && (installInfo.format === "rpm" || installInfo.format === "deb")) {
+      await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
+      return;
+    }
 
-    // 7. Notificar "Actualización completada" con acción para reiniciar (duración: 8 segundos)
-    notification(
-      "success",
-      "Actualización completada",
-      {
-        label: "Reiniciar Lyra",
-        onClick: restartInstalledUpdate,
-      },
-      8000
-    );
-  } catch (error: any) {
-    useToastStore.getState().clearToasts();
-
-    const errorMsg = String(error?.message || error || "");
-    const isNotFound =
-      errorMsg.includes("Could not fetch a valid release JSON") ||
-      errorMsg.includes("404") ||
-      errorMsg.includes("status 404");
-
-    if (isNotFound) {
+    if (installInfo?.format === "standalone") {
       if (isManual) {
         notification(
           "info",
-          "Lyra está en la última versión disponible.",
+          "Lyra se está ejecutando en modo independiente. Descarga las actualizaciones desde GitHub Releases.",
           {
             label: "Ver novedades",
             onClick: openNovedades,
           },
-          5000
+          7000
         );
       }
-    } else {
-      console.error("Error al comprobar/instalar actualización:", error);
+      return;
+    }
+
+    // Flujo prioritario: actualizador oficial de Tauri (AppImage, Windows, DEB/RPM con bundle_type)
+    let checkedUpdate: Awaited<ReturnType<typeof check>> = null;
+    try {
+      const update = await check();
+      checkedUpdate = update;
+      if (!update) {
+        if (isManual) {
+          notification(
+            "info",
+            "Lyra está en la última versión disponible.",
+            {
+              label: "Ver novedades",
+              onClick: openNovedades,
+            },
+            5000
+          );
+        }
+        return;
+      }
+
+      // Si la versión detectada ya está lista para reiniciar
+      if (getPendingRestartVersion() === update.version) {
+        if (isManual) {
+          notification(
+            "success",
+            `La versión v${update.version} está lista para usar`,
+            {
+              label: "Reiniciar Lyra",
+              onClick: restartInstalledUpdate,
+            },
+            8000
+          );
+        }
+        return;
+      }
+
+      notification("info", `Actualizando a v${update.version}...`, undefined, 120000);
+
+      if (update.body) {
+        try {
+          window.localStorage.setItem("lyra_release_notes", update.body);
+          window.localStorage.setItem("lyra_release_version", update.version);
+        } catch {}
+      }
+
+      await update.download(event => {
+        if (event.event === "Finished") {
+          console.log("Descarga de actualización finalizada exitosamente.");
+        }
+      });
+
+      const installed = await runPreparedInstall(
+        () => prepareEditorsForRelaunch(),
+        savePersistentPreferencesNow,
+        async () => {
+          const appRoot = document.getElementById("root");
+          const wasInert = appRoot?.inert ?? false;
+          if (appRoot) appRoot.inert = true;
+          try {
+            window.localStorage.setItem("lyra_just_updated", "true");
+            window.localStorage.setItem("lyra_pending_install_version", update.version);
+            await update.install();
+          } catch (error) {
+            window.localStorage.removeItem("lyra_just_updated");
+            window.localStorage.removeItem("lyra_pending_install_version");
+            throw error;
+          } finally {
+            if (appRoot) appRoot.inert = wasInert;
+          }
+        },
+      );
+
+      if (!installed) {
+        useToastStore.getState().clearToasts();
+        notification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización", undefined, 8000);
+        return;
+      }
+
+      pendingRestartVersion = update.version;
+      try {
+        window.sessionStorage.setItem("lyra_pending_restart_version", update.version);
+      } catch {}
+
+      useToastStore.getState().clearToasts();
+      notification(
+        "success",
+        "Actualización completada",
+        {
+          label: "Reiniciar Lyra",
+          onClick: restartInstalledUpdate,
+        },
+        8000
+      );
+    } catch (officialError: any) {
+      if (checkedUpdate) {
+        try { await checkedUpdate.close(); } catch {}
+        checkedUpdate = null;
+      }
+
+      const errorMsg = String(officialError?.message || officialError || "");
       const isPermission =
         errorMsg.includes("os error 13") ||
         errorMsg.includes("Permission denied") ||
         errorMsg.includes("permission denied");
 
-      if (isPermission) {
+      // Si el actualizador oficial falló en RPM/DEB (por ejemplo falta de permisos o fallo de dpkg/rpm), intentar fallback nativo
+      if (installInfo && (installInfo.format === "rpm" || installInfo.format === "deb")) {
+        console.warn("Actualizador oficial falló en instalación empaquetada, probando gestor nativo:", officialError);
+        const handled = await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
+        if (handled) return;
+      }
+
+      useToastStore.getState().clearToasts();
+
+      const isNotFound =
+        errorMsg.includes("Could not fetch a valid release JSON") ||
+        errorMsg.includes("404") ||
+        errorMsg.includes("status 404");
+
+      if (isNotFound) {
+        if (isManual) {
+          notification(
+            "info",
+            "Lyra está en la última versión disponible.",
+            {
+              label: "Ver novedades",
+              onClick: openNovedades,
+            },
+            5000
+          );
+        }
+      } else if (isPermission) {
         notification(
           "error",
-          "No se pudo instalar la actualización por falta de permisos. Actualiza Lyra mediante DNF o utiliza la versión AppImage",
+          "No se pudo instalar la actualización por falta de permisos administrativos.",
           undefined,
           7000
         );
       } else if (isManual) {
-        notification("error", "No se pudo actualizar Lyra", undefined, 6000);
+        notification("error", `No se pudo actualizar Lyra: ${errorMsg}`, undefined, 6000);
       } else {
-        // En revisiones automáticas de fondo, silenciar errores de red temporales para no molestar
         console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
+      }
+    } finally {
+      if (checkedUpdate) {
+        try { await checkedUpdate.close(); } catch {}
       }
     }
   } finally {
-    if (checkedUpdate) {
-      try { await checkedUpdate.close(); } catch {}
-    }
     isChecking = false;
   }
 }
