@@ -301,6 +301,82 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn is_rpm_install() -> bool {
+    let rpm_ok = std::process::Command::new("rpm")
+        .args(["-q", "lyra"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let exe_rpm = std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().contains("/usr/"))
+        .unwrap_or(false);
+    rpm_ok || exe_rpm
+}
+
+#[tauri::command]
+async fn rpm_latest_info() -> Result<(String, String), String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.github.com/repos/gixi404/lyra/releases/latest")
+        .header("User-Agent", "lyra-updater")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or("no tag")?
+        .trim_start_matches('v')
+        .to_string();
+    let assets = json["assets"].as_array().ok_or("no assets")?;
+    let url = assets
+        .iter()
+        .filter_map(|a| {
+            let name = a["name"].as_str()?;
+            if name.ends_with(".rpm") && name.contains("x86_64") {
+                a["browser_download_url"].as_str().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .next()
+        .ok_or("no rpm asset")?;
+    Ok((tag, url))
+}
+
+#[tauri::command]
+async fn download_rpm(url: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let dir = std::env::temp_dir().join("lyra-update");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("lyra-update.rpm");
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn install_rpm(path: String) -> Result<(), String> {
+    let status = std::process::Command::new("pkexec")
+        .args(["dnf", "install", "-y", &path])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("install failed".to_string())
+    }
+}
+
+#[tauri::command]
 async fn create_note(
     app: tauri::AppHandle,
     file_name: String,
@@ -500,6 +576,10 @@ fn main() {
             save_note_atomic,
             list_note_files_with_stats,
             create_note,
+            is_rpm_install,
+            rpm_latest_info,
+            download_rpm,
+            install_rpm,
             create_internal_welcome,
             check_and_drain_recovered_notes,
             gdrive::get_backend_build_info,

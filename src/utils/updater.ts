@@ -1,5 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { notification, pathIs, scrollToNovedades } from "./helpers";
 import { navigateTo } from "../router";
@@ -105,6 +106,85 @@ export async function notifyIfJustUpdated(): Promise<void> {
   }
 }
 
+async function compareVersions(a: string, b: string): Promise<number> {
+  const pa = a.replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    if (isManual) notification("info", "No hay conexión a internet.", undefined, 5000);
+    return;
+  }
+
+  try {
+    const currentVersion = await getVersion();
+    const [latestVersion, rpmUrl] = await invoke<[string, string]>("rpm_latest_info");
+
+    if (await compareVersions(latestVersion, currentVersion) <= 0) {
+      if (isManual) {
+        notification("info", "Lyra está en la última versión disponible.", { label: "Ver novedades", onClick: openNovedades }, 5000);
+      }
+      return;
+    }
+
+    notification("info", `Actualizando a v${latestVersion}...`, undefined, 120000);
+
+    const rpmPath = await invoke<string>("download_rpm", { url: rpmUrl });
+
+    const installed = await runPreparedInstall(
+      () => prepareEditorsForRelaunch(),
+      savePersistentPreferencesNow,
+      async () => {
+        const appRoot = document.getElementById("root");
+        const wasInert = appRoot?.inert ?? false;
+        if (appRoot) appRoot.inert = true;
+        try {
+          window.localStorage.setItem("lyra_just_updated", "true");
+          window.localStorage.setItem("lyra_pending_install_version", latestVersion);
+          await invoke("install_rpm", { path: rpmPath });
+        } catch (error) {
+          window.localStorage.removeItem("lyra_just_updated");
+          window.localStorage.removeItem("lyra_pending_install_version");
+          throw error;
+        } finally {
+          if (appRoot) appRoot.inert = wasInert;
+        }
+      },
+    );
+
+    if (!installed) {
+      useToastStore.getState().clearToasts();
+      notification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización", undefined, 8000);
+      return;
+    }
+
+    pendingRestartVersion = latestVersion;
+    try { window.sessionStorage.setItem("lyra_pending_restart_version", latestVersion); } catch {}
+    useToastStore.getState().clearToasts();
+    notification(
+      "success",
+      "Actualización completada",
+      { label: "Reiniciar Lyra", onClick: restartInstalledUpdate },
+      8000
+    );
+  } catch (error: any) {
+    useToastStore.getState().clearToasts();
+    const errorMsg = String(error?.message || error || "");
+    if (isManual) {
+      notification("error", `No se pudo actualizar Lyra: ${errorMsg}`, undefined, 6000);
+    } else {
+      console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
+    }
+  }
+}
+
 export async function checkAndApplyUpdate(isManual = false): Promise<void> {
   // 1. Si la versión ya fue descargada e instalada en esta sesión y espera reinicio, NO volver a descargar
   const pendingVersion = getPendingRestartVersion();
@@ -125,6 +205,21 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
 
   // 2. Prevenir comprobaciones concurrentes
   if (isChecking) {
+    return;
+  }
+
+  // 2b. Instalaciones RPM: usar actualizador propio (pkexec dnf)
+  let isRpm = false;
+  try {
+    isRpm = await invoke<boolean>("is_rpm_install");
+  } catch {}
+  if (isRpm) {
+    isChecking = true;
+    try {
+      await checkAndApplyRpmUpdate(isManual);
+    } finally {
+      isChecking = false;
+    }
     return;
   }
 
