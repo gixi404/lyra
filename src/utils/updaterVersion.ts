@@ -78,6 +78,14 @@ export function categorizeUpdateError(error: unknown): UpdateFailureInfo {
     };
   }
 
+  if (rawMsg.startsWith("UPDATE_BUSY:")) {
+    const details = rawMsg.replace("UPDATE_BUSY:", "").trim();
+    return {
+      category: "install_failed",
+      message: details || "Ya hay una operación de actualización en curso.",
+    };
+  }
+
   if (rawMsg.startsWith("INSTALL_FAILED:")) {
     const details = rawMsg.replace("INSTALL_FAILED:", "").trim();
     return {

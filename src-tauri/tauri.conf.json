@@ -51,7 +51,7 @@
   },
   "productName": "Lyra",
   "mainBinaryName": "Lyra",
-  "version": "2.0.26",
+  "version": "2.0.27",
   "identifier": "com.lyra.dev",
   "plugins": {
     "fs": {

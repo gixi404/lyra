@@ -5,7 +5,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { notification, pathIs, scrollToNovedades } from "./helpers";
 import { navigateTo } from "../router";
 import { PAGES } from "./consts";
-import { useToastStore } from "../store/toastStore";
+import { useToastStore, type ToastAction, type ToastType } from "../store/toastStore";
 import { setListScroll } from "./listScroll";
 import { prepareEditorsForRelaunch, runPreparedInstall, runPreparedRelaunch } from "./editorPersistence";
 import { savePersistentPreferencesNow } from "./persistentPreferences";
@@ -30,10 +30,29 @@ export type {
 };
 export { compareVersions, categorizeUpdateError, isUpdateCancellation };
 
-
 let isChecking = false;
 let pendingRestartVersion: string | null = null;
 let restartInProgress = false;
+let activeUpdaterToastId: string | null = null;
+
+export function clearUpdaterToast(): void {
+  if (activeUpdaterToastId) {
+    useToastStore.getState().removeToast(activeUpdaterToastId);
+    activeUpdaterToastId = null;
+  }
+}
+
+export function updaterNotification(
+  type: ToastType,
+  msg: string,
+  action?: ToastAction,
+  durationMs?: number
+): string {
+  clearUpdaterToast();
+  const id = useToastStore.getState().addToast(type, msg, action, durationMs);
+  activeUpdaterToastId = id;
+  return id;
+}
 
 export async function restartInstalledUpdate(): Promise<void> {
   if (restartInProgress) return;
@@ -45,11 +64,11 @@ export async function restartInstalledUpdate(): Promise<void> {
       relaunch,
     );
     if (!restarted) {
-      notification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar el reinicio", undefined, 8000);
+      updaterNotification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar el reinicio", undefined, 8000);
     }
   } catch (error) {
     console.error("Could not safely restart after update", error);
-    notification("error", "No se pudo reiniciar Lyra. Tus cambios permanecen disponibles", undefined, 8000);
+    updaterNotification("error", "No se pudo reiniciar Lyra. Tus cambios permanecen disponibles", undefined, 8000);
   } finally {
     restartInProgress = false;
   }
@@ -128,7 +147,7 @@ export async function notifyIfJustUpdated(): Promise<void> {
 }
 
 
-export async function checkAndApplyNativePackageUpdate(
+async function executeNativePackageUpdate(
   format: "rpm" | "deb",
   isManual = false
 ): Promise<boolean> {
@@ -141,19 +160,19 @@ export async function checkAndApplyNativePackageUpdate(
 
     if (!update || compareVersions(update.version, currentVersion) <= 0) {
       if (isManual) {
-        notification(
+        updaterNotification(
           "info",
           "Lyra está en la última versión disponible.",
           { label: "Ver novedades", onClick: openNovedades },
           5000
         );
       }
-      return false;
+      return true;
     }
 
     if (getPendingRestartVersion() === update.version) {
       if (isManual) {
-        notification(
+        updaterNotification(
           "success",
           `La versión v${update.version} está lista para usar`,
           { label: "Reiniciar Lyra", onClick: restartInstalledUpdate },
@@ -170,7 +189,25 @@ export async function checkAndApplyNativePackageUpdate(
       } catch {}
     }
 
-    notification("info", `Actualizando a v${update.version}...`, undefined, 120000);
+    // Comprobación en segundo plano (automática): no solicitar elevación de privilegios de forma autónoma.
+    // Solo notificar al usuario para que decida actualizar con un clic explícito.
+    if (!isManual) {
+      updaterNotification(
+        "info",
+        `Nueva versión v${update.version} disponible`,
+        {
+          label: "Actualizar ahora",
+          onClick: () => {
+            void checkAndApplyNativePackageUpdate(format, true);
+          },
+        },
+        10000
+      );
+      return true;
+    }
+
+    // Flujo manual explícito: reemplazar cualquier notificación previa del actualizador por el progreso
+    updaterNotification("info", `Actualizando a v${update.version}...`, undefined, 120000);
 
     const installed = await runPreparedInstall(
       () => prepareEditorsForRelaunch(),
@@ -198,8 +235,7 @@ export async function checkAndApplyNativePackageUpdate(
     );
 
     if (!installed) {
-      useToastStore.getState().clearToasts();
-      notification(
+      updaterNotification(
         "error",
         "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización",
         undefined,
@@ -212,8 +248,7 @@ export async function checkAndApplyNativePackageUpdate(
     try {
       window.sessionStorage.setItem("lyra_pending_restart_version", update.version);
     } catch {}
-    useToastStore.getState().clearToasts();
-    notification(
+    updaterNotification(
       "success",
       "Actualización completada",
       { label: "Reiniciar Lyra", onClick: restartInstalledUpdate },
@@ -221,25 +256,25 @@ export async function checkAndApplyNativePackageUpdate(
     );
     return true;
   } catch (error: any) {
-    useToastStore.getState().clearToasts();
+    clearUpdaterToast();
     const failure = categorizeUpdateError(error);
 
     if (failure.category === "cancelled") {
-      notification(
+      updaterNotification(
         "info",
         "Actualización cancelada",
         undefined,
         5000
       );
     } else if (failure.category === "auth_denied") {
-      notification(
+      updaterNotification(
         "error",
         failure.message,
         undefined,
         7000
       );
     } else if (isManual) {
-      notification(
+      updaterNotification(
         "error",
         `No se pudo actualizar Lyra: ${failure.message}`,
         undefined,
@@ -252,6 +287,28 @@ export async function checkAndApplyNativePackageUpdate(
   }
 }
 
+export async function checkAndApplyNativePackageUpdate(
+  format: "rpm" | "deb",
+  isManual = false
+): Promise<boolean> {
+  if (isChecking) {
+    return false;
+  }
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    if (isManual) {
+      notification("info", "No hay conexión a internet.", undefined, 5000);
+    }
+    return false;
+  }
+
+  isChecking = true;
+  try {
+    return await executeNativePackageUpdate(format, isManual);
+  } finally {
+    isChecking = false;
+  }
+}
+
 export async function checkAndApplyRpmUpdate(isManual = false): Promise<void> {
   await checkAndApplyNativePackageUpdate("rpm", isManual);
 }
@@ -260,7 +317,7 @@ export async function checkAndApplyDebUpdate(isManual = false): Promise<void> {
   await checkAndApplyNativePackageUpdate("deb", isManual);
 }
 
-export async function checkAndApplyUpdate(isManual = false): Promise<void> {
+export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
   // 1. Si la versión ya fue descargada e instalada en esta sesión y espera reinicio, NO volver a descargar
   const pendingVersion = getPendingRestartVersion();
   if (pendingVersion) {
@@ -275,12 +332,12 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
         8000
       );
     }
-    return;
+    return true;
   }
 
   // 2. Prevenir comprobaciones concurrentes
   if (isChecking) {
-    return;
+    return false;
   }
 
   // 3. Si no hay conexión a internet, salir silenciosamente (o avisar si fue clic manual)
@@ -288,7 +345,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
     if (isManual) {
       notification("info", "No hay conexión a internet.", undefined, 5000);
     }
-    return;
+    return false;
   }
 
   isChecking = true;
@@ -301,10 +358,9 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
       console.warn("No se pudo obtener información de instalación:", e);
     }
 
-    // Si es un paquete RPM o DEB, gestionarlo directamente mediante el instalador nativo del sistema
+    // Para RPM y DEB: usar exclusivamente el gestor de paquetes nativo, sin intervención del plugin de Tauri
     if (installInfo && (installInfo.format === "rpm" || installInfo.format === "deb")) {
-      await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
-      return;
+      return await executeNativePackageUpdate(installInfo.format, isManual);
     }
 
     if (installInfo?.format === "standalone") {
@@ -319,17 +375,17 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
           7000
         );
       }
-      return;
+      return true;
     }
 
-    // Flujo prioritario: actualizador oficial de Tauri (AppImage, Windows, DEB/RPM con bundle_type)
+    // Flujo para formatos soportados por Tauri oficial (AppImage, Windows, macOS)
     let checkedUpdate: Awaited<ReturnType<typeof check>> = null;
     try {
       const update = await check();
       checkedUpdate = update;
       if (!update) {
         if (isManual) {
-          notification(
+          updaterNotification(
             "info",
             "Lyra está en la última versión disponible.",
             {
@@ -339,13 +395,13 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
             5000
           );
         }
-        return;
+        return true;
       }
 
       // Si la versión detectada ya está lista para reiniciar
       if (getPendingRestartVersion() === update.version) {
         if (isManual) {
-          notification(
+          updaterNotification(
             "success",
             `La versión v${update.version} está lista para usar`,
             {
@@ -355,10 +411,10 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
             8000
           );
         }
-        return;
+        return true;
       }
 
-      notification("info", `Actualizando a v${update.version}...`, undefined, 120000);
+      updaterNotification("info", `Actualizando a v${update.version}...`, undefined, 120000);
 
       if (update.body) {
         try {
@@ -395,9 +451,8 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
       );
 
       if (!installed) {
-        useToastStore.getState().clearToasts();
-        notification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización", undefined, 8000);
-        return;
+        updaterNotification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar la actualización", undefined, 8000);
+        return false;
       }
 
       pendingRestartVersion = update.version;
@@ -405,8 +460,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
         window.sessionStorage.setItem("lyra_pending_restart_version", update.version);
       } catch {}
 
-      useToastStore.getState().clearToasts();
-      notification(
+      updaterNotification(
         "success",
         "Actualización completada",
         {
@@ -415,31 +469,25 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
         },
         8000
       );
+      return true;
     } catch (officialError: any) {
       if (checkedUpdate) {
         try { await checkedUpdate.close(); } catch {}
         checkedUpdate = null;
       }
 
-      useToastStore.getState().clearToasts();
+      clearUpdaterToast();
 
       const failure = categorizeUpdateError(officialError);
 
       if (failure.category === "cancelled") {
-        notification("info", "Actualización cancelada", undefined, 5000);
-        return;
+        updaterNotification("info", "Actualización cancelada", undefined, 5000);
+        return false;
       }
 
       if (failure.category === "auth_denied") {
-        notification("error", failure.message, undefined, 7000);
-        return;
-      }
-
-      // Si el actualizador oficial falló en RPM/DEB (ej. instalación empaquetada), probar gestor nativo SOLO si no fue cancelación ni denegación
-      if (installInfo && (installInfo.format === "rpm" || installInfo.format === "deb")) {
-        console.warn("Actualizador oficial falló en instalación empaquetada, probando gestor nativo:", officialError);
-        await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
-        return;
+        updaterNotification("error", failure.message, undefined, 7000);
+        return false;
       }
 
       const errorMsg = String(officialError?.message || officialError || "");
@@ -450,7 +498,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
 
       if (isNotFound) {
         if (isManual) {
-          notification(
+          updaterNotification(
             "info",
             "Lyra está en la última versión disponible.",
             {
@@ -460,11 +508,13 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
             5000
           );
         }
+        return true;
       } else if (isManual) {
-        notification("error", `No se pudo actualizar Lyra: ${failure.message}`, undefined, 6000);
+        updaterNotification("error", `No se pudo actualizar Lyra: ${failure.message}`, undefined, 6000);
       } else {
         console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
       }
+      return false;
     } finally {
       if (checkedUpdate) {
         try { await checkedUpdate.close(); } catch {}

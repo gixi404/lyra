@@ -1,9 +1,35 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use minisign_verify::{PublicKey, Signature};
 use base64::Engine;
+
+pub static NATIVE_UPDATE_LOCK: AtomicBool = AtomicBool::new(false);
+
+/// RAII lock guard that guarantees mutual exclusion during native package update operations.
+#[derive(Debug)]
+pub struct NativeUpdateLockGuard;
+
+impl NativeUpdateLockGuard {
+    pub fn try_acquire() -> Result<Self, String> {
+        if NATIVE_UPDATE_LOCK
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            Ok(Self)
+        } else {
+            Err("UPDATE_BUSY: Ya hay una operación de actualización en curso".to_string())
+        }
+    }
+}
+
+impl Drop for NativeUpdateLockGuard {
+    fn drop(&mut self) {
+        NATIVE_UPDATE_LOCK.store(false, Ordering::SeqCst);
+    }
+}
 
 pub const LYRA_UPDATER_PUBKEY: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQxQ0FBQzcxQkUwQjQ3NUIKUldSYlJ3dStjYXpLMFN4ejREUHQwaXlsT2FjejhITHRaRzVpR3pwN204cmM0WWdQaytIWGZZY3kK";
@@ -350,11 +376,27 @@ pub fn binary_exists(bin: &str) -> bool {
             if full.is_file() {
                 return true;
             }
+            #[cfg(windows)]
+            {
+                if full.with_extension("exe").is_file()
+                    || full.with_extension("cmd").is_file()
+                    || full.with_extension("bat").is_file()
+                {
+                    return true;
+                }
+            }
         }
     }
-    Path::new("/usr/bin").join(bin).exists()
-        || Path::new("/bin").join(bin).exists()
-        || Path::new("/usr/local/bin").join(bin).exists()
+    #[cfg(unix)]
+    {
+        Path::new("/usr/bin").join(bin).exists()
+            || Path::new("/bin").join(bin).exists()
+            || Path::new("/usr/local/bin").join(bin).exists()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,18 +414,14 @@ pub fn resolve_package_installer(format: InstallationFormat) -> (&'static str, V
         InstallationFormat::Rpm => {
             let is_fedora_rhel = Path::new("/etc/fedora-release").exists()
                 || Path::new("/etc/redhat-release").exists()
-                || Path::new("/etc/dnf").is_dir();
+                || Path::new("/etc/dnf").exists();
 
-            let is_suse = Path::new("/etc/zypp").is_dir()
+            let is_suse = Path::new("/etc/zypp").exists()
                 || Path::new("/etc/SuSE-release").exists();
 
             if is_fedora_rhel && binary_exists("dnf") {
                 ("dnf", vec!["install", "-y"])
             } else if is_suse && binary_exists("zypper") {
-                ("zypper", vec!["--non-interactive", "install"])
-            } else if binary_exists("dnf") && Path::new("/etc/dnf").exists() {
-                ("dnf", vec!["install", "-y"])
-            } else if binary_exists("zypper") && Path::new("/etc/zypp").exists() {
                 ("zypper", vec!["--non-interactive", "install"])
             } else {
                 ("rpm", vec!["-U"])
@@ -391,11 +429,9 @@ pub fn resolve_package_installer(format: InstallationFormat) -> (&'static str, V
         }
         InstallationFormat::Deb => {
             let is_debian_ubuntu = Path::new("/etc/debian_version").exists()
-                || Path::new("/etc/apt").is_dir();
+                || Path::new("/etc/apt").exists();
 
             if is_debian_ubuntu && binary_exists("apt") {
-                ("apt", vec!["install", "-y"])
-            } else if binary_exists("apt") && Path::new("/etc/apt").exists() {
                 ("apt", vec!["install", "-y"])
             } else {
                 ("dpkg", vec!["-i"])
@@ -453,6 +489,7 @@ pub fn classify_elevated_execution(code: Option<i32>, signal: Option<i32>, stder
 }
 
 /// Helper that checks if the status corresponds specifically to voluntary user cancellation.
+#[cfg(test)]
 pub fn is_cancellation_status(code: Option<i32>, signal: Option<i32>, stderr: &str) -> bool {
     classify_elevated_execution(code, signal, stderr) == ElevatedStatus::Cancelled
 }
@@ -667,17 +704,47 @@ mod tests {
 
     #[test]
     fn test_binary_exists() {
-        // /bin/sh or sh should always exist on Linux systems
-        assert!(binary_exists("sh"));
-        // Non-existent binary should return false
+        // Platform-specific standard shell/command binary availability check
+        #[cfg(unix)]
+        {
+            assert!(binary_exists("sh"));
+        }
+
+        #[cfg(windows)]
+        {
+            assert!(binary_exists("cmd.exe") || binary_exists("cmd"));
+        }
+
+        // Non-existent binary must return false on all platforms
         assert!(!binary_exists("definitely_non_existent_binary_xyz123"));
     }
 
     #[test]
     fn test_install_package_elevated_nonexistent_file() {
-        let nonexistent = Path::new("/tmp/nonexistent_lyra_package_12345.rpm");
-        let result = install_package_elevated(nonexistent, InstallationFormat::Rpm);
+        let nonexistent = std::env::temp_dir().join("nonexistent_lyra_package_12345.rpm");
+        let result = install_package_elevated(&nonexistent, InstallationFormat::Rpm);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Package file does not exist");
+    }
+
+    #[test]
+    fn test_native_update_lock_guard_mutual_exclusion() {
+        // First acquisition must succeed
+        let guard1 = NativeUpdateLockGuard::try_acquire();
+        assert!(guard1.is_ok(), "First acquisition must succeed");
+
+        // Concurrent acquisition while guard1 is held must fail with UPDATE_BUSY
+        let guard2 = NativeUpdateLockGuard::try_acquire();
+        assert!(guard2.is_err(), "Concurrent acquisition must fail");
+        assert_eq!(
+            guard2.unwrap_err(),
+            "UPDATE_BUSY: Ya hay una operación de actualización en curso"
+        );
+
+        // Drop guard1 and verify that subsequent acquisition succeeds
+        drop(guard1);
+        let guard3 = NativeUpdateLockGuard::try_acquire();
+        assert!(guard3.is_ok(), "Subsequent acquisition after drop must succeed");
+        drop(guard3);
     }
 }

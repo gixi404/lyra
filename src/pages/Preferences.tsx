@@ -164,14 +164,16 @@ function Preferences(): Component {
       return;
     }
 
-    if (getIsCheckingUpdate() || hasCheckedUpdates) return;
-    setHasCheckedUpdates(true);
+    if (getIsCheckingUpdate() || checkingUpdate) return;
     setCheckingUpdate(true);
     try {
-      await checkAndApplyUpdate(true);
+      const ok = await checkAndApplyUpdate(true);
+      setHasCheckedUpdates(Boolean(ok));
       const raw = window.localStorage.getItem("lyra_release_notes");
       const parsed = parseChangelog(raw);
       if (parsed) setReleaseNotes(parsed);
+    } catch {
+      setHasCheckedUpdates(false);
     } finally {
       setCheckingUpdate(false);
     }

@@ -328,6 +328,7 @@ async fn apply_native_update(
     signature: String,
     format: String,
 ) -> Result<(), String> {
+    let _guard = native_updater::NativeUpdateLockGuard::try_acquire()?;
     let fmt = match format.as_str() {
         "rpm" => native_updater::InstallationFormat::Rpm,
         "deb" => native_updater::InstallationFormat::Deb,
@@ -376,6 +377,7 @@ async fn download_rpm(url: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn install_rpm(path: String) -> Result<(), String> {
+    let _guard = native_updater::NativeUpdateLockGuard::try_acquire()?;
     let p = std::path::PathBuf::from(&path);
     let res = native_updater::install_package_elevated(&p, native_updater::InstallationFormat::Rpm);
     let _ = std::fs::remove_file(&p);
