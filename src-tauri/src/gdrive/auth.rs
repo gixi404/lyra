@@ -14,6 +14,7 @@ use tauri::Manager;
 
 static OAUTH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static OAUTH_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+static ACTIVE_OAUTH_SERVER: Mutex<Option<Weak<tiny_http::Server>>> = Mutex::new(None);
 
 /// Época global de la cuenta conectada. Se incrementa al iniciar sesión, al
 /// cerrarla y cuando Google invalida las credenciales. Cualquier operación que
@@ -47,6 +48,13 @@ pub fn cancel_oauth_flow() -> Result<(), String> {
     let _guard = auth_lock()?;
     if OAUTH_IN_PROGRESS.load(Ordering::SeqCst) {
         OAUTH_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+        if let Ok(active) = ACTIVE_OAUTH_SERVER.lock() {
+            if let Some(weak) = active.as_ref() {
+                if let Some(server) = weak.upgrade() {
+                    server.unblock();
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -507,6 +515,20 @@ pub fn wait_for_oauth_callback(
     state_expected: &str,
     timeout: Duration,
 ) -> Result<String, String> {
+    let server = Arc::new(server);
+    if let Ok(mut active) = ACTIVE_OAUTH_SERVER.lock() {
+        *active = Some(Arc::downgrade(&server));
+    }
+    struct ActiveServerGuard;
+    impl Drop for ActiveServerGuard {
+        fn drop(&mut self) {
+            if let Ok(mut active) = ACTIVE_OAUTH_SERVER.lock() {
+                *active = None;
+            }
+        }
+    }
+    let _active_server_guard = ActiveServerGuard;
+
     let start = std::time::Instant::now();
 
     loop {
@@ -1565,6 +1587,25 @@ mod tests {
 
     static TEST_OAUTH_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    fn bind_server_with_drain(
+        addr: &str,
+        timeout: Duration,
+    ) -> Result<tiny_http::Server, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        let start = std::time::Instant::now();
+        loop {
+            match tiny_http::Server::http(addr) {
+                Ok(server) => return Ok(server),
+                Err(e) => {
+                    if start.elapsed() >= timeout {
+                        return Err(e);
+                    }
+                    std::thread::yield_now();
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_oauth_cancellation_and_concurrency_flags() {
         let _lock = TEST_OAUTH_MUTEX.lock().await;
@@ -1764,7 +1805,7 @@ mod tests {
 
         // 2. Comprobar que el puerto asignado fue COMPLETAMENTE liberado
         // Intentamos enlazar un segundo servidor exactamente en el MISMO puerto
-        let server2 = tiny_http::Server::http(format!("127.0.0.1:{assigned_port}"))
+        let server2 = bind_server_with_drain(&format!("127.0.0.1:{assigned_port}"), Duration::from_secs(5))
             .expect("El puerto debe estar libre tras la cancelación del servidor anterior");
 
         OAUTH_IN_PROGRESS.store(true, Ordering::SeqCst);
@@ -1825,7 +1866,7 @@ mod tests {
         OAUTH_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
 
         // 2. Comprobar que el puerto asignado fue COMPLETAMENTE liberado tras el timeout
-        let server2 = tiny_http::Server::http(format!("127.0.0.1:{assigned_port}"))
+        let server2 = bind_server_with_drain(&format!("127.0.0.1:{assigned_port}"), Duration::from_secs(5))
             .expect("El puerto debe estar libre tras el timeout del servidor anterior");
 
         OAUTH_IN_PROGRESS.store(true, Ordering::SeqCst);
