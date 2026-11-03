@@ -12,13 +12,23 @@ import { savePersistentPreferencesNow } from "./persistentPreferences";
 
 import {
   compareVersions,
+  categorizeUpdateError,
+  isUpdateCancellation,
   type InstallationFormat,
   type InstallationInfo,
   type NativeUpdateInfo,
+  type UpdateFailureCategory,
+  type UpdateFailureInfo,
 } from "./updaterVersion";
 
-export type { InstallationFormat, InstallationInfo, NativeUpdateInfo };
-export { compareVersions };
+export type {
+  InstallationFormat,
+  InstallationInfo,
+  NativeUpdateInfo,
+  UpdateFailureCategory,
+  UpdateFailureInfo,
+};
+export { compareVersions, categorizeUpdateError, isUpdateCancellation };
 
 
 let isChecking = false;
@@ -212,22 +222,31 @@ export async function checkAndApplyNativePackageUpdate(
     return true;
   } catch (error: any) {
     useToastStore.getState().clearToasts();
-    const errorMsg = String(error?.message || error || "");
-    const isCancelled =
-      errorMsg.includes("cancelada por el usuario") ||
-      errorMsg.includes("permisos no otorgados");
+    const failure = categorizeUpdateError(error);
 
-    if (isCancelled) {
+    if (failure.category === "cancelled") {
       notification(
         "info",
-        "Actualización cancelada o permisos de administrador no otorgados.",
+        "Actualización cancelada",
         undefined,
-        6000
+        5000
+      );
+    } else if (failure.category === "auth_denied") {
+      notification(
+        "error",
+        failure.message,
+        undefined,
+        7000
       );
     } else if (isManual) {
-      notification("error", `No se pudo actualizar Lyra: ${errorMsg}`, undefined, 7000);
+      notification(
+        "error",
+        `No se pudo actualizar Lyra: ${failure.message}`,
+        undefined,
+        7000
+      );
     } else {
-      console.warn("Comprobación automática de fondo falló:", errorMsg);
+      console.warn("Comprobación automática de fondo falló:", failure.message);
     }
     return false;
   }
@@ -282,9 +301,8 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
       console.warn("No se pudo obtener información de instalación:", e);
     }
 
-    // Si es un paquete RPM o DEB que no cuenta con soporte nativo directo del actualizador oficial
-    // (por ejemplo, cuando bundle_type no fue embebido o es una instalación personalizada en /usr)
-    if (installInfo && !installInfo.supports_official_updater && (installInfo.format === "rpm" || installInfo.format === "deb")) {
+    // Si es un paquete RPM o DEB, gestionarlo directamente mediante el instalador nativo del sistema
+    if (installInfo && (installInfo.format === "rpm" || installInfo.format === "deb")) {
       await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
       return;
     }
@@ -403,21 +421,28 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
         checkedUpdate = null;
       }
 
-      const errorMsg = String(officialError?.message || officialError || "");
-      const isPermission =
-        errorMsg.includes("os error 13") ||
-        errorMsg.includes("Permission denied") ||
-        errorMsg.includes("permission denied");
-
-      // Si el actualizador oficial falló en RPM/DEB (por ejemplo falta de permisos o fallo de dpkg/rpm), intentar fallback nativo
-      if (installInfo && (installInfo.format === "rpm" || installInfo.format === "deb")) {
-        console.warn("Actualizador oficial falló en instalación empaquetada, probando gestor nativo:", officialError);
-        const handled = await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
-        if (handled) return;
-      }
-
       useToastStore.getState().clearToasts();
 
+      const failure = categorizeUpdateError(officialError);
+
+      if (failure.category === "cancelled") {
+        notification("info", "Actualización cancelada", undefined, 5000);
+        return;
+      }
+
+      if (failure.category === "auth_denied") {
+        notification("error", failure.message, undefined, 7000);
+        return;
+      }
+
+      // Si el actualizador oficial falló en RPM/DEB (ej. instalación empaquetada), probar gestor nativo SOLO si no fue cancelación ni denegación
+      if (installInfo && (installInfo.format === "rpm" || installInfo.format === "deb")) {
+        console.warn("Actualizador oficial falló en instalación empaquetada, probando gestor nativo:", officialError);
+        await checkAndApplyNativePackageUpdate(installInfo.format, isManual);
+        return;
+      }
+
+      const errorMsg = String(officialError?.message || officialError || "");
       const isNotFound =
         errorMsg.includes("Could not fetch a valid release JSON") ||
         errorMsg.includes("404") ||
@@ -435,15 +460,8 @@ export async function checkAndApplyUpdate(isManual = false): Promise<void> {
             5000
           );
         }
-      } else if (isPermission) {
-        notification(
-          "error",
-          "No se pudo instalar la actualización por falta de permisos administrativos.",
-          undefined,
-          7000
-        );
       } else if (isManual) {
-        notification("error", `No se pudo actualizar Lyra: ${errorMsg}`, undefined, 6000);
+        notification("error", `No se pudo actualizar Lyra: ${failure.message}`, undefined, 6000);
       } else {
         console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
       }

@@ -258,7 +258,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
               } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-rose-500/40 disabled:active:scale-100`}
               title="Vaciar todos los archivos archivados"
             >
-              {isDeleting ? "Vaciando..." : "Vaciar"}
+              Vaciar
             </button>
           )}
           <span
@@ -287,7 +287,6 @@ const ListFiles = memo(({ arr }: Props): Component => {
         cancelText="Cancelar"
         variant="danger"
         busy={deletionBusy}
-        busyText={isDeleting ? "Vaciando..." : "Eliminando..."}
       />
     </div>
   );

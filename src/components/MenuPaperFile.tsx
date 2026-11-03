@@ -372,7 +372,6 @@ function MenuPaperFile({ fileName }: Props): Component {
         confirmText={d.Recover}
         cancelText={d.Cancel}
         busy={isRestoring}
-        busyText="Recuperando..."
       />
 
       <Modal
@@ -385,7 +384,6 @@ function MenuPaperFile({ fileName }: Props): Component {
         cancelText={d.Cancel}
         variant="danger"
         busy={deletionBusy}
-        busyText={isEmptyingArchived ? "Vaciando..." : "Eliminando..."}
       />
     </div>
   );

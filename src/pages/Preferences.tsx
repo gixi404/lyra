@@ -231,22 +231,18 @@ function Preferences(): Component {
                   isDay
                     ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
                     : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
-                  (checkingUpdate || (!pendingVersion && hasCheckedUpdates)) && "opacity-60 cursor-not-allowed"
+                  (checkingUpdate || (!pendingVersion && hasCheckedUpdates)) && "opacity-40 cursor-not-allowed"
                 )}
               >
-                {checkingUpdate ? (
-                  <RefreshCwIcon size={14} className="animate-spin" />
-                ) : pendingVersion ? (
+                {pendingVersion ? (
                   <RefreshCwIcon size={14} />
-                ) : hasCheckedUpdates ? null : (
+                ) : hasCheckedUpdates && !checkingUpdate ? null : (
                   <RefreshCwIcon size={14} />
                 )}
                 <span>
-                  {checkingUpdate
-                    ? "Buscando..."
-                    : pendingVersion
+                  {pendingVersion
                     ? "Reiniciar"
-                    : hasCheckedUpdates
+                    : hasCheckedUpdates && !checkingUpdate
                     ? "Comprobado"
                     : "Buscar"}
                 </span>

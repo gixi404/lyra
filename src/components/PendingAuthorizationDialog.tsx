@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import { themes } from "../utils/helpers";
 import { useSyncStore } from "../store/syncStore";
 import {
@@ -164,20 +164,15 @@ function PendingAuthorizationDialog(): JSX.Element | null {
             type="button"
             onClick={() => void authorizePending(selectedIds)}
             disabled={!canConfirm}
-            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${
               isDay
                 ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20"
                 : "bg-sky-500 hover:bg-sky-400 text-zinc-950 font-semibold shadow-sky-500/20"
             }`}
           >
-            {isProcessing && (
-              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-            )}
-            {isProcessing
-              ? "Autorizando..."
-              : `Autorizar ${selectedIds.length} ${
-                  selectedIds.length === 1 ? "nota" : "notas"
-                }`}
+            {`Autorizar ${selectedIds.length} ${
+              selectedIds.length === 1 ? "nota" : "notas"
+            }`}
           </button>}
         </div>
       </div>

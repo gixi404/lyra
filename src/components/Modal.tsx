@@ -18,7 +18,6 @@ interface ModalProps {
   cancelText?: string;
   variant?: "primary" | "danger";
   busy?: boolean;
-  busyText?: string;
 }
 
 function Modal({
@@ -34,7 +33,6 @@ function Modal({
   cancelText,
   variant = "primary",
   busy = false,
-  busyText,
 }: ModalProps): Component | null {
   const d = translations();
   const { isDay } = themes();
@@ -206,7 +204,7 @@ function Modal({
                           : "disabled:hover:bg-sky-500"
                       }`}
                     >
-                      {busy ? busyText ?? finalConfirmText : finalConfirmText}
+                      {finalConfirmText}
                     </button>
                   </div>
                 </form>

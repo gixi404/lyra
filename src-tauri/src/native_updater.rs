@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use minisign_verify::{PublicKey, Signature};
 use base64::Engine;
 
@@ -103,7 +105,7 @@ pub fn detect_installation_format() -> InstallationInfo {
                 format: InstallationFormat::Deb,
                 is_package_managed: true,
                 bundle_type: bt_str,
-                supports_official_updater: true,
+                supports_official_updater: false,
             };
         }
         if bt == Some(BundleType::Rpm) {
@@ -111,7 +113,7 @@ pub fn detect_installation_format() -> InstallationInfo {
                 format: InstallationFormat::Rpm,
                 is_package_managed: true,
                 bundle_type: bt_str,
-                supports_official_updater: true,
+                supports_official_updater: false,
             };
         }
 
@@ -337,97 +339,178 @@ pub async fn download_and_verify_package(
     Ok((tmp_dir, pkg_path))
 }
 
+/// Checks whether an executable binary exists either in PATH or common system directories.
+pub fn binary_exists(bin: &str) -> bool {
+    if Path::new(bin).is_absolute() {
+        return Path::new(bin).exists();
+    }
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let full = dir.join(bin);
+            if full.is_file() {
+                return true;
+            }
+        }
+    }
+    Path::new("/usr/bin").join(bin).exists()
+        || Path::new("/bin").join(bin).exists()
+        || Path::new("/usr/local/bin").join(bin).exists()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElevatedStatus {
+    Cancelled,
+    AuthDenied,
+    InstallerFailed,
+}
+
+/// Resolves the optimal package installation tool and arguments for the current distribution.
+/// Checks distribution release signatures and configuration paths to avoid selecting
+/// incompatible managers (e.g. dummy/isolated dnf on openSUSE, or foreign apt on Fedora).
+pub fn resolve_package_installer(format: InstallationFormat) -> (&'static str, Vec<&'static str>) {
+    match format {
+        InstallationFormat::Rpm => {
+            let is_fedora_rhel = Path::new("/etc/fedora-release").exists()
+                || Path::new("/etc/redhat-release").exists()
+                || Path::new("/etc/dnf").is_dir();
+
+            let is_suse = Path::new("/etc/zypp").is_dir()
+                || Path::new("/etc/SuSE-release").exists();
+
+            if is_fedora_rhel && binary_exists("dnf") {
+                ("dnf", vec!["install", "-y"])
+            } else if is_suse && binary_exists("zypper") {
+                ("zypper", vec!["--non-interactive", "install"])
+            } else if binary_exists("dnf") && Path::new("/etc/dnf").exists() {
+                ("dnf", vec!["install", "-y"])
+            } else if binary_exists("zypper") && Path::new("/etc/zypp").exists() {
+                ("zypper", vec!["--non-interactive", "install"])
+            } else {
+                ("rpm", vec!["-U"])
+            }
+        }
+        InstallationFormat::Deb => {
+            let is_debian_ubuntu = Path::new("/etc/debian_version").exists()
+                || Path::new("/etc/apt").is_dir();
+
+            if is_debian_ubuntu && binary_exists("apt") {
+                ("apt", vec!["install", "-y"])
+            } else if binary_exists("apt") && Path::new("/etc/apt").exists() {
+                ("apt", vec!["install", "-y"])
+            } else {
+                ("dpkg", vec!["-i"])
+            }
+        }
+        _ => ("", vec![]),
+    }
+}
+
+/// Classifies the execution outcome into:
+/// 1. Voluntary user cancellation (dismissed prompt, Ctrl+C / SIGINT, SIGTERM)
+/// 2. Authorization denied / permission refusal by system policy or bad credentials
+/// 3. Installer failure (package manager returned error code or failed dependencies)
+pub fn classify_elevated_execution(code: Option<i32>, signal: Option<i32>, stderr: &str) -> ElevatedStatus {
+    let lower = stderr.to_lowercase();
+
+    // 1. Explicit voluntary cancellation from Polkit / agent
+    if lower.contains("request dismissed")
+        || lower.contains("dismissed")
+        || lower.contains("rehusó la autenticación")
+        || lower.contains("descartó")
+        || lower.contains("descartada")
+        || lower.contains("user dismissed")
+        || lower.contains("user cancelled")
+        || lower.contains("user canceled")
+    {
+        return ElevatedStatus::Cancelled;
+    }
+
+    // Process interrupted by user signal (SIGINT = 2 / Ctrl+C, SIGTERM = 15)
+    if let Some(sig) = signal {
+        if sig == 2 || sig == 15 {
+            return ElevatedStatus::Cancelled;
+        }
+    }
+
+    // 2. Explicit authorization denied / policy rejection / wrong credentials
+    if lower.contains("not authorized")
+        || lower.contains("no autorizado")
+        || lower.contains("authorization refused")
+        || lower.contains("autorización denegada")
+        || lower.contains("autorización rechazada")
+        || lower.contains("not permitted")
+    {
+        return ElevatedStatus::AuthDenied;
+    }
+
+    // pkexec exit code 126 without dismissed message indicates lack of authorization
+    if code == Some(126) {
+        return ElevatedStatus::AuthDenied;
+    }
+
+    // 3. Fallback: package manager failure or system error
+    ElevatedStatus::InstallerFailed
+}
+
+/// Helper that checks if the status corresponds specifically to voluntary user cancellation.
+pub fn is_cancellation_status(code: Option<i32>, signal: Option<i32>, stderr: &str) -> bool {
+    classify_elevated_execution(code, signal, stderr) == ElevatedStatus::Cancelled
+}
+
 /// Executes installation of the verified package using elevated privileges via pkexec.
+/// Guaranteed to invoke pkexec at most ONCE, preventing repeated authentication popups.
 pub fn install_package_elevated(pkg_path: &Path, format: InstallationFormat) -> Result<(), String> {
     if !pkg_path.exists() {
         return Err("Package file does not exist".to_string());
     }
 
+    let (installer_cmd, installer_args) = resolve_package_installer(format);
+    if installer_cmd.is_empty() {
+        return Err(format!("Elevated installation unsupported for {:?}", format));
+    }
+
     let path_str = pkg_path.to_string_lossy();
+    let mut cmd = Command::new("pkexec");
+    cmd.arg(installer_cmd);
+    for arg in installer_args {
+        cmd.arg(arg);
+    }
+    cmd.arg(path_str.as_ref());
 
-    match format {
-        InstallationFormat::Rpm => {
-            // 1. Try DNF (Fedora/RHEL standard, resolves dependencies)
-            let dnf_status = Command::new("pkexec")
-                .args(["dnf", "install", "-y", &path_str])
-                .status();
+    let output = cmd
+        .output()
+        .map_err(|e| format!("INSTALL_FAILED: No se pudo ejecutar pkexec: {e}"))?;
 
-            if let Ok(status) = dnf_status {
-                if status.success() {
-                    return Ok(());
-                }
-                if let Some(code) = status.code() {
-                    if code == 126 || code == 127 {
-                        return Err("Actualización cancelada por el usuario (permisos no otorgados)".to_string());
-                    }
-                }
-            }
+    if output.status.success() {
+        return Ok(());
+    }
 
-            // 2. Try RPM direct upgrade
-            let rpm_status = Command::new("pkexec")
-                .args(["rpm", "-U", &path_str])
-                .status();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let code = output.status.code();
 
-            if let Ok(status) = rpm_status {
-                if status.success() {
-                    return Ok(());
-                }
-                if let Some(code) = status.code() {
-                    if code == 126 || code == 127 {
-                        return Err("Actualización cancelada por el usuario (permisos no otorgados)".to_string());
-                    }
-                }
-            }
+    #[cfg(unix)]
+    let signal = output.status.signal();
+    #[cfg(not(unix))]
+    let signal = None;
 
-            // 3. Try Zypper (openSUSE)
-            let zypper_status = Command::new("pkexec")
-                .args(["zypper", "--non-interactive", "install", &path_str])
-                .status();
-
-            if let Ok(status) = zypper_status {
-                if status.success() {
-                    return Ok(());
-                }
-            }
-
-            Err("No se pudo instalar el paquete RPM con permisos administrativos".to_string())
+    match classify_elevated_execution(code, signal, &stderr) {
+        ElevatedStatus::Cancelled => {
+            Err("UPDATE_CANCELLED: Actualización cancelada por el usuario".to_string())
         }
-        InstallationFormat::Deb => {
-            // 1. Try apt install (Debian/Ubuntu standard, resolves local package & dependencies)
-            let apt_status = Command::new("pkexec")
-                .args(["apt", "install", "-y", &path_str])
-                .status();
-
-            if let Ok(status) = apt_status {
-                if status.success() {
-                    return Ok(());
-                }
-                if let Some(code) = status.code() {
-                    if code == 126 || code == 127 {
-                        return Err("Actualización cancelada por el usuario (permisos no otorgados)".to_string());
-                    }
-                }
-            }
-
-            // 2. Fallback to dpkg -i
-            let dpkg_status = Command::new("pkexec")
-                .args(["dpkg", "-i", &path_str])
-                .status();
-
-            if let Ok(status) = dpkg_status {
-                if status.success() {
-                    return Ok(());
-                }
-                if let Some(code) = status.code() {
-                    if code == 126 || code == 127 {
-                        return Err("Actualización cancelada por el usuario (permisos no otorgados)".to_string());
-                    }
-                }
-            }
-
-            Err("No se pudo instalar el paquete DEB con permisos administrativos".to_string())
+        ElevatedStatus::AuthDenied => {
+            Err("AUTH_DENIED: Permisos administrativos no otorgados o denegados por la directiva de seguridad".to_string())
         }
-        _ => Err(format!("Elevated installation unsupported for {:?}", format)),
+        ElevatedStatus::InstallerFailed => {
+            let err_details = if !stderr.trim().is_empty() {
+                stderr.trim().to_string()
+            } else if !stdout.trim().is_empty() {
+                stdout.trim().to_string()
+            } else {
+                format!("código de salida {:?}", code)
+            };
+            Err(format!("INSTALL_FAILED: Error en el gestor de paquetes ({installer_cmd}): {err_details}"))
+        }
     }
 }
 
@@ -489,5 +572,112 @@ mod tests {
             InstallationFormat::MacOS,
             InstallationFormat::Standalone,
         ].contains(&info.format));
+
+        // RPM and DEB must never claim official updater support to avoid multi-prompt fallbacks
+        if info.format == InstallationFormat::Rpm || info.format == InstallationFormat::Deb {
+            assert!(!info.supports_official_updater);
+        }
+    }
+
+    #[test]
+    fn test_classify_elevated_execution_distinguishes_cancellation_denial_and_failure() {
+        // 1. Voluntary cancellations:
+        // Polkit "Request dismissed"
+        assert_eq!(
+            classify_elevated_execution(Some(126), None, "Error executing command as another user: Request dismissed\n"),
+            ElevatedStatus::Cancelled
+        );
+        // User interruption signal (SIGINT = 2 / Ctrl+C)
+        assert_eq!(
+            classify_elevated_execution(None, Some(2), ""),
+            ElevatedStatus::Cancelled
+        );
+        // User termination signal (SIGTERM = 15)
+        assert_eq!(
+            classify_elevated_execution(None, Some(15), ""),
+            ElevatedStatus::Cancelled
+        );
+        // Spanish locale dismissal
+        assert_eq!(
+            classify_elevated_execution(Some(1), None, "El usuario rehusó la autenticación."),
+            ElevatedStatus::Cancelled
+        );
+
+        // 2. Authorization denied / permission refusal:
+        // Polkit "Not authorized"
+        assert_eq!(
+            classify_elevated_execution(Some(126), None, "Error executing command as another user: Not authorized\n"),
+            ElevatedStatus::AuthDenied
+        );
+        // Exit code 126 without dismissed message
+        assert_eq!(
+            classify_elevated_execution(Some(126), None, ""),
+            ElevatedStatus::AuthDenied
+        );
+        // Policy rejection message
+        assert_eq!(
+            classify_elevated_execution(Some(1), None, "pkexec: not authorized by system policy"),
+            ElevatedStatus::AuthDenied
+        );
+
+        // 3. Package manager / system installer failures:
+        // DNF transaction test error
+        assert_eq!(
+            classify_elevated_execution(Some(1), None, "Error: Transaction test error: file /usr/bin/lyra conflicts with file from package lyra-2.0.21"),
+            ElevatedStatus::InstallerFailed
+        );
+        // Dpkg error
+        assert_eq!(
+            classify_elevated_execution(Some(1), None, "dpkg: error processing package lyra (--install)"),
+            ElevatedStatus::InstallerFailed
+        );
+        // Executable not found (code 127)
+        assert_eq!(
+            classify_elevated_execution(Some(127), None, "pkexec: command not found"),
+            ElevatedStatus::InstallerFailed
+        );
+        // Process crash (e.g. SIGSEGV = 11) is an installer failure, NOT a voluntary cancellation
+        assert_eq!(
+            classify_elevated_execution(None, Some(11), "Segmentation fault"),
+            ElevatedStatus::InstallerFailed
+        );
+    }
+
+    #[test]
+    fn test_is_cancellation_status() {
+        assert!(is_cancellation_status(Some(126), None, "Request dismissed"));
+        assert!(is_cancellation_status(None, Some(2), ""));
+        assert!(!is_cancellation_status(Some(126), None, "Not authorized"));
+        assert!(!is_cancellation_status(Some(1), None, "Package error"));
+    }
+
+    #[test]
+    fn test_resolve_package_installer_rpm_and_deb() {
+        let (rpm_cmd, rpm_args) = resolve_package_installer(InstallationFormat::Rpm);
+        assert!(rpm_cmd == "dnf" || rpm_cmd == "zypper" || rpm_cmd == "rpm");
+        assert!(!rpm_args.is_empty());
+
+        let (deb_cmd, deb_args) = resolve_package_installer(InstallationFormat::Deb);
+        assert!(deb_cmd == "apt" || deb_cmd == "dpkg");
+        assert!(!deb_args.is_empty());
+
+        let (win_cmd, _) = resolve_package_installer(InstallationFormat::Windows);
+        assert_eq!(win_cmd, "");
+    }
+
+    #[test]
+    fn test_binary_exists() {
+        // /bin/sh or sh should always exist on Linux systems
+        assert!(binary_exists("sh"));
+        // Non-existent binary should return false
+        assert!(!binary_exists("definitely_non_existent_binary_xyz123"));
+    }
+
+    #[test]
+    fn test_install_package_elevated_nonexistent_file() {
+        let nonexistent = Path::new("/tmp/nonexistent_lyra_package_12345.rpm");
+        let result = install_package_elevated(nonexistent, InstallationFormat::Rpm);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Package file does not exist");
     }
 }

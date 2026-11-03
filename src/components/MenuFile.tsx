@@ -372,7 +372,6 @@ function MenuFile({ fileName }: Props): Component {
         cancelText={d.Cancel}
         variant="danger"
         busy={isArchiving}
-        busyText="Archivando..."
       />
     </div>
   );
