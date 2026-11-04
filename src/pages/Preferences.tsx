@@ -72,9 +72,9 @@ const d = translations(),
   // NOTA: Al agregar funcionalidades en esta lista o en notas de versión, NO usar formato
   // markdown (**negrita**, cursiva, enlaces, etc.). Cada elemento se muestra como texto plano directo.
   defaultChangelog = [
-    "Nuevo tema \"Sistema\".",
-    "Mejoras visuales.",
-    "Correción de bugs.",
+    "Nuevo tema 'Sistema'",
+    "Mejoras visuales",
+    "Correción de bugs",
   ] as const;
 
 function parseChangelog(raw: string | null): string[] | null {

@@ -46,6 +46,14 @@ function runCapture(cmd) {
 const pkgPath = path.join(rootDir, "package.json");
 const tauriConfPath = path.join(rootDir, "src-tauri", "tauri.conf.json");
 const cargoTomlPath = path.join(rootDir, "src-tauri", "Cargo.toml");
+const cargoLockPath = path.join(rootDir, "src-tauri", "Cargo.lock");
+
+// 0. Verificar que no existan conflictos de merge sin resolver
+const conflicts = runCapture("git diff --name-only --diff-filter=U").trim();
+if (conflicts) {
+  error(`Existen conflictos de merge sin resolver en el repositorio:\n${conflicts}`);
+  process.exit(1);
+}
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 const currentVersion = pkg.version;
@@ -102,7 +110,7 @@ tauriConf.version = nextVersion;
 fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + "\n", "utf8");
 success("Actualizado src-tauri/tauri.conf.json");
 
-// 4. Actualizar Cargo.toml
+// 5. Actualizar Cargo.toml
 let cargoToml = fs.readFileSync(cargoTomlPath, "utf8");
 cargoToml = cargoToml.replace(
   /(\[package\][\s\S]*?version\s*=\s*)"[^"]+"/,
@@ -110,6 +118,35 @@ cargoToml = cargoToml.replace(
 );
 fs.writeFileSync(cargoTomlPath, cargoToml, "utf8");
 success("Actualizado src-tauri/Cargo.toml");
+
+// 6. Sincronizar src-tauri/Cargo.lock con la versión actualizada
+log("Sincronizando src-tauri/Cargo.lock con la nueva versión...");
+run("cargo check --manifest-path src-tauri/Cargo.toml");
+success("Actualizado y sincronizado src-tauri/Cargo.lock");
+
+// 7. Verificar consistencia estricta de versión en todos los manifiestos
+const updatedPkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+const updatedTauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
+const updatedCargoToml = fs.readFileSync(cargoTomlPath, "utf8");
+const updatedCargoLock = fs.readFileSync(cargoLockPath, "utf8");
+
+if (updatedPkg.version !== nextVersion) {
+  error(`package.json no contiene la versión esperada (${nextVersion})`);
+  process.exit(1);
+}
+if (updatedTauriConf.version !== nextVersion) {
+  error(`src-tauri/tauri.conf.json no contiene la versión esperada (${nextVersion})`);
+  process.exit(1);
+}
+if (!updatedCargoToml.includes(`version = "${nextVersion}"`)) {
+  error(`src-tauri/Cargo.toml no contiene version = "${nextVersion}"`);
+  process.exit(1);
+}
+if (!updatedCargoLock.includes(`name = "lyra"\nversion = "${nextVersion}"`)) {
+  error(`src-tauri/Cargo.lock no contiene la versión ${nextVersion} para el paquete lyra`);
+  process.exit(1);
+}
+success(`Todos los manifiestos de versión verificados correctamente en v${nextVersion}`);
 
 // 5. Cargar clave de firma de Tauri y preparar compilación
 const keyPath = path.join(os.homedir(), ".tauri", "lyra.key");
@@ -221,29 +258,88 @@ if (!skipBuild) {
 }
 
 // 8. Commit y Tag en Git
-log("Creando commit y tag en Git...");
-run("git add package.json pnpm-lock.yaml src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock");
-run("git add src/ src-tauri/ scripts/ tests/ .github/ pnpm-workspace.yaml");
-try {
-  run(`git commit -m "release: v${nextVersion}"`);
-} catch {
-  warn("No hubo cambios adicionales para commitear.");
+log("Preparando staging de Git para el commit de release...");
+
+// 1. Agregar todos los cambios de archivos existentes ya rastreados
+run("git add -u");
+
+// 2. Agregar explícitamente configuraciones clave de raíz y directorios del proyecto
+const essentialEntries = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "eslint.config.js",
+  "tsconfig.json",
+  "tsconfig.node.json",
+  "vite.config.ts",
+  "tailwind.config.js",
+  "postcss.config.js",
+  "index.html",
+  ".gitignore",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "README.md",
+  ".github",
+  "src",
+  "src-tauri",
+  "scripts",
+  "tests",
+];
+
+for (const entry of essentialEntries) {
+  if (fs.existsSync(path.join(rootDir, entry))) {
+    run(`git add "${entry}"`);
+  }
+}
+
+// 3. Capturar cualquier otro archivo nuevo que no esté ignorado por .gitignore
+run("git add -A");
+
+// Verificar que existan cambios preparados para commitear
+const stagedDiff = runCapture("git diff --cached --name-only").trim();
+if (!stagedDiff) {
+  error("No hay cambios preparados en Git para commitear. Abortando release para evitar generar commits o tags vacíos.");
+  process.exit(1);
+}
+
+// Crear commit de release
+log(`Creando commit de release para v${nextVersion}...`);
+run(`git commit -m "release: v${nextVersion}"`);
+success(`Commit de release creado: "release: v${nextVersion}"`);
+
+// Verificar que el commit en HEAD corresponda exactamente a la nueva versión
+const lastCommitMsg = runCapture("git log -1 --pretty=%B").trim();
+if (!lastCommitMsg.startsWith(`release: v${nextVersion}`)) {
+  error(`El commit en HEAD ("${lastCommitMsg}") no corresponde a v${nextVersion}. Abortando tag y push.`);
+  process.exit(1);
 }
 
 const tag = `v${nextVersion}`;
-try {
-  run(`git tag -a ${tag} -m "Release ${tag}"`);
-} catch {
-  warn(`El tag ${tag} ya existía o no se pudo crear.`);
+
+// Verificar que el tag no exista previamente de forma local o remota
+const tagExistsLocal = Boolean(runCapture(`git tag -l "${tag}"`));
+if (tagExistsLocal) {
+  error(`El tag ${tag} ya existe localmente. Abortando para evitar sobreescritura de tags.`);
+  process.exit(1);
 }
 
+const tagExistsRemote = Boolean(runCapture(`git ls-remote --tags origin "refs/tags/${tag}"`));
+if (tagExistsRemote) {
+  error(`El tag ${tag} ya existe en el repositorio remoto. Abortando release.`);
+  process.exit(1);
+}
+
+// Crear el tag anotado
+run(`git tag -a ${tag} -m "Release ${tag}"`);
+success(`Tag ${tag} creado exitosamente apuntando a HEAD`);
+
 // 9. Push a GitHub
-log("Subiendo commits y tags al repositorio remoto...");
+const currentBranch = runCapture("git rev-parse --abbrev-ref HEAD").trim() || "trunk";
+log(`Subiendo commit y tag ${tag} a la rama '${currentBranch}' en el repositorio remoto...`);
 try {
-  run("git push origin HEAD --tags");
+  run(`git push origin ${currentBranch} ${tag}`);
   success("Git push completado");
 } catch {
-  warn("No se pudo hacer push automático a git. Asegúrate de tener conexión.");
+  warn(`No se pudo hacer push automático a git. Puedes ejecutar manualmente: git push origin ${currentBranch} ${tag}`);
 }
 
 // 10. Publicar o adjuntar artefactos en GitHub Release
