@@ -1,14 +1,19 @@
 {
   "name": "lyra",
   "private": true,
-  "version": "2.0.29",
+  "version": "2.0.14",
   "type": "module",
   "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri.js",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "check": "pnpm lint && pnpm typecheck && pnpm lint:rust",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "newversion": "node scripts/newversion.js",
     "revertversion": "node scripts/revertversion.js"
   },
@@ -43,15 +48,21 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^20.14.15",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.14.0",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.5.4",
+    "typescript-eslint": "^8.72.1",
     "vite": "^5.4.21"
   }
 }

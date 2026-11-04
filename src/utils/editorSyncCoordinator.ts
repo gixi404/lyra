@@ -76,8 +76,8 @@ export class EditorSyncCoordinator {
   private inFlightSeq = 0;
   private saveQueue: Promise<void> = Promise.resolve();
 
-  private autosaveTimer: any = null;
-  private draftTimer: any = null;
+  private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private draftTimer: ReturnType<typeof setTimeout> | null = null;
 
   private options: EditorSyncCoordinatorOptions;
 

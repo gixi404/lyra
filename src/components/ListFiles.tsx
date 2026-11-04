@@ -48,7 +48,11 @@ const ListFiles = memo(({ arr }: Props): Component => {
     paperIsOpen = configStore(state => state.paperIsOpen),
     fileIsEdited = fileStore(state => state.fileIsEdited),
     normalizedSearch = useMemo(() => normalize(search), [search]),
-    paperFiles = useMemo(() => myPaper(arr), [arr, fileIsEdited, paperIsOpen]),
+    paperFiles = useMemo(() => {
+      void fileIsEdited;
+      void paperIsOpen;
+      return myPaper(arr);
+    }, [arr, fileIsEdited, paperIsOpen, myPaper]),
     paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
     [isEmptyModalOpen, setIsEmptyModalOpen] = useState<boolean>(false),
     isDeleting = fileStore(state => state.isEmptyingArchived),
@@ -164,7 +168,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
     window.scrollTo(0, 0);
     setShowTooltip(false);
     fileStore.getState().flushPendingExits();
-  }, [paperIsOpen]);
+  }, [paperIsOpen, resetSearch]);
 
   function renderFiles(): Component {
     if (len(files) === 0) {

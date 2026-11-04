@@ -55,7 +55,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
     return () => {
       isMounted = false;
     };
-  }, [isOpen, fileName]);
+  }, [isOpen, fileName, getFileStats]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

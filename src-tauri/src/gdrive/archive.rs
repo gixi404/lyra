@@ -219,7 +219,7 @@ pub fn set_archived(lyra_dir: &Path, name: &str, archived: bool, account_key: Op
         .filter_map(|key| binding_id(&note, key).map(|_| key.as_str())).collect();
     // Without an explicit account, only an unambiguous Drive binding may
     // receive an account-scoped operation. Unbound notes stay local-only.
-    let target_account = account_key.or_else(|| match known_accounts.as_slice() {
+    let target_account = account_key.or(match known_accounts.as_slice() {
         [only] => Some(*only),
         _ => None,
     });
@@ -530,9 +530,9 @@ mod tests {
         let note_id = add_note(&dir.0, "Unbound.md", None);
         set_archived(&dir.0, "Unbound.md", true, Some("account_a")).unwrap();
         let reopened = load(&dir.0).unwrap();
-        assert_eq!(reopened.accounts["account_a"].pending[&note_id].archived, true);
+        assert!(reopened.accounts["account_a"].pending[&note_id].archived);
         assert!(reopened.accounts["account_a"].operations.is_empty());
-        assert!(reopened.accounts.get("account_b").is_none());
+        assert!(!reopened.accounts.contains_key("account_b"));
         assert_eq!(projection(&dir.0, Some("account_a")).unwrap().archived_names, ["Unbound.md"]);
     }
 

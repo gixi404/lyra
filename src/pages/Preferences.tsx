@@ -114,8 +114,7 @@ function Preferences(): Component {
         if (parsed) return parsed;
       } catch {}
       return defaultChangelog;
-    }),
-    [hasCheckedUpdates, setHasCheckedUpdates] = useState<boolean>(false);
+    });
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent): void => {
@@ -167,13 +166,11 @@ function Preferences(): Component {
     if (getIsCheckingUpdate() || checkingUpdate) return;
     setCheckingUpdate(true);
     try {
-      const ok = await checkAndApplyUpdate(true);
-      setHasCheckedUpdates(Boolean(ok));
+      await checkAndApplyUpdate(true);
       const raw = window.localStorage.getItem("lyra_release_notes");
       const parsed = parseChangelog(raw);
       if (parsed) setReleaseNotes(parsed);
     } catch {
-      setHasCheckedUpdates(false);
     } finally {
       setCheckingUpdate(false);
     }
@@ -201,8 +198,8 @@ function Preferences(): Component {
       const docPath: string = await documentDir();
       const path: string = await join(docPath, MAIN_FOLDER);
       await invoke("open_folder", { path });
-    } catch (err: any) {
-      console.error(`catch 'openFolder' ${err?.message || err}`);
+    } catch (err) {
+      console.error(`catch 'openFolder' ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -227,25 +224,21 @@ function Preferences(): Component {
               <button
                 type="button"
                 onClick={handleCheckUpdate}
-                disabled={checkingUpdate || (!pendingVersion && hasCheckedUpdates)}
+                disabled={checkingUpdate}
                 className={twMerge(
                   "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
                   isDay
                     ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
                     : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
-                  (checkingUpdate || (!pendingVersion && hasCheckedUpdates)) && "opacity-40 cursor-not-allowed"
+                  checkingUpdate && "opacity-40 cursor-not-allowed"
                 )}
               >
-                {pendingVersion ? (
-                  <RefreshCwIcon size={14} />
-                ) : hasCheckedUpdates && !checkingUpdate ? null : (
-                  <RefreshCwIcon size={14} />
-                )}
+                <RefreshCwIcon size={14} className={checkingUpdate ? "animate-spin" : undefined} />
                 <span>
                   {pendingVersion
                     ? "Reiniciar"
-                    : hasCheckedUpdates && !checkingUpdate
-                    ? "Comprobado"
+                    : checkingUpdate
+                    ? "Buscando..."
                     : "Buscar"}
                 </span>
               </button>

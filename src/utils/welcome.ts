@@ -15,7 +15,7 @@ import { setArchiveState } from "./archiveState.ts";
 export const WELCOME_FILE_NAME: string = WELCOME_ES;
 
 async function archiveWelcome(name: string, currentPaper: string[], storageOps: WelcomeStorageOps): Promise<void> {
-  if (storageOps === defaultStorageOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (storageOps === defaultStorageOps && typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
     await setArchiveState(name, true);
     return;
   }
@@ -40,10 +40,10 @@ export interface WelcomeFsEntry {
 
 export interface WelcomeFsOps {
   exists: (path: string) => Promise<boolean>;
-  mkdir: (path: string, options?: any) => Promise<void>;
+  mkdir: (path: string, options?: Record<string, unknown>) => Promise<void>;
   readDir: (path: string) => Promise<WelcomeFsEntry[]>;
   readTextFile: (path: string) => Promise<string>;
-  writeTextFile: (path: string, content: string, options?: any) => Promise<void>;
+  writeTextFile: (path: string, content: string, options?: Record<string, unknown>) => Promise<void>;
 }
 
 export interface WelcomeStorageOps {
@@ -53,7 +53,7 @@ export interface WelcomeStorageOps {
 }
 
 async function resolveWelcomePath(base: string, file: string): Promise<string> {
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
     try {
       return await join(base, file);
     } catch {}
@@ -63,13 +63,13 @@ async function resolveWelcomePath(base: string, file: string): Promise<string> {
 
 const defaultFsOps: WelcomeFsOps = {
   exists: async (path: string) => tauriExists(path, BASE_DIRECTORY),
-  mkdir: async (path: string, options?: any) => tauriMkdir(path, { ...BASE_DIRECTORY, ...options }),
+  mkdir: async (path: string, options?: Record<string, unknown>) => tauriMkdir(path, { ...BASE_DIRECTORY, ...options }),
   readDir: async (path: string) => {
     const entries = await tauriReadDir(path, BASE_DIRECTORY);
     return entries.map(e => ({ name: e.name, isFile: e.isFile }));
   },
   readTextFile: async (path: string) => tauriReadTextFile(path, BASE_DIRECTORY),
-  writeTextFile: async (path: string, content: string, options?: any) =>
+  writeTextFile: async (path: string, content: string, options?: Record<string, unknown>) =>
     tauriWriteTextFile(path, content, { ...BASE_DIRECTORY, ...options }),
 };
 
@@ -107,7 +107,7 @@ export function isDefaultWelcomeContent(content: string): boolean {
 }
 
 async function isInternalWelcome(name: string, content: string, fsOps: WelcomeFsOps): Promise<boolean> {
-  if (fsOps === defaultFsOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (fsOps === defaultFsOps && typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
     return invoke<boolean>("gdrive_is_internal_welcome", { fileName: name });
   }
   return isDefaultWelcomeContent(content);
@@ -229,7 +229,7 @@ export async function ensureWelcomeFileState(
 
       // Crear el archivo de bienvenida
       const welcomePath = await resolveWelcomePath(MAIN_FOLDER, WELCOME_FILE_NAME);
-      const created = fsOps === defaultFsOps && typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__
+      const created = fsOps === defaultFsOps && typeof window !== "undefined" && window.__TAURI_INTERNALS__
         ? await invoke<boolean>("create_internal_welcome", { content: INTRO_ES })
         : await fsOps.writeTextFile(welcomePath, INTRO_ES, { createNew: true }).then(() => true);
 

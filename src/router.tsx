@@ -3,6 +3,7 @@ import { lazy } from "react";
 import { PAGES } from "./utils/consts";
 import ListPage from "./pages/List";
 import type { LazyCmp } from "./utils/types";
+import { registerNavigator, navigateTo } from "./utils/navigation";
 
 const FilePage: LazyCmp = lazy(() => import("./pages/FileContent"));
 const PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences"));
@@ -29,6 +30,8 @@ export const router = createBrowserRouter(
   }
 );
 
-export function navigateTo(path: string): void {
+registerNavigator((path: string) => {
   void router.navigate(path);
-}
+});
+
+export { navigateTo };

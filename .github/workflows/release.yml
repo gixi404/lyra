@@ -43,6 +43,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -61,15 +63,15 @@ jobs:
       - name: Install JavaScript dependencies
         run: pnpm install
 
+      - name: Code Quality & Static Analysis Gate
+        run: pnpm check
+
       - name: Test Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Check Rust
-        run: cargo check --manifest-path src-tauri/Cargo.toml
-
       - name: Test TypeScript
         shell: bash
-        run: node --experimental-strip-types --test tests/*.test.ts
+        run: pnpm test
 
       - name: Build frontend
         run: pnpm run build
@@ -104,6 +106,38 @@ jobs:
             ### Instaladores por plataforma:
             - **Windows**: `.msi` (instalador Windows) / `.exe`
             - **Linux**: `.AppImage`, `.deb`, `.rpm`
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
           args: ${{ matrix.args }}
+
+  publish-release:
+    needs: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate release integrity and platform manifest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node scripts/validate-release.js "${{ github.ref_name }}"
+
+      - name: Publish draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "Publicando de forma atómica la release $TAG tras verificar exitosamente la integridad de todas las plataformas y firmas..."
+          gh release edit "$TAG" --draft=false

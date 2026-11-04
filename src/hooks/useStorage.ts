@@ -13,7 +13,7 @@ const storageInstance: Storage = {
   setItem: (key: string, value: string): void => {
     window.localStorage.setItem(key, value);
     configStore.getState().bumpPrefTick();
-    if (PERSISTENT_KEYS.includes(key as any)) {
+    if ((PERSISTENT_KEYS as readonly string[]).includes(key)) {
       if (key === "paper" || key === "welcome_manually_restored") {
         void savePersistentPreferencesNow();
       } else {
@@ -24,7 +24,7 @@ const storageInstance: Storage = {
   removeItem: (key: string): void => {
     window.localStorage.removeItem(key);
     configStore.getState().bumpPrefTick();
-    if (PERSISTENT_KEYS.includes(key as any)) {
+    if ((PERSISTENT_KEYS as readonly string[]).includes(key)) {
       if (key === "paper" || key === "welcome_manually_restored") {
         void savePersistentPreferencesNow();
       } else {

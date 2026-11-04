@@ -54,7 +54,7 @@ function createMockEnvironment(initialFiles: Record<string, string> = {}, initia
       }
       return content;
     },
-    writeTextFile: async (path: string, content: string, options?: any) => {
+    writeTextFile: async (path: string, content: string, options?: { createNew?: boolean }) => {
       if (options?.createNew && fileMap.has(path)) {
         throw new Error(`AlreadyExists: ${path}`);
       }

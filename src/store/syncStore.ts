@@ -311,7 +311,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       } else {
         set({ hasManageableNotes: false });
       }
-    } catch (err: any) {
+    } catch (err) {
       if (generation !== connectionGeneration) return;
       console.warn("No se pudo obtener el estado de sincronización de Google Drive:", err);
       set({
@@ -321,7 +321,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         userName: null,
         userPhoto: null,
         pendingAuthorization: null,
-        lastError: err?.message || String(err),
+        lastError: err instanceof Error ? err.message : String(err),
       });
     }
   },
@@ -352,11 +352,11 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       notification("success", `Conectado a Google Drive como ${user.email}`);
       await get().fetchStatus();
       await refreshArchiveState();
-    } catch (err: any) {
+    } catch (err) {
       visibleSyncRequests.delete(loginRequestId);
       if (activeLoginRequestId === loginRequestId) activeLoginRequestId = null;
       set({ isSyncing: false });
-      const msg = err?.message || String(err);
+      const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("cancelado")) {
         // Conexión cancelada: no mostrar notificación
       } else if (
@@ -386,7 +386,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       activeBackendSyncReason = "background";
       dismissSyncToast();
       set({ isSyncing: false });
-    } catch (err: any) {
+    } catch (err) {
       console.warn("Error al cancelar login:", err);
     }
   },
@@ -437,7 +437,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         console.warn("Could not refresh archive view after logout", error);
       }
       return true;
-    } catch (err: any) {
+    } catch {
       notification("error", "No se pudo desconectar la cuenta");
       void get().fetchStatus();
       return false;
@@ -590,10 +590,10 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         await autoArchiveWelcomeOnSync(res.downloaded);
         fileStore.getState().editedFile();
       }
-    } catch (err: any) {
+    } catch (err) {
       if (visibleRequestId) visibleSyncRequests.delete(visibleRequestId);
       const durationMs = Date.now() - startTime;
-      const errMsg = err?.message || String(err);
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[SyncStore ${reqId}] Fallo al invocar 'gdrive_sync_now' (${durationMs}ms):`, err);
       set({ isSyncing: false, lastError: errMsg });
       if (!silent) {
@@ -601,28 +601,29 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       }
     } finally {
       frontendSyncInvokeActive = false;
-      if (backendQueued) return;
-      const willRunQueued = syncQueued;
-      const runManual = queuedIsManual;
-      const runReason = queuedReason;
-      syncQueued = false;
-      queuedIsManual = false;
-      queuedReason = "background";
+      if (!backendQueued) {
+        const willRunQueued = syncQueued;
+        const runManual = queuedIsManual;
+        const runReason = queuedReason;
+        syncQueued = false;
+        queuedIsManual = false;
+        queuedReason = "background";
 
-      if (!isManual) {
-        lastAutoSyncTimestamp = Date.now();
-      }
-
-      if (!willRunQueued) {
-        isManualSyncActive = false;
-        if (activeBackendSyncId === null) dismissSyncToast();
-      } else {
-        if (runManual) {
-          isManualSyncActive = true;
+        if (!isManual) {
+          lastAutoSyncTimestamp = Date.now();
         }
-        setTimeout(() => {
-          void get().syncNow(!runManual, true, runReason);
-        }, 300);
+
+        if (!willRunQueued) {
+          isManualSyncActive = false;
+          if (activeBackendSyncId === null) dismissSyncToast();
+        } else {
+          if (runManual) {
+            isManualSyncActive = true;
+          }
+          setTimeout(() => {
+            void get().syncNow(!runManual, true, runReason);
+          }, 300);
+        }
       }
     }
   },
@@ -684,8 +685,8 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       const noun = authorized === 1 ? "nota autorizada" : "notas autorizadas";
       notification("success", `${authorized} ${noun} para ${label}`, undefined, 6000);
       if (authorized > 0) void get().syncNow(true, true, "authorization");
-    } catch (err: any) {
-      const msg = err?.message || String(err);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.warn("[SyncStore] No se pudo autorizar las notas pendientes:", err);
       set({ isAuthorizingPending: false });
       if (generation === connectionGeneration && get().isConnected) {

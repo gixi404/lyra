@@ -268,6 +268,43 @@ pub fn verify_minisign(data: &[u8], signature_b64: &str, pubkey_b64: &str) -> Re
 }
 
 
+/// Validates that an update download URL points to an authorized, trusted release origin.
+/// Uses a strict URL parser and exact hostname and path matching.
+pub fn validate_update_url(raw_url: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(raw_url)
+        .map_err(|e| format!("URL de actualización inválida: {e}"))?;
+
+    if parsed.scheme() != "https" {
+        return Err("URL de actualización no permitida: el esquema debe ser estrictamente HTTPS".to_string());
+    }
+
+    let host = parsed.host_str().ok_or("URL de actualización sin host")?;
+
+    match host {
+        "github.com" => {
+            let path = parsed.path();
+            if !path.starts_with("/gixi404/lyra/releases/download/") {
+                return Err(format!(
+                    "Ruta no permitida en github.com: '{path}'. Solo se permiten descargas oficiales de gixi404/lyra."
+                ));
+            }
+        }
+        "objects.githubusercontent.com"
+        | "release-assets.githubusercontent.com"
+        | "github-releases.githubusercontent.com" => {
+            let path = parsed.path();
+            if path.is_empty() || path == "/" {
+                return Err(format!("Ruta vacía no permitida en {host}"));
+            }
+        }
+        other => {
+            return Err(format!("Host no autorizado para descargas de actualización: '{other}'"));
+        }
+    }
+
+    Ok(parsed)
+}
+
 /// Checks the latest.json manifest for available RPM or DEB updates.
 pub async fn check_native_update(
     format: InstallationFormat,
@@ -323,7 +360,27 @@ pub async fn download_and_verify_package(
     signature_b64: &str,
     format: InstallationFormat,
 ) -> Result<(tempfile::TempDir, PathBuf), String> {
+    // 1. Validar la URL inicial contra la política de orígenes seguros
+    validate_update_url(url)?;
+
+    // 2. Restringir redirecciones HTTP para evitar ataques SSRF o redirecciones a orígenes no autorizados
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        if let Err(e) = validate_update_url(attempt.url().as_str()) {
+            return attempt.error(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Redirección rechazada: {}", e),
+            ));
+        }
+        if attempt.previous().len() >= 5 {
+            return attempt.error(std::io::Error::other(
+                "Demasiadas redirecciones HTTP durante la descarga",
+            ));
+        }
+        attempt.follow()
+    });
+
     let client = reqwest::Client::builder()
+        .redirect(redirect_policy)
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| format!("Could not create HTTP client: {e}"))?;

@@ -73,7 +73,6 @@ function Form(): Component {
     { myPaper } = usePreferences(),
     { createFile, resolveDisplayName, readFile } = useFile(),
     searchInputRef = useRef<HTMLInputElement>(null),
-    fileIsEdited = fileStore(state => state.fileIsEdited),
     { paperIsOpen, setPaperIsOpen } = configStore(
       useShallow(state => ({
         paperIsOpen: state.paperIsOpen,
@@ -96,7 +95,7 @@ function Form(): Component {
         files: state.files,
       }))
     ),
-    paperFiles = useMemo(() => myPaper(files), [files, fileIsEdited]),
+    paperFiles = useMemo(() => myPaper(files), [files, myPaper]),
     paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
     hasArchivedFiles = paperFiles.length > 0,
     isRepeated = (fileName: string): boolean => {

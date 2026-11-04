@@ -42,7 +42,13 @@ export function categorizeUpdateError(error: unknown): UpdateFailureInfo {
     };
   }
 
-  const rawMsg = String((error as any)?.message || error || "").trim();
+  const rawMsg = String(
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null && "message" in error
+      ? (error as { message: unknown }).message
+      : error || ""
+  ).trim();
   const lower = rawMsg.toLowerCase();
 
   // 1. Explicit tokens returned from Rust backend
@@ -57,6 +63,22 @@ export function categorizeUpdateError(error: unknown): UpdateFailureInfo {
     lower.includes("user canceled") ||
     lower.includes("actualización cancelada")
   ) {
+    return {
+      category: "cancelled",
+      message: "Actualización cancelada",
+    };
+  }
+
+  // Windows UAC / Elevation cancellation (ERROR_CANCELLED: Win32 code 1223 / 0x4C7)
+  const isWindowsUacCancelled =
+    /\b(?:os error|exit code|error code|exit status|winerror|windows error|code)\s*[:=]?\s*1223\b/i.test(rawMsg) ||
+    (/\b1223\b/.test(rawMsg) &&
+      (lower.includes("uac") ||
+        lower.includes("elevat") ||
+        lower.includes("operation was canceled") ||
+        lower.includes("operation was cancelled")));
+
+  if (isWindowsUacCancelled) {
     return {
       category: "cancelled",
       message: "Actualización cancelada",

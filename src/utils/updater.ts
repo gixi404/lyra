@@ -1,14 +1,13 @@
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { notification, pathIs, scrollToNovedades } from "./helpers";
-import { navigateTo } from "../router";
-import { PAGES } from "./consts";
-import { useToastStore, type ToastAction, type ToastType } from "../store/toastStore";
-import { setListScroll } from "./listScroll";
-import { prepareEditorsForRelaunch, runPreparedInstall, runPreparedRelaunch } from "./editorPersistence";
-import { savePersistentPreferencesNow } from "./persistentPreferences";
+import { PAGES } from "./consts.ts";
+import { useToastStore, type ToastAction, type ToastType } from "../store/toastStore.ts";
+import { setListScroll } from "./listScroll.ts";
+import { pathIs, scrollToNovedades, navigateTo } from "./navigation.ts";
+import { prepareEditorsForRelaunch, runPreparedInstall, runPreparedRelaunch } from "./editorPersistence.ts";
+import { savePersistentPreferencesNow } from "./persistentPreferences.ts";
 
 import {
   compareVersions,
@@ -19,7 +18,16 @@ import {
   type NativeUpdateInfo,
   type UpdateFailureCategory,
   type UpdateFailureInfo,
-} from "./updaterVersion";
+} from "./updaterVersion.ts";
+
+function notification(
+  type: ToastType,
+  msg: string,
+  action?: ToastAction,
+  durationMs?: number
+): string {
+  return useToastStore.getState().addToast(type, msg, action, durationMs);
+}
 
 export type {
   InstallationFormat,
@@ -79,21 +87,27 @@ export function getIsCheckingUpdate(): boolean {
 }
 
 export function openNovedades(): void {
-  if (pathIs(PAGES.list)) {
-    const y = window.scrollY || document.documentElement.scrollTop || 0;
-    setListScroll(y);
-  }
+  if (typeof window === "undefined") return;
+  try {
+    if (pathIs(PAGES.list)) {
+      const docScroll = typeof document !== "undefined" ? document.documentElement?.scrollTop || 0 : 0;
+      const y = window.scrollY || docScroll;
+      setListScroll(y);
+    }
 
-  if (pathIs(PAGES.preferences)) {
-    try {
-      window.sessionStorage.removeItem("scroll_to_novedades");
-    } catch {}
-    scrollToNovedades();
-  } else {
-    try {
-      window.sessionStorage.setItem("scroll_to_novedades", "true");
-    } catch {}
-    navigateTo(PAGES.preferences);
+    if (pathIs(PAGES.preferences)) {
+      try {
+        window.sessionStorage.removeItem("scroll_to_novedades");
+      } catch {}
+      scrollToNovedades();
+    } else {
+      try {
+        window.sessionStorage.setItem("scroll_to_novedades", "true");
+      } catch {}
+      navigateTo(PAGES.preferences);
+    }
+  } catch (e) {
+    console.error("Error al abrir novedades:", e);
   }
 }
 
@@ -213,7 +227,7 @@ async function executeNativePackageUpdate(
       () => prepareEditorsForRelaunch(),
       savePersistentPreferencesNow,
       async () => {
-        const appRoot = document.getElementById("root");
+        const appRoot = typeof document !== "undefined" ? document.getElementById("root") : null;
         const wasInert = appRoot?.inert ?? false;
         if (appRoot) appRoot.inert = true;
         try {
@@ -255,7 +269,7 @@ async function executeNativePackageUpdate(
       8000
     );
     return true;
-  } catch (error: any) {
+  } catch (error) {
     clearUpdaterToast();
     const failure = categorizeUpdateError(error);
 
@@ -294,7 +308,7 @@ export async function checkAndApplyNativePackageUpdate(
   if (isChecking) {
     return false;
   }
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
     if (isManual) {
       notification("info", "No hay conexión a internet.", undefined, 5000);
     }
@@ -317,7 +331,27 @@ export async function checkAndApplyDebUpdate(isManual = false): Promise<void> {
   await checkAndApplyNativePackageUpdate("deb", isManual);
 }
 
-export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
+export interface UpdateLike {
+  version: string;
+  body?: string;
+  download?: (onEvent?: (event: { event: string; data?: unknown }) => void) => Promise<void>;
+  install?: () => Promise<void>;
+  close?: () => Promise<void>;
+}
+
+export interface CheckAndApplyUpdateOptions {
+  checkUpdaterPlugin?: () => Promise<UpdateLike | Update | null>;
+  getInstallInfo?: () => Promise<InstallationInfo | null>;
+  onNotification?: (type: ToastType, msg: string, action?: ToastAction, durationMs?: number) => string;
+  savePreferences?: () => Promise<unknown>;
+}
+
+export async function checkAndApplyUpdate(
+  isManual = false,
+  options?: CheckAndApplyUpdateOptions
+): Promise<boolean> {
+  const notify = options?.onNotification ?? updaterNotification;
+
   // 1. Si la versión ya fue descargada e instalada en esta sesión y espera reinicio, NO volver a descargar
   const pendingVersion = getPendingRestartVersion();
   if (pendingVersion) {
@@ -341,7 +375,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
   }
 
   // 3. Si no hay conexión a internet, salir silenciosamente (o avisar si fue clic manual)
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
     if (isManual) {
       notification("info", "No hay conexión a internet.", undefined, 5000);
     }
@@ -353,7 +387,9 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
   try {
     let installInfo: InstallationInfo | null = null;
     try {
-      installInfo = await invoke<InstallationInfo>("get_installation_info");
+      installInfo = options?.getInstallInfo
+        ? await options.getInstallInfo()
+        : await invoke<InstallationInfo>("get_installation_info");
     } catch (e) {
       console.warn("No se pudo obtener información de instalación:", e);
     }
@@ -379,13 +415,15 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
     }
 
     // Flujo para formatos soportados por Tauri oficial (AppImage, Windows, macOS)
-    let checkedUpdate: Awaited<ReturnType<typeof check>> = null;
+    let checkedUpdate: UpdateLike | Update | null = null;
     try {
-      const update = await check();
+      const update = options?.checkUpdaterPlugin
+        ? await options.checkUpdaterPlugin()
+        : await check();
       checkedUpdate = update;
       if (!update) {
         if (isManual) {
-          updaterNotification(
+          notify(
             "info",
             "Lyra está en la última versión disponible.",
             {
@@ -401,7 +439,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
       // Si la versión detectada ya está lista para reiniciar
       if (getPendingRestartVersion() === update.version) {
         if (isManual) {
-          updaterNotification(
+          notify(
             "success",
             `La versión v${update.version} está lista para usar`,
             {
@@ -414,8 +452,6 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
         return true;
       }
 
-      updaterNotification("info", `Actualizando a v${update.version}...`, undefined, 120000);
-
       if (update.body) {
         try {
           window.localStorage.setItem("lyra_release_notes", update.body);
@@ -423,23 +459,52 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
         } catch {}
       }
 
-      await update.download(event => {
-        if (event.event === "Finished") {
-          console.log("Descarga de actualización finalizada exitosamente.");
-        }
-      });
+      // Comprobación en segundo plano (automática): no descargar ni instalar de forma autónoma.
+      // Solo notificar al usuario para que decida actualizar con un clic explícito.
+      if (!isManual) {
+        notify(
+          "info",
+          `Nueva versión v${update.version} disponible`,
+          {
+            label: "Actualizar ahora",
+            onClick: () => {
+              void checkAndApplyUpdate(true, options);
+            },
+          },
+          10000
+        );
+        return true;
+      }
+
+      notify("info", `Actualizando a v${update.version}...`, undefined, 120000);
+
+      if (update.download) {
+        await update.download((event: { event: string; data?: unknown }) => {
+          if (event.event === "Finished") {
+            console.log("Descarga de actualización finalizada exitosamente.");
+          }
+        });
+      }
 
       const installed = await runPreparedInstall(
         () => prepareEditorsForRelaunch(),
-        savePersistentPreferencesNow,
         async () => {
-          const appRoot = document.getElementById("root");
+          if (options?.savePreferences) {
+            await options.savePreferences();
+          } else {
+            await savePersistentPreferencesNow();
+          }
+        },
+        async () => {
+          const appRoot = typeof document !== "undefined" ? document.getElementById("root") : null;
           const wasInert = appRoot?.inert ?? false;
           if (appRoot) appRoot.inert = true;
           try {
             window.localStorage.setItem("lyra_just_updated", "true");
             window.localStorage.setItem("lyra_pending_install_version", update.version);
-            await update.install();
+            if (update.install) {
+              await update.install();
+            }
           } catch (error) {
             window.localStorage.removeItem("lyra_just_updated");
             window.localStorage.removeItem("lyra_pending_install_version");
@@ -470,9 +535,9 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
         8000
       );
       return true;
-    } catch (officialError: any) {
+    } catch (officialError) {
       if (checkedUpdate) {
-        try { await checkedUpdate.close(); } catch {}
+        try { await checkedUpdate.close?.(); } catch {}
         checkedUpdate = null;
       }
 
@@ -490,7 +555,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
         return false;
       }
 
-      const errorMsg = String(officialError?.message || officialError || "");
+      const errorMsg = officialError instanceof Error ? officialError.message : String(officialError || "");
       const isNotFound =
         errorMsg.includes("Could not fetch a valid release JSON") ||
         errorMsg.includes("404") ||
@@ -517,7 +582,7 @@ export async function checkAndApplyUpdate(isManual = false): Promise<boolean> {
       return false;
     } finally {
       if (checkedUpdate) {
-        try { await checkedUpdate.close(); } catch {}
+        try { await checkedUpdate.close?.(); } catch {}
       }
     }
   } finally {

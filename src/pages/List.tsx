@@ -156,7 +156,7 @@ function List(): Component {
       ({ files: filesList, stats }) => setFilesWithStats(filesList, stats),
       error => console.error("Could not initialize note list", error),
     );
-  }, [fileIsEdited]);
+  }, [fileIsEdited, getFilesWithStats, setFilesWithStats]);
 
   return (
     <MainContainer>

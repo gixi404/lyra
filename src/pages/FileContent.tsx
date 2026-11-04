@@ -379,7 +379,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       isCancelled = true;
       loadedFileNameRef.current = "";
     };
-  }, [selectedFile.name, getFileMtime, saveFileContent, readFile, fileExists]);
+  }, [selectedFile.name, selectedFile.content, createFile, getFileMtime, saveFileContent, readFile, fileExists]);
 
   // GD-007: Prevención de carreras entre autosave, desmontaje y sincronización remota
   useEffect(() => {

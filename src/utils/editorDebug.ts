@@ -16,7 +16,7 @@ class EditorDebugger {
 
   constructor() {
     if (typeof window !== "undefined") {
-      (window as any).__lyraDebug = {
+      window.__lyraDebug = {
         getLogs: () => this.getFormattedLogs(),
         saveToFile: () => this.saveToFile(),
         clear: () => this.clear(),
@@ -115,8 +115,8 @@ class EditorDebugger {
         a.click();
         URL.revokeObjectURL(url);
         return "Descargado editor_debug.log";
-      } catch (e) {
-        return `Error al guardar: ${String(err)}`;
+      } catch (fallbackErr) {
+        return `Error al guardar: ${String(fallbackErr)}`;
       }
     }
   }

@@ -65,7 +65,7 @@ log(`Último release detectado: v${version}`);
 try {
   run("git revert HEAD --no-edit");
   success("Commit de release revertido");
-} catch (e) {
+} catch {
   error("No se pudo revertir el commit de release.");
   process.exit(1);
 }

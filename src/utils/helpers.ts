@@ -8,15 +8,15 @@ import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
   BASE_DIRECTORY,
   MAIN_FOLDER,
-  PAGES,
   THEMES,
 } from "./consts";
 import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
 import { ensureNoteExtension, hasSupportedNoteExtension, noteTitle } from "./noteName";
+import { pathIs, scrollToNovedades } from "./navigation";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
 
-function navigation(): Navigation {
+function useAppNavigation(): Navigation {
   const navigate: NavigateFunction = useNavigate();
 
   function goTo(path: string): void {
@@ -35,22 +35,7 @@ function notification(
   useToastStore.getState().addToast(type, msg, action, durationMs);
 }
 
-export function scrollToNovedades(): void {
-  try {
-    window.sessionStorage.removeItem("scroll_to_novedades");
-  } catch {}
 
-  const tryScroll = (attempts = 0) => {
-    const el = document.getElementById("novedades-section");
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    } else if (attempts < 25) {
-      setTimeout(() => tryScroll(attempts + 1), 60);
-    }
-  };
-
-  tryScroll();
-}
 
 function nameIsValid(name: string): boolean {
   const d = translations();
@@ -61,7 +46,7 @@ function nameIsValid(name: string): boolean {
   }
 
   const regex: RegExp = /[\\/:*?"<>|]/,
-    hasControlChars: boolean = /[\x00-\x1f]/.test(name),
+    hasControlChars: boolean = [...name].some(c => c.charCodeAt(0) <= 31),
     nameLong: boolean = len(name) > 60,
     invalidSymbols: boolean = regex.test(name) || hasControlChars,
     invalidStartEnd: boolean = /^[ .]|[ .]$/.test(name);
@@ -142,7 +127,7 @@ function normalizeStoredFileNames(fileNames: string[], files: string[]): string[
   return Array.from(new Set(normalizedNames));
 }
 
-function themes(): Themes {
+function useThemes(): Themes {
   configStore(state => state.themeTick);
   const { myTheme } = usePreferences(),
     theme = myTheme();
@@ -236,18 +221,7 @@ function getDate(): string {
   return formattedDate;
 }
 
-function pathIs(path: string): boolean {
-  const currentPath: string = window.location.pathname;
-  if (path === "/" || path === PAGES.list) {
-    return (
-      currentPath === "/" ||
-      currentPath === "/index.html" ||
-      currentPath === "" ||
-      currentPath.endsWith("/index.html")
-    );
-  }
-  return currentPath === path || currentPath.endsWith(path);
-}
+
 
 const normalize = (text: string): string =>
   text
@@ -256,7 +230,7 @@ const normalize = (text: string): string =>
     .toLowerCase()
     .trim();
 
-const len = (val: string | any[]): number => val.length;
+const len = (val: string | readonly unknown[]): number => val.length;
 
 function getAnimationDuration(): number {
   if (
@@ -275,7 +249,8 @@ export {
   getEditableFileName,
   len,
   nameIsValid,
-  navigation,
+  useAppNavigation,
+  useAppNavigation as navigation,
   normalize,
   notification,
   pathIs,
@@ -286,7 +261,9 @@ export {
   getLegacyFileName,
   hasSupportedNoteExtension,
   sanitizeFileName,
-  themes,
+  scrollToNovedades,
+  useThemes,
+  useThemes as themes,
   verifyMainFolder,
   isWelcomeFileName,
 };

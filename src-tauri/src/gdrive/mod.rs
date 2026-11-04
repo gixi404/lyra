@@ -623,8 +623,10 @@ mod phase5_tests {
             drive_id: Some("remote_old".into()), deleted_at: 1,
             account_key: Some("account".into()), note_id: Some(note_id),
         };
-        let mut manifest = types::SyncManifest::default();
-        manifest.account_id = Some("account".into());
+        let mut manifest = types::SyncManifest {
+            account_id: Some("account".into()),
+            ..Default::default()
+        };
         manifest.pending_deletions.insert("Note.md".into(), pending.clone());
         let path = sync::get_manifest_path_for_account(dir, "account");
         sync::save_manifest_to_path(&path, &manifest).unwrap();

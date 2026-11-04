@@ -6,16 +6,14 @@ import {
   noteLabel,
   noteSuccessMessage,
   noteTitle,
-  SUPPORTED_NOTE_EXTENSIONS,
 } from "../src/utils/noteName.ts";
 import { includeRetainedExits } from "../src/utils/listExit.ts";
 import { deleteArchivedBatch } from "../src/utils/archiveDeletion.ts";
-import { runExclusiveDeletion } from "../src/utils/noteDeletion.ts";
 import { getAnimationDuration } from "../src/utils/motion.ts";
 
 function setupMockStorage(initial: Record<string, string> = {}) {
   const store = new Map<string, string>(Object.entries(initial));
-  (globalThis as any).window = {
+  (globalThis as unknown as { window: unknown }).window = {
     localStorage: {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => store.set(k, String(v)),
@@ -182,7 +180,7 @@ test("FIX-002: Recuperación fallida no inicia transición y libera la retenció
   assert.equal(fileStore.getState().retainedExits.some(e => e.name === name), true);
 
   // Simulación de error en Rust
-  let failed = false;
+  let failed: boolean;
   try {
     throw new Error("Disk EIO error");
   } catch {
@@ -245,7 +243,7 @@ test("FIX-002: Cambio de vista durante la transición confirma inmediatamente (f
 
 test("FIX-002: prefers-reduced-motion ejecuta el commit de forma instantánea", () => {
   const originalWindow = globalThis.window;
-  (globalThis as any).window = {
+  (globalThis as unknown as { window: unknown }).window = {
     matchMedia: (q: string) => ({ matches: q.includes("prefers-reduced-motion: reduce") }),
   };
 

@@ -221,7 +221,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
       // Si el usuario está escribiendo activamente (< 400ms), ignorar
       // micro-movimientos de vibración de teclado o roce involuntario de touchpad (< 8px)
-      const lastTyping = (window as any).__lastTypingTime || 0;
+      const lastTyping = window.__lastTypingTime || 0;
       const isActivelyTyping = Date.now() - lastTyping < 400;
       if (isActivelyTyping && dist < 8) {
         return;

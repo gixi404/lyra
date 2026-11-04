@@ -5,20 +5,13 @@ import { useToastStore } from "../src/store/toastStore.ts";
 import { noteLabel, noteSuccessMessage } from "../src/utils/noteName.ts";
 import { includeRetainedExits } from "../src/utils/listExit.ts";
 import {
-  PERSISTENT_KEYS,
-  savePersistentPreferencesNow,
-  scheduleSavePersistentPreferences,
-} from "../src/utils/persistentPreferences.ts";
-import {
   isWelcomeManuallyRestored,
-  setWelcomeManuallyRestored,
   autoArchiveWelcomeOnSync,
-  WELCOME_FILE_NAME,
 } from "../src/utils/welcome.ts";
 
 function setupMockStorage(initial: Record<string, string> = {}) {
   const store = new Map<string, string>(Object.entries(initial));
-  (globalThis as any).window = {
+  (globalThis as unknown as { window: unknown }).window = {
     localStorage: {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => store.set(k, String(v)),
@@ -107,7 +100,7 @@ test("Recuperación de notas con prefers-reduced-motion (duración 0ms): resulta
     lyra_initialized: "true",
   });
 
-  (globalThis as any).window.matchMedia = (q: string) => ({
+  (globalThis as unknown as { window: { matchMedia: (q: string) => { matches: boolean } } }).window.matchMedia = (q: string) => ({
     matches: q.includes("prefers-reduced-motion: reduce"),
   });
 
@@ -183,7 +176,7 @@ test("Manejo de errores durante la persistencia: rollback de estado local y ause
     // Si no fallara (no debe llegar aquí):
     useToastStore.getState().addToast("success", noteSuccessMessage("nota_error.txt", "recovered"));
     exitAnimationTriggered = true;
-  } catch (err) {
+  } catch {
     // Rollback ante fallo
     mockStorage.set("paper", prevPaper);
     rollbackExecuted = true;

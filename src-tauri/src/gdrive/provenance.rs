@@ -1878,7 +1878,7 @@ impl SyncAccountContext {
 
     pub fn can_upload_digest(&self, name: &str, md5: &str) -> bool {
         self.can_upload(name)
-            && self.scanned.get(name).is_some()
+            && self.scanned.contains_key(name)
             && self.ledger.by_name.get(name)
                 .and_then(|id| self.ledger.notes.get(id))
                 .map(|record| record.last_md5 == md5)

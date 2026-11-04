@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert";
 import {
   isContentEquivalent,
-  generateDraftRecoveryFileName,
   resolveUniqueDraftRecoveryFileName,
   writeUniqueRecoveryFile,
   reconcileDraftState,
@@ -128,7 +127,7 @@ test("AUD-003: Generación de nombres únicos para copias de rescate de borrador
 
 test("AUD-003 Caso 1: Borrador más reciente que el disco -> Se restaura el borrador y se conserva en localStorage", async () => {
   let draftCleared = false;
-  let savedFiles: Record<string, string> = {};
+  const savedFiles: Record<string, string> = {};
 
   const draft: DraftPayload = {
     content: "Texto del borrador más reciente",
@@ -159,7 +158,7 @@ test("AUD-003 Caso 1: Borrador más reciente que el disco -> Se restaura el borr
 
 test("AUD-003 Caso 2: Disco más reciente pero contenidos idénticos -> Se descarta el borrador limpiamente sin copia", async () => {
   let draftCleared = false;
-  let savedFiles: Record<string, string> = {};
+  const savedFiles: Record<string, string> = {};
 
   const draft: DraftPayload = {
     content: "Línea 1\r\nLínea 2",
@@ -308,9 +307,9 @@ test("AUD-003 Caso 5: Fallo de verificación en la lectura de la copia -> El bor
 
 test("AUD-003 Caso 6: Ciclo de vida en React StrictMode (doble montaje) preserva el borrador", async () => {
   // Simular la máquina de estados de React StrictMode
-  let loadedFileName = "";
+  let loadedFileName: string;
   let isCancelledMount1 = false;
-  let isCancelledMount2 = false;
+  const isCancelledMount2 = false;
   let draftCleared = false;
 
   const draft: DraftPayload = {
@@ -320,13 +319,17 @@ test("AUD-003 Caso 6: Ciclo de vida en React StrictMode (doble montaje) preserva
 
   // --- Montaje 1 ---
   loadedFileName = "nota.txt";
+  assert.strictEqual(loadedFileName, "nota.txt");
+  assert.strictEqual(isCancelledMount1, false);
   // Simular desmontaje inmediato de StrictMode
   isCancelledMount1 = true;
+  assert.strictEqual(isCancelledMount1, true);
   loadedFileName = ""; // Limpieza de loadedFileNameRef en cleanup
 
   // --- Montaje 2 ---
   assert.strictEqual(loadedFileName, "", "El cleanup de StrictMode debe limpiar loadedFileNameRef");
   loadedFileName = "nota.txt";
+  assert.strictEqual(loadedFileName, "nota.txt");
 
   const result = await reconcileDraftState({
     fileName: "nota.txt",
@@ -349,7 +352,7 @@ test("AUD-003 Caso 6: Ciclo de vida en React StrictMode (doble montaje) preserva
 
 test("AUD-004: EditorSyncCoordinator retiene borrador y activa onSaveError ante fallo en saveFileContent", async () => {
   let draftWritten = false;
-  let errorCaught: any = null;
+  let errorCaught: unknown = null;
   let clearDraftCalled = false;
 
   const coordinator = new EditorSyncCoordinator({
@@ -383,14 +386,14 @@ test("AUD-004: EditorSyncCoordinator retiene borrador y activa onSaveError ante 
 
 test("AUD-004: writeFile en entorno Tauri no enmascara ni degrada errores de save_note_atomic", async () => {
   // Simular entorno Tauri
-  (globalThis as any).window = {
+  (globalThis as unknown as { window?: { __TAURI_INTERNALS__?: Record<string, unknown> } }).window = {
     __TAURI_INTERNALS__: {},
   };
 
   let fallbackWriteCalled = false;
   let atomicInvoked = false;
 
-  const mockInvoke = async (cmd: string, _args: any) => {
+  const mockInvoke = async (cmd: string, _args: unknown) => {
     if (cmd === "save_note_atomic") {
       atomicInvoked = true;
       throw new Error("Permiso denegado al escribir archivo atómico (OS error 13)");
@@ -400,8 +403,8 @@ test("AUD-004: writeFile en entorno Tauri no enmascara ni degrada errores de sav
   // Simular implementación de writeFile con chequeo isTauri
   const runWriteFile = async (name: string, content: string) => {
     const isTauri =
-      typeof (globalThis as any).window !== "undefined" &&
-      Boolean((globalThis as any).window.__TAURI_INTERNALS__);
+      typeof (globalThis as unknown as { window?: { __TAURI_INTERNALS__?: unknown } }).window !== "undefined" &&
+      Boolean((globalThis as unknown as { window?: { __TAURI_INTERNALS__?: unknown } }).window?.__TAURI_INTERNALS__);
     if (isTauri) {
       await mockInvoke("save_note_atomic", { fileName: name, content });
       return;
@@ -413,8 +416,8 @@ test("AUD-004: writeFile en entorno Tauri no enmascara ni degrada errores de sav
     async () => {
       await runWriteFile("documento.txt", "Texto de prueba");
     },
-    (err: any) => {
-      assert.ok(err.message.includes("Permiso denegado"));
+    (err: unknown) => {
+      assert.ok(err instanceof Error && err.message.includes("Permiso denegado"));
       return true;
     },
     "El error de save_note_atomic debe propagarse directamente sin ser silenciado"
@@ -424,5 +427,5 @@ test("AUD-004: writeFile en entorno Tauri no enmascara ni degrada errores de sav
   assert.strictEqual(fallbackWriteCalled, false, "En Tauri no debe ejecutarse fallback a escritura no atómica");
 
   // Limpiar window mock
-  delete (globalThis as any).window;
+  delete (globalThis as unknown as { window?: unknown }).window;
 });

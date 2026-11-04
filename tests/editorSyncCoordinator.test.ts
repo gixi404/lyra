@@ -15,12 +15,10 @@ test("GD-007 Caso 1: Una escritura iniciada antes de gdrive:sync_finished no sob
     writeResolve = resolve;
   });
 
-  let writesCount = 0;
   const coordinator = new EditorSyncCoordinator({
     fileName: "nota.md",
     initialContent: "Contenido Inicial",
     saveFileContent: async (name, content) => {
-      writesCount++;
       if (content === "Contenido Viejo Local") {
         // Simular retraso de escritura I/O
         await slowWritePromise;

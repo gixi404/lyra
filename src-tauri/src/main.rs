@@ -291,6 +291,136 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_base);
     }
+
+    #[test]
+    fn test_validate_update_url_parser() {
+        use native_updater::validate_update_url;
+
+        // Valid URLs
+        let valid_github = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra-2.0.29-1.x86_64.rpm";
+        assert!(validate_update_url(valid_github).is_ok());
+
+        let valid_objects = "https://objects.githubusercontent.com/github-production-release-asset-2e65be/12345/lyra.rpm";
+        assert!(validate_update_url(valid_objects).is_ok());
+
+        // Actual GitHub Release Asset CDN host
+        let valid_release_assets = "https://release-assets.githubusercontent.com/github-production-release-asset/800827602/7004a272-738c-4122-b941-adec16c0c530?sp=r&rscd=attachment";
+        assert!(validate_update_url(valid_release_assets).is_ok());
+
+        let valid_github_releases = "https://github-releases.githubusercontent.com/12345/asset.rpm";
+        assert!(validate_update_url(valid_github_releases).is_ok());
+
+        // Host spoofing attempts
+        let spoofed_domain = "https://github.com.attacker.com/gixi404/lyra/releases/download/v2.0.29/lyra.rpm";
+        let err1 = validate_update_url(spoofed_domain).unwrap_err();
+        assert!(err1.contains("Host no autorizado"));
+
+        let spoofed_objects = "https://evil-objects.githubusercontent.com/asset/lyra.rpm";
+        let err2 = validate_update_url(spoofed_objects).unwrap_err();
+        assert!(err2.contains("Host no autorizado"));
+
+        // Arbitrary githubusercontent subdomains with "release" must NOT be allowed (closed whitelist)
+        let spoofed_wildcard = "https://arbitrary-release.githubusercontent.com/asset/lyra.rpm";
+        let err_wildcard = validate_update_url(spoofed_wildcard).unwrap_err();
+        assert!(err_wildcard.contains("Host no autorizado"));
+
+        // Empty path on CDN host
+        let empty_path = "https://objects.githubusercontent.com/";
+        let err_empty = validate_update_url(empty_path).unwrap_err();
+        assert!(err_empty.contains("Ruta vacía no permitida"));
+
+        // Insecure scheme
+        let http_url = "http://github.com/gixi404/lyra/releases/download/v2.0.29/lyra.rpm";
+        let err3 = validate_update_url(http_url).unwrap_err();
+        assert!(err3.contains("esquema debe ser estrictamente HTTPS"));
+
+        // Wrong repository on github.com
+        let foreign_repo = "https://github.com/malicious/fork/releases/download/v2.0.29/lyra.rpm";
+        let err4 = validate_update_url(foreign_repo).unwrap_err();
+        assert!(err4.contains("Ruta no permitida"));
+
+        // Malformed URL
+        assert!(validate_update_url("not a valid url").is_err());
+    }
+
+    #[test]
+    fn test_validate_native_update_request_valid() {
+        let url_rpm = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra-2.0.29-1.x86_64.rpm";
+        let sig = "untrusted comment: signature\nRWRi...";
+        let res_rpm = validate_native_update_request(url_rpm, sig, "rpm", native_updater::InstallationFormat::Rpm);
+        assert_eq!(res_rpm.unwrap(), native_updater::InstallationFormat::Rpm);
+
+        let url_deb = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra_2.0.29_amd64.deb";
+        let res_deb = validate_native_update_request(url_deb, sig, "deb", native_updater::InstallationFormat::Deb);
+        assert_eq!(res_deb.unwrap(), native_updater::InstallationFormat::Deb);
+
+        // Also allows GitHub redirected objects domain
+        let url_obj = "https://objects.githubusercontent.com/github-production-release-asset-2e65be/12345/lyra.rpm";
+        let res_obj = validate_native_update_request(url_obj, sig, "rpm", native_updater::InstallationFormat::Rpm);
+        assert_eq!(res_obj.unwrap(), native_updater::InstallationFormat::Rpm);
+    }
+
+    #[test]
+    fn test_validate_native_update_request_disallowed_urls() {
+        let sig = "some_valid_looking_signature";
+        let invalid_urls = [
+            "http://github.com/gixi404/lyra/releases/download/v2.0.29/lyra.rpm",
+            "https://attacker.com/malicious.rpm",
+            "file:///tmp/malicious.rpm",
+            "https://github.com/otherrepo/lyra/releases/download/v2.0.29/lyra.rpm",
+            "https://github.com.evil.com/gixi404/lyra/releases/download/v2.0.29/lyra.rpm",
+            "javascript:alert(1)",
+        ];
+
+        for url in invalid_urls {
+            let res = validate_native_update_request(url, sig, "rpm", native_updater::InstallationFormat::Rpm);
+            assert!(res.is_err(), "URL must be rejected: {url}");
+        }
+    }
+
+    #[test]
+    fn test_validate_native_update_request_empty_signature() {
+        let url = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra.rpm";
+        let res_empty = validate_native_update_request(url, "", "rpm", native_updater::InstallationFormat::Rpm);
+        assert!(res_empty.is_err());
+        assert!(res_empty.unwrap_err().contains("Firma criptográfica vacía"));
+
+        let res_whitespace = validate_native_update_request(url, "   \n\t ", "rpm", native_updater::InstallationFormat::Rpm);
+        assert!(res_whitespace.is_err());
+        assert!(res_whitespace.unwrap_err().contains("Firma criptográfica vacía"));
+    }
+
+    #[test]
+    fn test_validate_native_update_request_unsupported_formats() {
+        let url = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra.exe";
+        let sig = "valid_sig";
+        for fmt in ["windows", "appimage", "dmg", "exe", "tar.gz", "unknown"] {
+            let res = validate_native_update_request(url, sig, fmt, native_updater::InstallationFormat::Windows);
+            assert!(res.is_err());
+            assert!(res.unwrap_err().contains("Formato de actualización no soportado"));
+        }
+    }
+
+    #[test]
+    fn test_validate_native_update_request_format_mismatch() {
+        let url_rpm = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra.rpm";
+        let sig = "valid_sig";
+        // Requesting RPM on Debian
+        let res1 = validate_native_update_request(url_rpm, sig, "rpm", native_updater::InstallationFormat::Deb);
+        assert!(res1.is_err());
+        assert!(res1.unwrap_err().contains("no es compatible con la instalación activa"));
+
+        // Requesting DEB on RPM
+        let url_deb = "https://github.com/gixi404/lyra/releases/download/v2.0.29/lyra.deb";
+        let res2 = validate_native_update_request(url_deb, sig, "deb", native_updater::InstallationFormat::Rpm);
+        assert!(res2.is_err());
+        assert!(res2.unwrap_err().contains("no es compatible con la instalación activa"));
+
+        // Requesting RPM on Windows
+        let res3 = validate_native_update_request(url_rpm, sig, "rpm", native_updater::InstallationFormat::Windows);
+        assert!(res3.is_err());
+        assert!(res3.unwrap_err().contains("no es compatible con la instalación activa"));
+    }
 }
 
 #[tauri::command]
@@ -322,6 +452,36 @@ async fn check_native_update(
     native_updater::check_native_update(fmt, &cur_ver).await
 }
 
+pub fn validate_native_update_request(
+    url: &str,
+    signature: &str,
+    format: &str,
+    current_format: native_updater::InstallationFormat,
+) -> Result<native_updater::InstallationFormat, String> {
+    // 1. Validar URL con parser estricto y correspondencia de host exacto
+    native_updater::validate_update_url(url)?;
+
+    // 2. Validar que la firma criptográfica no esté vacía
+    if signature.trim().is_empty() {
+        return Err("Firma criptográfica vacía o no proporcionada".to_string());
+    }
+
+    // 3. Validar correspondencia estricta de formato del gestor de paquetes
+    let fmt = match format {
+        "rpm" => native_updater::InstallationFormat::Rpm,
+        "deb" => native_updater::InstallationFormat::Deb,
+        _ => return Err(format!("Formato de actualización no soportado: {format}")),
+    };
+
+    if current_format != fmt {
+        return Err(format!(
+            "El formato de actualización solicitado ({format}) no es compatible con la instalación activa ({current_format:?})"
+        ));
+    }
+
+    Ok(fmt)
+}
+
 #[tauri::command]
 async fn apply_native_update(
     url: String,
@@ -329,59 +489,10 @@ async fn apply_native_update(
     format: String,
 ) -> Result<(), String> {
     let _guard = native_updater::NativeUpdateLockGuard::try_acquire()?;
-    let fmt = match format.as_str() {
-        "rpm" => native_updater::InstallationFormat::Rpm,
-        "deb" => native_updater::InstallationFormat::Deb,
-        _ => return Err(format!("Formato de actualización no soportado: {format}")),
-    };
+    let detected = native_updater::detect_installation_format();
+    let fmt = validate_native_update_request(&url, &signature, &format, detected.format)?;
     let (_tmp_dir, pkg_path) = native_updater::download_and_verify_package(&url, &signature, fmt).await?;
     native_updater::install_package_elevated(&pkg_path, fmt)
-}
-
-#[tauri::command]
-fn is_rpm_install() -> bool {
-    matches!(
-        native_updater::detect_installation_format().format,
-        native_updater::InstallationFormat::Rpm
-    )
-}
-
-#[tauri::command]
-async fn rpm_latest_info() -> Result<(String, String), String> {
-    match native_updater::check_native_update(
-        native_updater::InstallationFormat::Rpm,
-        gdrive::BACKEND_VERSION,
-    )
-    .await?
-    {
-        Some(info) => Ok((info.version, info.url)),
-        None => Err("No newer RPM version available".to_string()),
-    }
-}
-
-#[tauri::command]
-async fn download_rpm(url: String) -> Result<String, String> {
-    let update = native_updater::check_native_update(native_updater::InstallationFormat::Rpm, "0.0.0")
-        .await?
-        .ok_or("No RPM update information available")?;
-    let (_tmp_dir, pkg_path) = native_updater::download_and_verify_package(
-        &url,
-        &update.signature,
-        native_updater::InstallationFormat::Rpm,
-    )
-    .await?;
-    let persistent_path = std::env::temp_dir().join(format!("lyra_update_{}.rpm", rand::random::<u32>()));
-    std::fs::copy(&pkg_path, &persistent_path).map_err(|e| e.to_string())?;
-    Ok(persistent_path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-async fn install_rpm(path: String) -> Result<(), String> {
-    let _guard = native_updater::NativeUpdateLockGuard::try_acquire()?;
-    let p = std::path::PathBuf::from(&path);
-    let res = native_updater::install_package_elevated(&p, native_updater::InstallationFormat::Rpm);
-    let _ = std::fs::remove_file(&p);
-    res
 }
 
 
@@ -588,10 +699,6 @@ fn main() {
             get_installation_info,
             check_native_update,
             apply_native_update,
-            is_rpm_install,
-            rpm_latest_info,
-            download_rpm,
-            install_rpm,
             create_internal_welcome,
             check_and_drain_recovered_notes,
             gdrive::get_backend_build_info,

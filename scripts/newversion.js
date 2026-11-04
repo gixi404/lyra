@@ -79,9 +79,19 @@ if (semverRegex.test(versionArg)) {
   }
 }
 
+// 2. Puerta de validación previa: Garantizar código limpio y tests aprobados antes de modificar archivos o Git
+log("Ejecutando suite de análisis estático previa al bump (pnpm check)...");
+run("pnpm check");
+
+log("Ejecutando pruebas funcionales previas al bump (pnpm test)...");
+run("pnpm test");
+
+log("Ejecutando pruebas de backend previas al bump (cargo test)...");
+run("cargo test --manifest-path src-tauri/Cargo.toml");
+
 log(`Incrementando a la nueva versión: \x1b[32mv${nextVersion}\x1b[0m`);
 
-// 2. Actualizar package.json
+// 3. Actualizar package.json
 pkg.version = nextVersion;
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
 success("Actualizado package.json");
@@ -139,9 +149,8 @@ const buildEnv = {
 
 // 6. Verificación / Compilación
 if (skipBuild) {
-  log("Omitiendo build local (--no-build). Verificando tipos y sintaxis...");
+  log("Omitiendo build local (--no-build). Verificando frontend...");
   run("pnpm run build");
-  run("cargo check --manifest-path src-tauri/Cargo.toml");
   success("Verificación local completada");
 } else {
   if (!hasKey) {
@@ -181,8 +190,8 @@ function searchArtifacts(dir, version) {
         if (basename.startsWith("control.") || basename.startsWith("data.") || basename === "debian-binary") {
           continue;
         }
-        // Solo incluir archivos de la versión actual o latest.json
-        if (basename === "latest.json" || basename.includes(version)) {
+        // Solo incluir archivos de la versión actual (excluyendo latest.json para proteger el manifiesto multiplataforma de CI)
+        if (basename !== "latest.json" && basename.includes(version)) {
           const isKnownAsset = validExts.some(ext => basename.toLowerCase().endsWith(ext));
           if (isKnownAsset && !seenBasenames.has(basename)) {
             seenBasenames.add(basename);
@@ -200,35 +209,8 @@ function searchArtifacts(dir, version) {
 if (!skipBuild) {
   artifacts.push(...searchArtifacts(bundleDir, nextVersion));
 
-  // Generar latest.json inicial para Linux si existe la firma de AppImage
-  const appImageSig = artifacts.find(a => a.endsWith(".AppImage.sig"));
-  const appImage = artifacts.find(a => a.endsWith(".AppImage"));
-  if (appImage && appImageSig) {
-    const sigContent = fs.readFileSync(appImageSig, "utf8").trim();
-    const appImageBasename = path.basename(appImage);
-    const downloadUrl = `https://github.com/gixi404/lyra/releases/download/v${nextVersion}/${appImageBasename}`;
-    const latestJson = {
-      version: nextVersion,
-      notes: `Lyra v${nextVersion}`,
-      pub_date: new Date().toISOString(),
-      platforms: {
-        "linux-x86_64": {
-          signature: sigContent,
-          url: downloadUrl,
-        },
-        "linux-x86_64-appimage": {
-          signature: sigContent,
-          url: downloadUrl,
-        },
-      },
-    };
-    const latestJsonPath = path.join(bundleDir, "latest.json");
-    fs.writeFileSync(latestJsonPath, JSON.stringify(latestJson, null, 2), "utf8");
-    if (!artifacts.includes(latestJsonPath)) {
-      artifacts.push(latestJsonPath);
-    }
-    success("Generado latest.json inicial para Linux");
-  }
+  // GitHub Actions es la autoridad oficial para compilar, firmar y generar latest.json multiplataforma.
+  // No se genera latest.json localmente para evitar sobrescribir destructivamente el manifiesto oficial de CI.
 
   if (artifacts.length > 0) {
     log(`Artefactos locales encontrados para v${nextVersion} (${artifacts.length}):`);
@@ -241,7 +223,7 @@ if (!skipBuild) {
 // 8. Commit y Tag en Git
 log("Creando commit y tag en Git...");
 run("git add package.json pnpm-lock.yaml src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock");
-run("git add src/ src-tauri/ scripts/ pnpm-workspace.yaml");
+run("git add src/ src-tauri/ scripts/ tests/ .github/ pnpm-workspace.yaml");
 try {
   run(`git commit -m "release: v${nextVersion}"`);
 } catch {
@@ -260,38 +242,49 @@ log("Subiendo commits y tags al repositorio remoto...");
 try {
   run("git push origin HEAD --tags");
   success("Git push completado");
-} catch (e) {
+} catch {
   warn("No se pudo hacer push automático a git. Asegúrate de tener conexión.");
 }
 
 // 10. Publicar o adjuntar artefactos en GitHub Release
-const hasGh = Boolean(runCapture("which gh"));
-if (hasGh) {
-  log("Gestionando release en GitHub...");
-  try {
-    const releaseExists = Boolean(runCapture(`gh release view ${tag}`));
-    const artifactArgs = artifacts.map(a => `"${a}"`).join(" ");
+// Por diseño seguro, GitHub Actions es la autoridad oficial y única para compilar,
+// firmar y publicar releases multiplataforma (Ubuntu + Windows) junto con latest.json.
+// Para evitar condiciones de carrera, releases parciales o discrepancias de firmas,
+// la publicación local se delega automáticamente a GitHub Actions.
+const allowLocalReleaseUpload = args.includes("--upload-local") || args.includes("--manual-release");
 
-    if (releaseExists) {
-      if (artifacts.length > 0) {
-        log(`La release ${tag} ya existe en GitHub. Subiendo artefactos locales...`);
-        run(`gh release upload ${tag} ${artifactArgs} --clobber`);
-        success(`Artefactos locales subidos a la release ${tag}`);
-      }
-    } else {
-      if (artifacts.length > 0) {
-        log(`Creando release ${tag} en GitHub con artefactos locales...`);
-        run(`gh release create ${tag} ${artifactArgs} --title "Lyra ${tag}" --notes "Lyra ${tag} - Actualizaciones automáticas habilitadas"`);
-        success(`Release ${tag} creada en GitHub`);
-      } else {
-        log("Release delegada al flujo de GitHub Actions");
-      }
-    }
-  } catch (err) {
-    warn("No se pudo actualizar la release localmente con 'gh'. GitHub Actions la gestionará de forma remota.");
-  }
+if (!allowLocalReleaseUpload) {
+  log("Publicación delegada exclusivamente al flujo automatizado de GitHub Actions.");
+  log(`El tag ${tag} ha sido enviado. GitHub Actions compilará y publicará de forma atómica`);
+  log("todos los instaladores multiplataforma (Windows y Linux) junto con latest.json.");
 } else {
-  log("GitHub CLI ('gh') no está disponible; GitHub Actions creará la release automáticamente.");
+  const hasGh = Boolean(runCapture("which gh"));
+  if (hasGh) {
+    log("Modo manual (--upload-local) activado: gestionando release localmente con 'gh'...");
+    try {
+      const releaseExists = Boolean(runCapture(`gh release view ${tag}`));
+      const safeArtifacts = artifacts.filter(a => path.basename(a) !== "latest.json");
+      const artifactArgs = safeArtifacts.map(a => `"${a}"`).join(" ");
+
+      if (releaseExists) {
+        if (safeArtifacts.length > 0) {
+          log(`La release ${tag} ya existe en GitHub. Subiendo artefactos locales...`);
+          run(`gh release upload ${tag} ${artifactArgs}`);
+          success(`Artefactos locales subidos a la release ${tag}`);
+        }
+      } else {
+        if (safeArtifacts.length > 0) {
+          log(`Creando release ${tag} como borrador en GitHub para evitar publicaciones parciales...`);
+          run(`gh release create ${tag} ${artifactArgs} --draft --title "Lyra ${tag}" --notes "Lyra ${tag} - Release manual"`);
+          success(`Borrador de release ${tag} creado en GitHub (revísalo antes de publicar)`);
+        }
+      }
+    } catch {
+      warn("No se pudo gestionar la release localmente con 'gh'.");
+    }
+  } else {
+    warn("GitHub CLI ('gh') no está disponible; la release continuará en GitHub Actions.");
+  }
 }
 
 console.log("\n\x1b[32m🎉 ¡Proceso finalizado con éxito para Lyra v" + nextVersion + "!\x1b[0m");

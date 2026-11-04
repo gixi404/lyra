@@ -1747,27 +1747,27 @@ pub async fn run_sync_with_client_and_emitter_with_id(
                                     log_sync_msg(lyra_dir, &format!("[Sync #{sync_id}]   -> No se pudo des-papelar. Re-subiendo archivo como nueva copia..."));
                                 }
 
-                                if !restored {
-                                    if note_upload_allowed(ctx, name, &mut result, lyra_dir, sync_id) {
-                                        if let Ok((content, upload_md5, upload_size, upload_mtime)) = read_authorized_snapshot(ctx, name, path, *local_mtime) {
-                                            match client.upload_file("", &folder_id, name, &content, &now_rfc3339).await {
-                                                Ok(meta) => {
-                                                    log_sync_msg(lyra_dir, &format!("[Sync #{sync_id}]   -> Archivo restaurado vía re-subida (id='{}')", meta.id));
-                                                    manifest.files.insert(
-                                                        name.clone(),
-                                                        FileManifestItem {
-                                                            drive_id: meta.id,
-                                                            md5: upload_md5,
-                                                            local_mtime: upload_mtime,
-                                                            remote_mtime: meta.modified_time.unwrap_or(now_rfc3339),
-                                                            local_size: upload_size,
-                                                        },
-                                                    );
-                                                    result.uploaded.push(name.clone());
-                                                }
-                                                Err(e) => {
-                                                    result.errors.push(format!("Error re-subiendo archivo '{name}' a Drive: {e}"));
-                                                }
+                                if !restored
+                                    && note_upload_allowed(ctx, name, &mut result, lyra_dir, sync_id)
+                                {
+                                    if let Ok((content, upload_md5, upload_size, upload_mtime)) = read_authorized_snapshot(ctx, name, path, *local_mtime) {
+                                        match client.upload_file("", &folder_id, name, &content, &now_rfc3339).await {
+                                            Ok(meta) => {
+                                                log_sync_msg(lyra_dir, &format!("[Sync #{sync_id}]   -> Archivo restaurado vía re-subida (id='{}')", meta.id));
+                                                manifest.files.insert(
+                                                    name.clone(),
+                                                    FileManifestItem {
+                                                        drive_id: meta.id,
+                                                        md5: upload_md5,
+                                                        local_mtime: upload_mtime,
+                                                        remote_mtime: meta.modified_time.unwrap_or(now_rfc3339),
+                                                        local_size: upload_size,
+                                                    },
+                                                );
+                                                result.uploaded.push(name.clone());
+                                            }
+                                            Err(e) => {
+                                                result.errors.push(format!("Error re-subiendo archivo '{name}' a Drive: {e}"));
                                             }
                                         }
                                     }

@@ -84,7 +84,7 @@ function useFile(): Files {
     if (!name) throw new Error("File name is required");
     const displayName: string = ensureNoteExtension(name);
     const isTauri = typeof window !== "undefined" &&
-      Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+      Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
       await invoke("create_note", { fileName: displayName, content });
     } else {
@@ -96,7 +96,7 @@ function useFile(): Files {
   }, [getFilePath]);
 
   const getFiles = useCallback(async (): Promise<string[]> => {
-    let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
+    const dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
     return dir
       .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
       .map((f: DirEntry) => f.name)
@@ -110,11 +110,11 @@ function useFile(): Files {
 
   const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats> }> => {
     const isTauri = typeof window !== "undefined" &&
-      Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+      Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
       return invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
     }
-    let dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
+    const dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
     const validNames = dir
       .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
       .map((f: DirEntry) => f.name)
@@ -155,7 +155,7 @@ function useFile(): Files {
   const writeFile = useCallback(async (name: string, text: string): Promise<void> => {
     const isTauri =
       typeof window !== "undefined" &&
-      Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+      Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
 
     if (isTauri) {
       // En entorno de producción de Tauri, se invoca save_note_atomic directamente sin capturar ni enmascarar errores.
@@ -234,7 +234,7 @@ function useFile(): Files {
     setItem("paper", JSON.stringify(Array.from(new Set(updatedPaper))));
   }
 
-  async function getFileStats(fileName: string): Promise<FileStats> {
+  const getFileStats = useCallback(async (fileName: string): Promise<FileStats> => {
     const { pathFile } = await getFilePath(fileName);
     const content = await readFile(fileName);
     let fileStat: { size?: number; birthtime?: Date | number | null; mtime?: Date | number | null } = {};
@@ -297,7 +297,7 @@ function useFile(): Files {
       extension,
       status,
     };
-  }
+  }, [getFilePath, getItem, readFile]);
 
   const getFileMtime = useCallback(async (fileName: string): Promise<number | null> => {
     try {

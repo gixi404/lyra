@@ -258,7 +258,7 @@ test("Escenario 9: Preferencia de movimiento reducido (prefers-reduced-motion)",
   assert.strictEqual(defaultDuration, 200, "Duración estándar es 200ms");
 
   const originalWindow = globalThis.window;
-  (globalThis as any).window = {
+  (globalThis as unknown as { window: unknown }).window = {
     matchMedia: (query: string) => ({
       matches: query.includes("prefers-reduced-motion: reduce"),
     }),

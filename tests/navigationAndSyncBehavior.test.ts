@@ -146,12 +146,7 @@ test("Sincronización 4: La sincronización manual (silent=false) SÍ muestra to
 test("Sincronización 5: Sincronización automática con conflictos muestra alerta sin toast de carga inicial", () => {
   useToastStore.getState().clearToasts();
 
-  let activeSyncToastId: string | null = null;
-  function showSyncToast(): void {
-    activeSyncToastId = useToastStore
-      .getState()
-      .addToast("loading", "Sincronizando con Google Drive...", undefined, 0);
-  }
+  const activeSyncToastId: string | null = null;
 
   function simulateAutoSyncWithConflict(): void {
     // silent = true: no llama showSyncToast()
@@ -238,6 +233,8 @@ test("Sincronización 6: Clic manual mientras corre sincronización automática 
   syncQueued = false;
   queuedIsManual = false;
   isSyncing = false;
+  assert.strictEqual(syncQueued, false);
+  assert.strictEqual(queuedIsManual, false);
 
   // Ejecutar el trailing sync con manual
   requestSync(!nextIsManual);
@@ -365,7 +362,7 @@ test("Sincronización 10: Fallo de sincronización conserva hasUnsyncedLocalChan
 });
 
 test("Sincronización 11: Reconexión de red (online) y trailing sync ejecutan de inmediato con force=true", () => {
-  let lastAutoSyncTimestamp = Date.now();
+  const lastAutoSyncTimestamp = Date.now();
   const AUTO_MIN_INTERVAL_MS = 5_000;
   let executedImmediately = false;
 
@@ -650,6 +647,7 @@ test("Sincronización 16: Persistencia fuera de memoria - Cierre de editor y rei
 
   // 2. Se destruye la instancia en memoria (cierre de la app o desmontaje total)
   coordinator = null;
+  assert.strictEqual(coordinator, null);
 
   // 3. Simular reinicio de Lyra:
   // El motor Rust escanea ~/Documents/lyra/ en disco y compara con el manifiesto persistente

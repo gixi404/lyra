@@ -4,11 +4,11 @@ import type { StoreApi, UseBoundStore } from "zustand";
 
 type Component = ReactNode | JSX.Element | JSX.Element[];
 
-type LazyCmp = LazyExoticComponent<(arg0: any) => Component>;
+type LazyCmp = LazyExoticComponent<(arg0: Record<string, unknown>) => Component>;
 
 type Match = PathMatch<string> | null;
 
-type ZustandStore = UseBoundStore<StoreApi<any>>;
+type ZustandStore = UseBoundStore<StoreApi<object>>;
 
 type SelectEvent = ChangeEvent<HTMLSelectElement>;
 
@@ -25,6 +25,15 @@ interface stylesText {
   alignText: string;
   opacity: string;
   letterSpacing: string;
+}
+
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: unknown;
+    __TAURI__?: unknown;
+    __lastTypingTime?: number;
+    __lyraDebug?: unknown;
+  }
 }
 
 export type {

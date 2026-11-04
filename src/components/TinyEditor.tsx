@@ -266,7 +266,7 @@ function TinyEditor({
     dragStartYRef.current = e.clientY;
     dragStartScrollTopRef.current = textarea.scrollTop;
     e.currentTarget.setPointerCapture(e.pointerId);
-  }, []);
+  }, [stopSmoothScroll]);
 
   const handleThumbPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingThumbRef.current) return;
@@ -322,7 +322,7 @@ function TinyEditor({
 
     textarea.scrollTop = ratio * maxScroll;
     syncScrollPos();
-  }, [syncScrollPos]);
+  }, [stopSmoothScroll, syncScrollPos]);
 
   const updateCaretState = useCallback(() => {
     const textarea = textareaRef.current;
@@ -571,7 +571,7 @@ function TinyEditor({
   );
 
   const markTyping = useCallback(() => {
-    (window as any).__lastTypingTime = Date.now();
+    window.__lastTypingTime = Date.now();
     if (!document.body.classList.contains("is-typing")) {
       document.body.classList.add("is-typing");
     }
@@ -865,7 +865,7 @@ function TinyEditor({
       updateCaretState();
       keepCaretCentered();
     },
-    [content, onContentChange, updateCaretState, keepCaretCentered]
+    [content, onContentChange, markTyping, updateCaretState, keepCaretCentered]
   );
 
   const isSearchActive = searchState !== null && searchState.query.trim().length > 0;
