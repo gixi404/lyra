@@ -4,7 +4,9 @@
 
 - This is a Tauri v2 + React 18 + TypeScript + Tailwind app. The UI boots from `src/main.tsx`; routes live in `src/pages/*`.
 - Persistent app files live in `~/Documents/lyra/`. `verifyMainFolder()` creates the folder and the welcome file (`¡Bienvenid@ a Lyra!.txt`) on first run or when empty.
-- `pnpm run build` is the repo’s verification gate; it is the only TypeScript type-check path defined here. There is no separate test script.
+- `pnpm check` is the repo’s unified code validation gate running ESLint (`pnpm lint`), TypeScript typechecking (`pnpm typecheck`), and Rust Clippy (`pnpm lint:rust`).
+- `pnpm test` executes the complete Node.js test suite (`tests/*.test.ts`).
+- `pnpm run build` compiles TypeScript and creates the production web bundle.
 - `pnpm run dev` starts Vite on port `1420`; Tauri expects that port.
 - `pnpm run tauri build` is the full Rust build producing DEB, RPM, AppImage (Linux) and MSI (Windows).
 
@@ -37,9 +39,11 @@ sudo dnf install \
 ### Build
 
 ```bash
-pnpm run tauri build    # build completo (Rust + bundle)
+pnpm run tauri build    # build completo (Rust + bundle deb, rpm y appimage)
 pnpm run tauri dev      # desarrollo con hot-reload
 ```
+
+> **Compatibilidad linuxdeploy en Fedora / Linux**: En distribuciones modernas (como Fedora Workstation), las bibliotecas de sistema usan reubicaciones relativas compactadas DT_RELR (`.relr.dyn`, sección ELF `0x13`). El binario `strip` interno de `linuxdeploy` no reconoce este formato y aborta el empaquetado de AppImage. El wrapper del proyecto (`scripts/tauri.js`) define automáticamente `NO_STRIP=true` y `APPIMAGE_EXTRACT_AND_RUN=1` en entornos Linux, además de autodetectar la clave de firma `~/.tauri/lyra.key`, garantizando que `pnpm run tauri build` compile y genere exitosamente todos los bundles sin errores.
 
 ## Code shape to expect
 
@@ -75,7 +79,7 @@ pnpm run tauri dev      # desarrollo con hot-reload
   export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
   pnpm run tauri build
   ```
-- **Publicación**: Subir el archivo `latest.json` generado en `src-tauri/target/release/bundle/` junto con los artefactos a GitHub Releases (`https://github.com/gixi404/lyra/releases/latest/download/latest.json`).
+- **Publicación y Validación Multiplataforma**: La compilación, firma y publicación oficial de instaladores Windows y Linux se delega a GitHub Actions (`.github/workflows/release.yml`). Los runners de la matriz suben binarios y firmas `.sig` individuales con `uploadUpdaterJson: false`, y el job `publish-release` ejecuta `node scripts/validate-release.js` para compilar y validar de forma atómica y centralizada el archivo `latest.json` antes de publicar la release (evitando carreras y sobreescrituras concurrentes).
 
 ## Sección de Novedades (Changelog)
 
