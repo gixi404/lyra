@@ -90,8 +90,8 @@ export function openNovedades(): void {
   if (typeof window === "undefined") return;
   try {
     if (pathIs(PAGES.list)) {
-      const docScroll = typeof document !== "undefined" ? document.documentElement?.scrollTop || 0 : 0;
-      const y = window.scrollY || docScroll;
+      const container = typeof document !== "undefined" ? document.getElementById("lyra-list-scroll-container") : null;
+      const y = container ? container.scrollTop : 0;
       setListScroll(y);
     }
 

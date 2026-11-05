@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlignLeft as AlignIcon,
   AppWindow,
@@ -177,6 +177,8 @@ function Preferences(): Component {
     void getVersion().then(setCurrentVersion).catch(() => {});
   }, []);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useLayoutEffect(() => {
     let shouldScrollToNovedades = false;
     try {
@@ -185,10 +187,9 @@ function Preferences(): Component {
     } catch {}
 
     if (shouldScrollToNovedades) {
-      window.scrollTo(0, 0);
       scrollToNovedades();
-    } else {
-      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    } else if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
     }
   }, []);
 
@@ -292,7 +293,11 @@ function Preferences(): Component {
 
   return (
     <MainContainer>
-      <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
+      <div
+        ref={containerRef}
+        id="lyra-preferences-container"
+        className="lyra-scroll-container w-full h-full flex flex-col items-center justify-start pt-14 sm:pt-20 px-4 pb-12"
+      >
         <div className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20">
           <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
             {/* Actualizaciones */}

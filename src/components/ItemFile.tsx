@@ -7,7 +7,7 @@ import { navigation, notification, themes } from "../utils/helpers";
 import { PAGES } from "../utils/consts";
 import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types";
-import { setListScroll } from "../utils/listScroll";
+import { getScrollPos, setListScroll } from "../utils/listScroll";
 import { noteLabel, noteTitle } from "../utils/noteName";
 
 function ItemFile({ fileName, isExiting = false }: Props): Component {
@@ -24,15 +24,8 @@ function ItemFile({ fileName, isExiting = false }: Props): Component {
   async function openFile(): Promise<void> {
     if (isExiting) return;
     try {
-      const currentY =
-        window.pageYOffset ||
-        window.scrollY ||
-        document.documentElement.scrollTop ||
-        document.body.scrollTop ||
-        0;
-      if (currentY > 0) {
-        setListScroll(currentY);
-      }
+      const currentView = paperIsOpen ? "paper" : "active";
+      setListScroll(getScrollPos(currentView), currentView);
       const fileContent: string = await readFile(fileName);
       const newSelectedFile: File = { name: fileName, content: fileContent };
       setSelectedFile(newSelectedFile);
@@ -44,6 +37,7 @@ function ItemFile({ fileName, isExiting = false }: Props): Component {
 
   return (
     <li
+      data-note-name={fileName}
       onClick={isExiting ? undefined : openFile}
       className={twMerge(
         "group relative flex items-center justify-between w-full px-1 border-b cursor-pointer select-none",

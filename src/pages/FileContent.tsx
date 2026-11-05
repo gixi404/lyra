@@ -441,6 +441,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
         <div className="w-full flex-1 flex flex-col items-center justify-start animate-editor-enter">
           <TinyEditor
             key={selectedFile.name}
+            fileName={selectedFile.name}
             content={content}
             onContentChange={handleContentChange}
             readOnly={updateInstallInProgress}

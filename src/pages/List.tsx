@@ -1,34 +1,20 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import Form from "../components/Form";
 import ListFiles from "../components/ListFiles";
 import MainContainer from "../components/MainContainer";
 import useFile from "../hooks/useFile";
 import { fileStore } from "../store/fileStore";
+import { configStore } from "../store/configStore.ts";
+import { searchStore } from "../store/searchStore.ts";
 import { verifyMainFolder } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
-import { getListScroll, setListScroll } from "../utils/listScroll";
+import {
+  getListScroll,
+  setListScroll,
+  type ListViewMode,
+} from "../utils/listScroll.ts";
 import { startLocalFirstListInitialization } from "../utils/listInitialization";
-
-function getScrollPos(): number {
-  return (
-    window.pageYOffset ||
-    window.scrollY ||
-    document.documentElement.scrollTop ||
-    document.body.scrollTop ||
-    0
-  );
-}
-
-function applyScroll(y: number): void {
-  window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior });
-  if (document.documentElement && document.documentElement.scrollTop !== y) {
-    document.documentElement.scrollTop = y;
-  }
-  if (document.body && document.body.scrollTop !== y) {
-    document.body.scrollTop = y;
-  }
-}
 
 function List(): Component {
   const { getFilesWithStats } = useFile(),
@@ -39,115 +25,84 @@ function List(): Component {
         files: state.files,
       }))
     ),
-    isRestoringScrollRef = useRef<boolean>(false);
+    paperIsOpen = configStore(state => state.paperIsOpen),
+    search = searchStore(state => state.search),
+    isSearching = search.trim().length > 0,
+    currentView: ListViewMode = paperIsOpen ? "paper" : "active",
+    containerRef = useRef<HTMLDivElement>(null),
+    hasRestoredRef = useRef<boolean>(false);
 
+  // Restauración determinista del scroll al montar o al alternar entre notas activas y archivadas
   useLayoutEffect(() => {
-    const targetY = getListScroll();
-    if (targetY <= 0) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    isRestoringScrollRef.current = true;
-    applyScroll(targetY);
-
-    let rafId: number;
-    const startTime = performance.now();
-
-    const onUserScrollGesture = (e: Event): void => {
-      if (e.type === "keydown") {
-        const key = (e as KeyboardEvent).key;
-        const scrollKeys = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
-        if (!scrollKeys.includes(key)) return;
-      }
-      isRestoringScrollRef.current = false;
-      cancelAnimationFrame(rafId);
-      cleanupGestureListeners();
-    };
-
-    const cleanupGestureListeners = (): void => {
-      window.removeEventListener("wheel", onUserScrollGesture);
-      window.removeEventListener("touchmove", onUserScrollGesture);
-      window.removeEventListener("keydown", onUserScrollGesture);
-    };
-
-    window.addEventListener("wheel", onUserScrollGesture, { passive: true });
-    window.addEventListener("touchmove", onUserScrollGesture, { passive: true });
-    window.addEventListener("keydown", onUserScrollGesture, { passive: true });
-
-    const step = (time: number): void => {
-      if (!isRestoringScrollRef.current) return;
-
-      const currentY = getScrollPos();
-      if (Math.abs(currentY - targetY) > 1) {
-        applyScroll(targetY);
-      }
-
-      if (time - startTime < 500) {
-        rafId = requestAnimationFrame(step);
-      } else {
-        isRestoringScrollRef.current = false;
-        cleanupGestureListeners();
-      }
-    };
-
-    rafId = requestAnimationFrame(step);
-
-    return () => {
-      isRestoringScrollRef.current = false;
-      cancelAnimationFrame(rafId);
-      cleanupGestureListeners();
-    };
-  }, []);
-
-  useEffect(() => {
-    let isAlive = true;
-    let hasUserScrolled = false;
-
-    const onUserScrollInput = (e: Event): void => {
-      if (e.type === "keydown") {
-        const key = (e as KeyboardEvent).key;
-        const scrollKeys = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
-        if (!scrollKeys.includes(key)) return;
-      }
-      hasUserScrolled = true;
-    };
-
-    window.addEventListener("wheel", onUserScrollInput, { passive: true });
-    window.addEventListener("touchmove", onUserScrollInput, { passive: true });
-    window.addEventListener("keydown", onUserScrollInput, { passive: true });
-
-    const handleScroll = (): void => {
-      if (!isAlive || isRestoringScrollRef.current) return;
-      const y = getScrollPos();
-
-      if (y > 0) {
-        setListScroll(y);
-      } else if (hasUserScrolled) {
-        setListScroll(0);
-      }
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-
-    return () => {
-      isAlive = false;
-      window.removeEventListener("scroll", handleScroll);
-      window.removeEventListener("wheel", onUserScrollInput);
-      window.removeEventListener("touchmove", onUserScrollInput);
-      window.removeEventListener("keydown", onUserScrollInput);
-      const currentY = getScrollPos();
-      if (currentY > 0) {
-        setListScroll(currentY);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const targetY = getListScroll();
-    if (targetY <= 0) return;
-    const currentY = getScrollPos();
-    if (Math.abs(currentY - targetY) > 2) {
-      applyScroll(targetY);
+    if (isSearching) {
+      container.scrollTop = 0;
+      return;
     }
-  }, [files]);
+
+    const targetY = getListScroll(currentView);
+    if (targetY <= 0) {
+      container.scrollTop = 0;
+      hasRestoredRef.current = true;
+      return;
+    }
+
+    // Si el contenedor ya tiene altura suficiente, restaurar inmediatamente antes de pintar
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (maxScroll > 0) {
+      container.scrollTop = Math.min(targetY, maxScroll);
+      hasRestoredRef.current = true;
+    } else {
+      hasRestoredRef.current = false;
+    }
+  }, [currentView, isSearching]);
+
+  // Si los archivos se cargaron tras el montaje inicial, restaurar una vez disponible la altura
+  useLayoutEffect(() => {
+    if (isSearching || hasRestoredRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const targetY = getListScroll(currentView);
+    if (targetY <= 0) {
+      hasRestoredRef.current = true;
+      return;
+    }
+
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (maxScroll > 0) {
+      container.scrollTop = Math.min(targetY, maxScroll);
+      hasRestoredRef.current = true;
+    }
+  }, [files, currentView, isSearching]);
+
+  // Si se eliminan o archivan elementos y la altura total disminuye, ajustar al nuevo máximo disponible
+  useEffect(() => {
+    if (isSearching) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (maxScroll <= 0) return;
+
+    const currentY = container.scrollTop;
+    if (currentY > maxScroll) {
+      container.scrollTop = maxScroll;
+      setListScroll(maxScroll, currentView);
+    }
+  }, [files, currentView, isSearching]);
+
+  // Única fuente de verdad: registrar el scroll conforme el usuario se desplaza
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>): void => {
+      if (isSearching) return;
+      const y = e.currentTarget.scrollTop;
+      setListScroll(y, currentView);
+    },
+    [currentView, isSearching]
+  );
 
   useEffect(() => {
     return startLocalFirstListInitialization(
@@ -160,7 +115,12 @@ function List(): Component {
 
   return (
     <MainContainer>
-      <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
+      <div
+        ref={containerRef}
+        id="lyra-list-scroll-container"
+        onScroll={handleScroll}
+        className="lyra-scroll-container w-full h-full flex flex-col items-center justify-start pt-14 sm:pt-20 px-4 pb-12"
+      >
         <div className="w-[680px] max-w-full flex flex-col items-center gap-y-6 sm:gap-y-8">
           <Form />
           <ListFiles arr={files} />

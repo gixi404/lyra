@@ -221,16 +221,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, [isFullscreen]);
 
-  useEffect(() => {
-    if (pathIs(PAGES.file)) {
-      document.documentElement.classList.add("in-editor");
-    } else {
-      document.documentElement.classList.remove("in-editor");
-    }
-    return () => {
-      document.documentElement.classList.remove("in-editor");
-    };
-  }, []);
+  // Gestionar scroll contenedor independiente por vista (sin interferencias de in-editor)
 
   useEffect(() => {
     if (!pathIs(PAGES.file)) {
@@ -304,7 +295,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
           : "gap-y-10 lg:gap-y-20 items-center",
         twJoin(
           myFontValue(),
-          "w-full min-h-screen flex flex-col justify-start",
+          "w-full h-screen overflow-hidden flex flex-col justify-start relative select-none",
         ),
       )}
     >
@@ -335,11 +326,11 @@ function MainContainer({ children }: PropsWithChildren): Component {
       <Header />
       <DropOverlay visible={isDraggingOver} />
       {pathIs(PAGES.file) ? (
-        <div className="w-full flex-1 flex flex-col items-center justify-start">
+        <div className="w-full flex-1 flex flex-col items-center justify-start h-full overflow-hidden">
           {children}
         </div>
       ) : (
-        <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start">
+        <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start h-full overflow-hidden">
           {children}
         </animated.div>
       )}

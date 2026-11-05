@@ -24,7 +24,7 @@ import {
   sanitizeFileName,
   themes,
 } from "../utils/helpers";
-import { setListScroll } from "../utils/listScroll";
+import { getScrollPos, setListScroll } from "../utils/listScroll";
 import { noteLabel } from "../utils/noteName";
 import type { Component, File } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
@@ -129,6 +129,7 @@ function Form(): Component {
       const isPaperOpen = configStore.getState().paperIsOpen;
       if (e.key === "Escape" && !isInputActive && isPaperOpen) {
         e.preventDefault();
+        setListScroll(getScrollPos(), "paper");
         setPaperIsOpen(false);
         return;
       }
@@ -144,6 +145,7 @@ function Form(): Component {
       if (search) {
         setSearch("");
       } else if (paperIsOpen) {
+        setListScroll(getScrollPos(), "paper");
         setPaperIsOpen(false);
       }
       searchInputRef.current?.blur();
@@ -159,15 +161,8 @@ function Form(): Component {
       if (matches.length === 1) {
         void (async () => {
           try {
-            const currentY =
-              window.pageYOffset ||
-              window.scrollY ||
-              document.documentElement.scrollTop ||
-              document.body.scrollTop ||
-              0;
-            if (currentY > 0) {
-              setListScroll(currentY);
-            }
+            const currentView = paperIsOpen ? "paper" : "active";
+            setListScroll(getScrollPos(), currentView);
             const fileName = matches[0];
             const fileContent = await readFile(fileName);
             setSelectedFile({ name: fileName, content: fileContent });
@@ -182,15 +177,7 @@ function Form(): Component {
 
   async function fileManagement(file: File): Promise<void> {
     try {
-      const currentY =
-        window.pageYOffset ||
-        window.scrollY ||
-        document.documentElement.scrollTop ||
-        document.body.scrollTop ||
-        0;
-      if (currentY > 0) {
-        setListScroll(currentY);
-      }
+      setListScroll(getScrollPos("active"), "active");
       const displayName: string = await createFile(file.name, file.content);
       const nextFile: File = { ...file, name: displayName };
       setSelectedFile(nextFile);
@@ -298,7 +285,10 @@ function Form(): Component {
 
             <button
               type="button"
-              onClick={() => setPaperIsOpen()}
+              onClick={() => {
+                setListScroll(getScrollPos(), paperIsOpen ? "paper" : "active");
+                setPaperIsOpen();
+              }}
               title={paperIsOpen ? "Ver documentos" : "Archivados"}
               aria-label={paperIsOpen ? "Ver documentos" : "Archivados"}
               className={twMerge(

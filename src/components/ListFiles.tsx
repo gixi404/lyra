@@ -11,7 +11,6 @@ import { useShallow } from "zustand/react/shallow";
 import { searchStore, type SortOptionId } from "../store/searchStore";
 import { fileStore } from "../store/fileStore";
 import type { Component } from "../utils/types";
-import { resetListScroll } from "../utils/listScroll";
 import { AlertCircle } from "lucide-react";
 import { includeRetainedExits } from "../utils/listExit";
 import { deleteArchivedBatch } from "../utils/archiveDeletion";
@@ -164,8 +163,6 @@ const ListFiles = memo(({ arr }: Props): Component => {
       return;
     }
     resetSearch();
-    resetListScroll();
-    window.scrollTo(0, 0);
     setShowTooltip(false);
     fileStore.getState().flushPendingExits();
   }, [paperIsOpen, resetSearch]);

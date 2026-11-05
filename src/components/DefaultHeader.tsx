@@ -5,7 +5,7 @@ import { PAGES, THEMES } from "../utils/consts";
 import { configStore } from "../store/configStore";
 import type { Component } from "../utils/types";
 import { memo, type MouseEvent } from "react";
-import { setListScroll } from "../utils/listScroll";
+import { getScrollPos, setListScroll } from "../utils/listScroll";
 
 let activeThemeAnim: Animation | null = null;
 
@@ -154,15 +154,8 @@ function DefaultHeader(): Component {
       goTo(PAGES.list);
     } else {
       if (pathIs(PAGES.list)) {
-        const y =
-          window.pageYOffset ||
-          window.scrollY ||
-          document.documentElement.scrollTop ||
-          document.body.scrollTop ||
-          0;
-        if (y > 0) {
-          setListScroll(y);
-        }
+        const currentView = paperIsOpen ? "paper" : "active";
+        setListScroll(getScrollPos(), currentView);
       }
       try {
         window.sessionStorage.removeItem("scroll_to_novedades");
@@ -184,7 +177,9 @@ function DefaultHeader(): Component {
       >
         {pathIs(PAGES.file) && (
           <button
-            onClick={() => goTo(PAGES.list)}
+            onClick={() => {
+              goTo(PAGES.list);
+            }}
             className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
               isDay
                 ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
@@ -234,7 +229,10 @@ function DefaultHeader(): Component {
             {paperIsOpen ? (
               <button
                 type="button"
-                onClick={() => setPaperIsOpen(false)}
+                onClick={() => {
+                  setListScroll(getScrollPos(), "paper");
+                  setPaperIsOpen(false);
+                }}
                 className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${
                   isDay
                     ? "bg-white/90 border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
