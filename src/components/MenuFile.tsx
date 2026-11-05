@@ -20,7 +20,7 @@ import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal";
 import ModalInfo from "./ModalInfo";
-import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
+import { noteLabel, noteTitle } from "../utils/noteName";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
@@ -185,7 +185,6 @@ function MenuFile({ fileName }: Props): Component {
         return;
       }
       if (mountedRef.current) setIsTrashOpen(false);
-      notification("success", noteSuccessMessage(archivedName, "archived"));
       if (useSyncStore.getState().isConnected && navigator.onLine) {
         void useSyncStore.getState().syncNow(true, true);
       }

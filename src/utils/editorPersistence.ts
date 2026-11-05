@@ -36,6 +36,19 @@ export function flushEditorDrafts(): void {
   for (const coordinator of sessions.keys()) coordinator.flushDraft();
 }
 
+export async function flushActiveEditors(): Promise<boolean> {
+  let allSaved = true;
+  for (const coordinator of sessions.keys()) {
+    if (coordinator.getIsDirty()) {
+      const saved = await coordinator.flushAutosave();
+      if (!saved) {
+        allSaved = false;
+      }
+    }
+  }
+  return allSaved;
+}
+
 export function registerEditorSession(coordinator: EditorSyncCoordinator): () => void {
   sessions.set(coordinator, (sessions.get(coordinator) ?? 0) + 1);
   membershipRevision++;

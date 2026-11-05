@@ -12,7 +12,7 @@ import {
   resolveDisplayFileName,
 } from "../utils/helpers";
 import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome";
-import { ensureNoteExtension } from "../utils/noteName";
+import { ensureNoteExtension, hasSupportedNoteExtension } from "../utils/noteName";
 import {
   DirEntry,
   exists,
@@ -102,8 +102,7 @@ function useFile(): Files {
       .map((f: DirEntry) => f.name)
       .filter(
         (name): name is string =>
-          typeof name === "string" &&
-          [".txt", ".md"].some(extension => name.endsWith(extension))
+          typeof name === "string" && hasSupportedNoteExtension(name)
       )
       .sort((a: string, b: string) => a.localeCompare(b));
   }, []);
@@ -120,8 +119,7 @@ function useFile(): Files {
       .map((f: DirEntry) => f.name)
       .filter(
         (name): name is string =>
-          typeof name === "string" &&
-          [".txt", ".md"].some(extension => name.endsWith(extension))
+          typeof name === "string" && hasSupportedNoteExtension(name)
       );
 
     const statsResults = await Promise.all(

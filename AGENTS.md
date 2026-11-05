@@ -109,6 +109,36 @@ pnpm run tauri dev      # desarrollo con hot-reload
 
 ---
 
+## Formatos de Texto y Motor de Importación Externa
+
+- **Extensiones Compatibles**: 25 extensiones de texto plano registradas en `src/utils/noteName.ts` y `src-tauri/src/gdrive/sync.rs` (`.txt`, `.md`, `.markdown`, `.json`, `.jsonc`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.csv`, `.log`, `.html`, `.htm`, `.xml`, `.css`, `.scss`, `.js`, `.jsx`, `.ts`, `.tsx`, `.py`, `.rs`, `.sh`, `.sql`).
+- **Regla de Visibilidad**: `.txt` y `.md` se ocultan en la lista de notas (`noteTitle`). Todas las demás extensiones técnicas y estructuradas se muestran completas (`config.json`, `script.py`) para evitar ambigüedades.
+- **Importación Segura por Copia**: Archivos abiertos externamente (doble clic del SO, "Abrir con" o Drag-and-Drop) NUNCA se modifican en su origen. Se validan en Rust (`src-tauri/src/importer.rs`), se rechazan si exceden 20 MB o contienen bytes nulos/binarios, se preserva el BOM UTF-8 y saltos de línea originales, y se copian a `~/Documents/lyra/` resolviendo colisiones secuencialmente (`(1)`, `(2)`) con `create_new(true)`.
+- **Protección del Editor Activo**: Si el usuario tiene cambios sin guardar en el editor activo al recibir un archivo externo, `flushActiveEditors()` en `src/utils/editorPersistence.ts` fuerza la persistencia atómica inmediata. Si la persistencia falla, la navegación se bloquea para evitar pérdidas de datos en memoria.
+- **Instancia Única y Eventos del SO**: Administrado mediante `tauri-plugin-single-instance` (Windows/Linux) y `RunEvent::Opened` (macOS), emitiendo el evento `lyra://open-files` hacia `src/utils/fileImporter.ts`.
+
+---
+
+## Configuración de Aplicación Predeterminada
+
+- **Arquitectura Backend**: Módulo Rust `src-tauri/src/default_app.rs` con comandos `open_default_apps_settings` y `get_platform_os`.
+- **Estrategia Inteligente por Prioridades**:
+  - *Linux (Prioridad 1 - Automática)*: Detecta el archivo `.desktop` instalado (`lyra.desktop`, `com.lyra.dev.desktop`, Flatpak, AppImage o Snap), comprueba el estado actual con `xdg-mime query default`, reporta idempotencia sin mutaciones si ya es default, o asocia y verifica exclusivamente los tipos MIME de `.txt` y `.md` (`text/plain`, `text/markdown`, `text/x-markdown`). Si Lyra no está registrada o falla, recurre a Prioridad 3 (`DefaultAppModal.tsx`).
+  - *Windows 10/11 (Prioridad 2 - Ajustes Nativos)*: Respeta la integridad de `UserChoice` sin hacks de registro; solicita abrir `ms-settings:defaultapps` mediante argumentos constantes inmutables (`cmd /C start "" "ms-settings:defaultapps"`). Si falla, recurre a Prioridad 3.
+  - *macOS (Prioridad 3 - Instrucciones Finder)*: Dado que las APIs de Launch Services para modificar asociaciones por tipo están obsoletas y restringidas en macOS 12+, y Ajustes del Sistema no cuenta con panel por extensión, guía con los 4 pasos nativos del Finder («Obtener información» [Cmd+I] > «Abrir con: Lyra» > «Cambiar todo...»).
+- **Consulta de Estado Real y Comportamiento del Botón**:
+  - En `src/pages/Preferences.tsx`, diseño unificado en fila con botón «Configurar». Subtítulo eliminado.
+  - Al entrar o ganar foco, consulta el estado real en el SO mediante `get_default_app_status`.
+  - Si Lyra ya es la predeterminada para ambos formatos (`all_default`), el botón se deshabilita automáticamente.
+  - Si la asociación es parcial o nula, permanece habilitado.
+  - En plataformas con estado desconocido (`unknown` como Windows o macOS), se muestra habilitado inicialmente, se deshabilita tras el primer clic durante la visita a Preferencias para evitar ejecuciones repetidas, y se rehabilita de forma efímera al salir y reingresar.
+- **Apertura de Archivos Internos vs Externos (Anti-Duplicados)**:
+  - Backend Rust `is_internal_lyra_file` detecta canónicamente si la ruta reside directamente en `~/Documents/lyra/`.
+  - Archivos internos: se abren directamente sin crear copias, sin modificar su contenido y sin renombrar. Si la nota ya está abierta en el editor activo, se enfoca sin recargar ni alterar cambios en memoria.
+  - Archivos externos: se crea copia atómica en `~/Documents/lyra/` preservando el original y resolviendo colisiones secuencialmente (`(1)`, `(2)`).
+
+---
+
 ## Post-Task: Auto-Doc Sync
 
 After completing any task with significant changes (architecture, conventions, commands, dependencies, API, schema, auth, env vars), load the `docs-autosync` skill and follow its instructions to sync project documentation.

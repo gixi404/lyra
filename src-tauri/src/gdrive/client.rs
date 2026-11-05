@@ -21,6 +21,29 @@ pub enum RemoteFileStatus {
     Active(DriveFileMetadata),
 }
 
+pub fn mime_type_for_file(file_name: &str) -> &'static str {
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".md") || lower.ends_with(".markdown") {
+        "text/markdown; charset=utf-8"
+    } else if lower.ends_with(".json") || lower.ends_with(".jsonc") {
+        "application/json; charset=utf-8"
+    } else if lower.ends_with(".html") || lower.ends_with(".htm") {
+        "text/html; charset=utf-8"
+    } else if lower.ends_with(".xml") {
+        "text/xml; charset=utf-8"
+    } else if lower.ends_with(".css") || lower.ends_with(".scss") {
+        "text/css; charset=utf-8"
+    } else if lower.ends_with(".js") || lower.ends_with(".jsx") || lower.ends_with(".ts") || lower.ends_with(".tsx") {
+        "text/javascript; charset=utf-8"
+    } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
+        "text/yaml; charset=utf-8"
+    } else if lower.ends_with(".csv") {
+        "text/csv; charset=utf-8"
+    } else {
+        "text/plain; charset=utf-8"
+    }
+}
+
 #[derive(Clone)]
 pub struct DriveClient {
     client: reqwest::Client,
@@ -363,11 +386,7 @@ impl DriveClient {
             "modifiedTime": mtime_rfc3339,
         });
 
-        let mime = if file_name.ends_with(".md") {
-            "text/markdown; charset=utf-8"
-        } else {
-            "text/plain; charset=utf-8"
-        };
+        let mime = mime_type_for_file(file_name);
 
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n").as_bytes());
@@ -421,11 +440,7 @@ impl DriveClient {
             "modifiedTime": mtime_rfc3339,
         });
 
-        let mime = if file_name.ends_with(".md") {
-            "text/markdown; charset=utf-8"
-        } else {
-            "text/plain; charset=utf-8"
-        };
+        let mime = mime_type_for_file(file_name);
 
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n").as_bytes());

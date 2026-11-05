@@ -170,7 +170,6 @@ function MenuPaperFile({ fileName }: Props): Component {
         throw new Error("The note remains archived after a concurrent change");
       }
       if (mountedRef.current) setIsRestoreOpen(false);
-      notification("success", noteSuccessMessage(restoringName, "recovered"));
       if (useSyncStore.getState().isConnected && navigator.onLine) {
         void useSyncStore.getState().syncNow(true, true);
       }

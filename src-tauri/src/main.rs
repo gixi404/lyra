@@ -2,10 +2,55 @@
 use std::process::Command;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+mod default_app;
 mod gdrive;
+mod importer;
 mod native_updater;
+
+#[derive(Default, Clone)]
+pub struct PendingOpenFiles(pub Arc<Mutex<Vec<String>>>);
+
+#[tauri::command]
+fn get_pending_open_files(state: tauri::State<'_, PendingOpenFiles>) -> Vec<String> {
+    let mut lock = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    let files = lock.clone();
+    lock.clear();
+    files
+}
+
+#[tauri::command]
+async fn import_external_files(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+) -> Result<importer::ImportBatchResult, String> {
+    let doc_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+    let account = gdrive::auth::verify_current_account(&app).ok();
+    let account_key = account.as_ref().map(|a| a.account_key.as_str());
+
+    Ok(importer::import_paths(&lyra_dir, &paths, account_key).await)
+}
+
+#[tauri::command]
+fn open_default_apps_settings() -> Result<default_app::DefaultAppSettingsResult, String> {
+    default_app::open_default_apps_settings()
+}
+
+#[tauri::command]
+fn get_default_app_status() -> Result<default_app::DefaultAppStatusResult, String> {
+    default_app::get_default_app_status()
+}
+
+#[tauri::command]
+fn get_platform_os() -> String {
+    default_app::get_os_name().to_string()
+}
 
 
 #[derive(serde::Serialize)]
@@ -34,7 +79,7 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
             continue;
         }
         let Ok(name) = entry.file_name().into_string() else { continue; };
-        if name.starts_with('.') || !(name.ends_with(".txt") || name.ends_with(".md")) {
+        if name.starts_with('.') || !gdrive::sync::has_supported_extension(&name) {
             continue;
         }
         let stats = match entry.metadata() {
@@ -637,12 +682,49 @@ fn main() {
         }
     }
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let mut initial_open_files = Vec::new();
+    for arg in std::env::args().skip(1) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        let p = std::path::PathBuf::from(&arg);
+        if p.is_file() {
+            initial_open_files.push(p.to_string_lossy().to_string());
+        }
+    }
+    let pending_files = PendingOpenFiles(Arc::new(Mutex::new(initial_open_files)));
+    let pending_single_instance = pending_files.clone();
+
+    let app = tauri::Builder::default()
+        .manage(pending_files)
+        .plugin(tauri_plugin_single_instance::init(move |app, args, cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
+            }
+
+            let mut incoming = Vec::new();
+            for arg in args.into_iter().skip(1) {
+                if arg.starts_with('-') {
+                    continue;
+                }
+                let path = std::path::PathBuf::from(&arg);
+                let full_path = if path.is_absolute() {
+                    path
+                } else {
+                    std::path::PathBuf::from(&cwd).join(path)
+                };
+                if full_path.is_file() {
+                    incoming.push(full_path.to_string_lossy().to_string());
+                }
+            }
+
+            if !incoming.is_empty() {
+                use tauri::Emitter;
+                let _ = app.emit("lyra://open-files", incoming.clone());
+                let mut lock = pending_single_instance.0.lock().unwrap_or_else(|p| p.into_inner());
+                lock.extend(incoming);
             }
         }))
         .plugin(tauri_plugin_process::init())
@@ -692,10 +774,15 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             open_folder,
+            open_default_apps_settings,
+            get_default_app_status,
+            get_platform_os,
             show_main_window,
             save_note_atomic,
             list_note_files_with_stats,
             create_note,
+            import_external_files,
+            get_pending_open_files,
             get_installation_info,
             check_native_update,
             apply_native_update,
@@ -719,6 +806,35 @@ fn main() {
             gdrive::archive_set,
             gdrive::archive_get_projection,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(move |app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = event {
+            let mut incoming = Vec::new();
+            for url in urls {
+                if let Ok(path) = url.to_file_path() {
+                    if path.is_file() {
+                        incoming.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+            if !incoming.is_empty() {
+                if let Some(state) = app_handle.try_state::<PendingOpenFiles>() {
+                    let mut lock = state.0.lock().unwrap_or_else(|p| p.into_inner());
+                    lock.extend(incoming.clone());
+                }
+                use tauri::Emitter;
+                let _ = app_handle.emit("lyra://open-files", incoming);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app_handle, event);
+    });
 }

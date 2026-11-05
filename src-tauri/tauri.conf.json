@@ -9,6 +9,39 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "txt",
+          "md",
+          "markdown",
+          "json",
+          "jsonc",
+          "yaml",
+          "yml",
+          "toml",
+          "ini",
+          "cfg",
+          "csv",
+          "log",
+          "html",
+          "htm",
+          "xml",
+          "css",
+          "scss",
+          "js",
+          "jsx",
+          "ts",
+          "tsx",
+          "py",
+          "rs",
+          "sh",
+          "sql"
+        ],
+        "name": "Documento de texto",
+        "role": "Editor"
+      }
+    ],
     "windows": {
       "wix": {
         "language": "es-ES",

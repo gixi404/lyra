@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { scheduleSavePersistentPreferences } from "./persistentPreferences.ts";
 import { fileStore } from "../store/fileStore.ts";
 import { setArchiveState } from "./archiveState.ts";
+import { hasSupportedNoteExtension } from "./noteName.ts";
 
 export const WELCOME_FILE_NAME: string = WELCOME_ES;
 
@@ -193,7 +194,7 @@ export async function ensureWelcomeFileState(
       .map(e => e.name)
       .filter(
         (name): name is string =>
-          typeof name === "string" && (name.endsWith(".txt") || name.endsWith(".md"))
+          typeof name === "string" && hasSupportedNoteExtension(name)
       );
 
     const existingWelcome = validFiles.find(name => isWelcomeFileName(name));
@@ -277,7 +278,7 @@ export async function autoArchiveWelcomeOnSync(
       .map(e => e.name)
       .filter(
         (name): name is string =>
-          typeof name === "string" && (name.endsWith(".txt") || name.endsWith(".md"))
+          typeof name === "string" && hasSupportedNoteExtension(name)
       );
 
     const existingWelcome = validFiles.find(name => isWelcomeFileName(name));

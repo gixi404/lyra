@@ -259,7 +259,7 @@ pub fn load_manifest(app: &tauri::AppHandle) -> SyncManifest {
     SyncManifest::default()
 }
 
-const WINDOWS_RESERVED_NAMES: &[&str] = &[
+pub const WINDOWS_RESERVED_NAMES: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
@@ -267,6 +267,22 @@ const WINDOWS_RESERVED_NAMES: &[&str] = &[
 /// Valida de forma estricta que un nombre de archivo represente un único componente seguro,
 /// compatible con los sistemas operativos soportados (Linux, Windows, macOS), sin prefijos de unidad,
 /// sin separadores de ruta ni intentos de path traversal.
+pub const SUPPORTED_EXTENSIONS: &[&str] = &[
+    ".txt", ".md", ".markdown",
+    ".json", ".jsonc",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg",
+    ".csv", ".log",
+    ".html", ".htm", ".xml",
+    ".css", ".scss",
+    ".js", ".jsx", ".ts", ".tsx",
+    ".py", ".rs", ".sh", ".sql",
+];
+
+pub fn has_supported_extension(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    SUPPORTED_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
 pub fn is_safe_filename(name: &str) -> bool {
     if name.is_empty() || name != name.trim() {
         return false;
@@ -277,10 +293,10 @@ pub fn is_safe_filename(name: &str) -> bool {
         return false;
     }
 
-    // Conservar el soporte para archivos .txt y .md; si tiene extensión, debe ser estrictamente .txt o .md
+    // Si tiene extensión, debe pertenecer a los formatos de texto plano soportados
     if let Some(dot_idx) = name.rfind('.') {
-        let ext = &name[dot_idx..];
-        if ext != ".txt" && ext != ".md" {
+        let ext = name[dot_idx..].to_ascii_lowercase();
+        if !SUPPORTED_EXTENSIONS.iter().any(|s| *s == ext) {
             return false;
         }
     }
@@ -1255,7 +1271,7 @@ pub async fn run_sync_with_client_and_emitter_with_id(
     let mut remote_grouped: HashMap<String, Vec<DriveFileMetadata>> = HashMap::new();
     for rf in remote_files {
         let is_dot = rf.name.starts_with('.');
-        let is_valid_ext = rf.name.ends_with(".txt") || rf.name.ends_with(".md");
+        let is_valid_ext = has_supported_extension(&rf.name);
         let is_gapps = rf.mime_type.as_ref().map(|m| m.starts_with("application/vnd.google-apps.")).unwrap_or(false);
 
         if is_dot || !is_valid_ext || is_gapps {
@@ -1339,7 +1355,7 @@ pub async fn run_sync_with_client_and_emitter_with_id(
                 let name = entry.file_name().into_string().map_err(|_| "A local entry has an unreadable name")?;
                 let name_str = name.as_str();
                 let is_dot = name_str.starts_with('.');
-                let is_valid_ext = name_str.ends_with(".txt") || name_str.ends_with(".md");
+                let is_valid_ext = has_supported_extension(name_str);
                 if is_dot || !is_valid_ext {
                     continue;
                 }
@@ -1364,7 +1380,7 @@ pub async fn run_sync_with_client_and_emitter_with_id(
                     local_map.insert(name_str.to_string(), (path, size, mtime_ms, md5_hash));
                 }
             }
-        } else if (entry.file_name().to_string_lossy().ends_with(".txt") || entry.file_name().to_string_lossy().ends_with(".md"))
+        } else if has_supported_extension(&entry.file_name().to_string_lossy())
             && !entry.file_name().to_string_lossy().starts_with('.') {
             return Err("A local note is not a regular file".into());
         }

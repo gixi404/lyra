@@ -11,7 +11,13 @@ import {
   THEMES,
 } from "./consts";
 import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
-import { ensureNoteExtension, hasSupportedNoteExtension, noteTitle } from "./noteName";
+import {
+  ensureNoteExtension,
+  hasSupportedNoteExtension,
+  isReservedWindowsFileName,
+  noteTitle,
+  SUPPORTED_NOTE_EXTENSIONS,
+} from "./noteName";
 import { pathIs, scrollToNovedades } from "./navigation";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
@@ -61,14 +67,7 @@ function nameIsValid(name: string): boolean {
     return false;
   }
 
-  const baseName = name.replace(/\.(txt|md)$/i, "").trim().toUpperCase();
-  const reservedWindowsNames = new Set([
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-  ]);
-
-  if (reservedWindowsNames.has(baseName)) {
+  if (isReservedWindowsFileName(name)) {
     notification("error", d.NoSpecialCharacters);
     return false;
   }
@@ -110,11 +109,10 @@ function resolveStoredFileName(fileName: string, files: string[]): string | null
   if (files.includes(fileName)) return fileName;
   if (hasSupportedNoteExtension(fileName)) return null;
 
-  const txtMatch: string = `${fileName}.txt`;
-  if (files.includes(txtMatch)) return txtMatch;
-
-  const mdMatch: string = `${fileName}.md`;
-  if (files.includes(mdMatch)) return mdMatch;
+  for (const ext of SUPPORTED_NOTE_EXTENSIONS) {
+    const candidate: string = `${fileName}${ext}`;
+    if (files.includes(candidate)) return candidate;
+  }
 
   return null;
 }

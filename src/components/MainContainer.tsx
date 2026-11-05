@@ -37,7 +37,9 @@ import { PAGES } from "../utils/consts";
 import { pathIs, themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
 import Header from "./Header";
+import DropOverlay from "./DropOverlay";
 import { triggerWindowReady } from "../utils/window";
+import { handleExternalFileImport } from "../utils/fileImporter";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {
@@ -52,6 +54,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
     { isDay } = themes(),
     [isFullscreen, setIsFullscreen] = useState<boolean>(false),
     [showExitBtn, setShowExitBtn] = useState<boolean>(false),
+    [isDraggingOver, setIsDraggingOver] = useState<boolean>(false),
     [pageStyles] = useSpring(() => ({
       from: { opacity: 0 },
       to: { opacity: 1 },
@@ -60,6 +63,54 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
   useEffect(() => {
     triggerWindowReady();
+  }, []);
+
+  useEffect(() => {
+    let unlistenDragDrop: (() => void) | null = null;
+    let isMounted = true;
+
+    // Prevenir el comportamiento por defecto de navegación de archivos en el navegador
+    const preventDefault = (e: DragEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("dragover", preventDefault);
+    window.addEventListener("drop", preventDefault);
+
+    const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+    if (isTauri) {
+      void (async () => {
+        try {
+          const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+          const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+            if (!isMounted) return;
+            if (event.payload.type === "enter" || event.payload.type === "over") {
+              setIsDraggingOver(true);
+            } else if (event.payload.type === "leave") {
+              setIsDraggingOver(false);
+            } else if (event.payload.type === "drop") {
+              setIsDraggingOver(false);
+              if (event.payload.paths && event.payload.paths.length > 0) {
+                void handleExternalFileImport(event.payload.paths);
+              }
+            }
+          });
+          if (isMounted) {
+            unlistenDragDrop = unlisten;
+          } else {
+            unlisten();
+          }
+        } catch (err) {
+          console.warn("No se pudo inicializar listener nativo de arrastrar y soltar:", err);
+        }
+      })();
+    }
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("dragover", preventDefault);
+      window.removeEventListener("drop", preventDefault);
+      unlistenDragDrop?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -282,6 +333,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
       </div>
 
       <Header />
+      <DropOverlay visible={isDraggingOver} />
       {pathIs(PAGES.file) ? (
         <div className="w-full flex-1 flex flex-col items-center justify-start">
           {children}

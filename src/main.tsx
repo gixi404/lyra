@@ -11,6 +11,7 @@ import { initRecoveryNotifier } from "./utils/recoveryNotifier";
 import { useSyncStore } from "./store/syncStore";
 import { configStore } from "./store/configStore";
 import { router } from "./router";
+import { initExternalFileListener } from "./utils/fileImporter";
 
 const root = document.getElementById("root") as Container;
 
@@ -69,6 +70,9 @@ createRoot(root).render(
 
 // Inicializar notificador y drenado de recuperaciones de archivos temporales
 void initRecoveryNotifier();
+
+// Inicializar escucha y drenado de archivos abiertos desde el sistema operativo
+void initExternalFileListener();
 
 // Notificar si la app acaba de ser actualizada
 setTimeout(() => {

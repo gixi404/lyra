@@ -4,6 +4,7 @@ import { documentDir, join } from "@tauri-apps/api/path";
 import { useEffect, useLayoutEffect, useState } from "react";
 import {
   AlignLeft as AlignIcon,
+  AppWindow,
   ChevronDown,
   CaseSensitive as FontIcon,
   Command,
@@ -15,11 +16,19 @@ import {
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
+import DefaultAppModal from "../components/DefaultAppModal";
 import usePreferences from "../hooks/usePreferences";
 import useStorage from "../hooks/useStorage";
 import { MAIN_FOLDER, PAGES, THEMES } from "../utils/consts";
 import translations from "../utils/dictionary";
 import { navigation, scrollToNovedades, themes } from "../utils/helpers";
+import {
+  configureDefaultApp,
+  getEffectiveOs,
+  checkDefaultAppStatus,
+  type DefaultAppAssociationStatus,
+} from "../utils/defaultApp";
+import { useToastStore } from "../store/toastStore";
 import {
   checkAndApplyUpdate,
   getIsCheckingUpdate,
@@ -114,7 +123,36 @@ function Preferences(): Component {
         if (parsed) return parsed;
       } catch {}
       return defaultChangelog;
-    });
+    }),
+    [showDefaultAppModal, setShowDefaultAppModal] = useState<boolean>(false),
+    [currentOs, setCurrentOs] = useState<string>("linux"),
+    [configuringDefaultApp, setConfiguringDefaultApp] = useState<boolean>(false),
+    [associationStatus, setAssociationStatus] = useState<DefaultAppAssociationStatus | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const queryStatus = async () => {
+      try {
+        const res = await checkDefaultAppStatus();
+        if (isMounted) {
+          setAssociationStatus(res.status);
+          setCurrentOs(res.os);
+        }
+      } catch {
+        if (isMounted) {
+          setAssociationStatus({ status: "unknown", reason: "Error al consultar estado" });
+        }
+      }
+    };
+
+    void queryStatus();
+
+    window.addEventListener("focus", queryStatus);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("focus", queryStatus);
+    };
+  }, []);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent): void => {
@@ -200,6 +238,55 @@ function Preferences(): Component {
       await invoke("open_folder", { path });
     } catch (err) {
       console.error(`catch 'openFolder' ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const isDefaultAppButtonDisabled =
+    configuringDefaultApp || associationStatus?.status === "all_default";
+
+  async function handleConfigureDefaultApp(): Promise<void> {
+    if (isDefaultAppButtonDisabled) return;
+    setConfiguringDefaultApp(true);
+    try {
+      const result = await configureDefaultApp();
+      setCurrentOs(result.os);
+
+      switch (result.outcome.type) {
+        case "already_default":
+          useToastStore.getState().addToast("info", result.outcome.message);
+          break;
+        case "configured_automatically":
+          useToastStore.getState().addToast("success", result.outcome.message);
+          break;
+        case "partially_configured":
+          useToastStore.getState().addToast("info", result.outcome.message);
+          setShowDefaultAppModal(true);
+          break;
+        case "manual_settings_opened":
+          useToastStore.getState().addToast("success", result.outcome.message);
+          break;
+        case "instructions_needed":
+          setShowDefaultAppModal(true);
+          break;
+        case "error":
+          useToastStore.getState().addToast("error", result.outcome.message);
+          setShowDefaultAppModal(true);
+          break;
+      }
+
+      // Volver a consultar el estado de las asociaciones en el SO
+      try {
+        const statusRes = await checkDefaultAppStatus();
+        setAssociationStatus(statusRes.status);
+      } catch {
+        // En caso de fallo en la consulta no bloquear la interfaz
+      }
+    } catch {
+      const fallbackOs = await getEffectiveOs();
+      setCurrentOs(fallbackOs);
+      setShowDefaultAppModal(true);
+    } finally {
+      setConfiguringDefaultApp(false);
     }
   }
 
@@ -383,6 +470,35 @@ function Preferences(): Component {
               </div>
             </div>
 
+            {/* Aplicación predeterminada */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <AppWindow size={24} className="sm:w-[28px] sm:h-[28px]" />
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>
+                  Aplicación predeterminada
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleConfigureDefaultApp}
+                disabled={isDefaultAppButtonDisabled}
+                className={twMerge(
+                  "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                  isDay
+                    ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
+                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
+                  isDefaultAppButtonDisabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
+                )}
+              >
+                {configuringDefaultApp && (
+                  <RefreshCwIcon size={14} className="animate-spin shrink-0" />
+                )}
+                <span>
+                  {configuringDefaultApp ? "Configurando..." : "Configurar"}
+                </span>
+              </button>
+            </div>
+
 
             {/* Bloque inferior: Novedades y Atajos */}
             <div className="w-full flex flex-col gap-y-4">
@@ -442,6 +558,11 @@ function Preferences(): Component {
           </div>
         </div>
       </div>
+      <DefaultAppModal
+        isOpen={showDefaultAppModal}
+        onClose={() => setShowDefaultAppModal(false)}
+        os={currentOs}
+      />
     </MainContainer>
   );
 }
