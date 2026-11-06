@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import {
   AlignLeft as AlignIcon,
   AppWindow,
@@ -10,6 +10,7 @@ import {
   Command,
   Folder as FolderIcon,
   Focus as FocusIcon,
+  Mouse,
   RefreshCw as RefreshCwIcon,
   Sparkles,
   SunMoon,
@@ -38,6 +39,13 @@ import {
 import type { Component } from "../utils/types";
 import packageJson from "../../package.json";
 import { configStore } from "../store/configStore";
+import {
+  formatScrollSpeed,
+  MIN_SCROLL_SPEED,
+  MAX_SCROLL_SPEED,
+  SCROLL_SPEED_STEP,
+  normalizeScrollSpeed,
+} from "../utils/scrollSpeed";
 
 const d = translations(),
   fontsOptions: Options[] = [
@@ -103,10 +111,12 @@ function Preferences(): Component {
       myFontValue,
       myAlign,
       myParagraphFocus,
+      myScrollSpeed,
     } = usePreferences(),
     { getItem, setItem } = useStorage(),
     toggleThemeTick = configStore(state => state.toggleThemeTick),
     paragraphFocus = myParagraphFocus(),
+    currentScrollSpeed = myScrollSpeed(),
     savedTheme = getItem("theme", THEMES.auto),
     currentTheme =
       savedTheme === THEMES.Day || savedTheme === "Day"
@@ -177,8 +187,6 @@ function Preferences(): Component {
     void getVersion().then(setCurrentVersion).catch(() => {});
   }, []);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-
   useLayoutEffect(() => {
     let shouldScrollToNovedades = false;
     try {
@@ -187,9 +195,10 @@ function Preferences(): Component {
     } catch {}
 
     if (shouldScrollToNovedades) {
+      window.scrollTo(0, 0);
       scrollToNovedades();
-    } else if (containerRef.current) {
-      containerRef.current.scrollTop = 0;
+    } else {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     }
   }, []);
 
@@ -230,6 +239,11 @@ function Preferences(): Component {
   function changeTheme(val: string): void {
     setItem("theme", val);
     toggleThemeTick();
+  }
+
+  function handleScrollSpeedChange(newSpeed: number): void {
+    const normalized = normalizeScrollSpeed(newSpeed);
+    setItem("scroll-speed", String(normalized));
   }
 
   async function openFolder(): Promise<void> {
@@ -293,13 +307,9 @@ function Preferences(): Component {
 
   return (
     <MainContainer>
-      <div
-        ref={containerRef}
-        id="lyra-preferences-container"
-        className="lyra-scroll-container w-full h-full flex flex-col items-center justify-start pt-14 sm:pt-20 px-4 pb-12"
-      >
+      <div className="flex flex-col items-center justify-start w-full min-h-screen pt-14 sm:pt-20 px-4 pb-12">
         <div className="flex-col lg:flex-row mb-14 flex justify-center items-center overflow-x-hidden w-full px-6 sm:px-10 gap-x-6 gap-y-12 sm:gap-y-20">
-          <div className="w-full px-4 sm:px-6 md:px-0 lg:w-3/6 lg:max-w-[470px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
+          <div className="w-full px-4 sm:px-6 md:px-0 max-w-[540px] flex flex-col justify-center items-center gap-y-10 sm:gap-y-14">
             {/* Actualizaciones */}
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
@@ -472,6 +482,41 @@ function Preferences(): Component {
                   ))}
                 </select>
                 <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
+              </div>
+            </div>
+
+            {/* Velocidad de desplazamiento */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <Mouse size={22} className="sm:w-[25px] sm:h-[25px]" />
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>
+                  Velocidad de desplazamiento
+                </p>
+              </div>
+              <div className="flex items-center justify-between w-[140px] sm:w-[160px] h-10 gap-x-2">
+                <input
+                  type="range"
+                  min={MIN_SCROLL_SPEED}
+                  max={MAX_SCROLL_SPEED}
+                  step={SCROLL_SPEED_STEP}
+                  value={currentScrollSpeed}
+                  onChange={e => handleScrollSpeedChange(Number(e.target.value))}
+                  aria-label="Velocidad de desplazamiento"
+                  className={twMerge(
+                    "w-full cursor-pointer h-1.5 rounded-lg outline-none transition-colors",
+                    isDay
+                      ? "bg-neutral-200 accent-neutral-800"
+                      : "bg-zinc-700 accent-sky-400"
+                  )}
+                />
+                <span
+                  className={twMerge(
+                    "text-sm font-semibold tabular-nums shrink-0 text-right w-11 select-none",
+                    isDay ? "text-neutral-800" : "text-zinc-200"
+                  )}
+                >
+                  {formatScrollSpeed(currentScrollSpeed)}
+                </span>
               </div>
             </div>
 

@@ -21,6 +21,15 @@
     background-color: #101010;
   }
 
+  html.in-preferences,
+  html.in-preferences body,
+  html.in-preferences #root {
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: auto;
+    min-height: 100%;
+  }
+
   body {
     @apply caret-[#00a8ff] text-zinc-200 flex flex-col justify-start items-stretch select-none antialiased;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;

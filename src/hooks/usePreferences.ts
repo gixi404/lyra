@@ -2,6 +2,7 @@ import useStorage from "./useStorage";
 import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
 import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
 import { configStore } from "../store/configStore";
+import { DEFAULT_SCROLL_SPEED, normalizeScrollSpeed } from "../utils/scrollSpeed";
 
 function usePreferences(): Preferences {
   configStore(state => state.prefTick);
@@ -86,6 +87,10 @@ function usePreferences(): Preferences {
     return scroll;
   }
 
+  function myScrollSpeed(): number {
+    return normalizeScrollSpeed(getItem("scroll-speed", String(DEFAULT_SCROLL_SPEED)));
+  }
+
   return {
     myLastModified,
     myFontLabel,
@@ -98,6 +103,7 @@ function usePreferences(): Preferences {
     myParagraphFocus,
     myPaper,
     myScroll,
+    myScrollSpeed,
   };
 }
 
@@ -115,4 +121,5 @@ interface Preferences {
   myParagraphFocus: () => boolean;
   myPaper: (files?: string[]) => string[];
   myScroll: (fileName: string) => number;
+  myScrollSpeed: () => number;
 }

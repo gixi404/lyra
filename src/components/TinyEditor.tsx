@@ -88,7 +88,8 @@ function TinyEditor({
     lastScrollTopRef = useRef<number>(0),
     { goTo } = navigation(),
     { isDay } = themes(),
-    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue } = usePreferences(),
+    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue, myScrollSpeed } = usePreferences(),
+    scrollSpeed: number = myScrollSpeed(),
     [fontSizeOverride, setFontSizeOverride] = useState<string | null>(null),
     fontSize: string = fontSizeOverride ?? myFontSize(),
     fontClass: string = myFontValue(),
@@ -469,6 +470,9 @@ function TinyEditor({
       const maxScroll = el.scrollHeight - el.clientHeight;
       if (maxScroll <= 0) return;
 
+      if (e.ctrlKey) return;
+      if (e.deltaY === 0 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+
       let delta = e.deltaY;
       if (e.deltaMode === 1) {
         delta *= 65; // Modo líneas: ~2 líneas de texto por muesca
@@ -477,6 +481,8 @@ function TinyEditor({
       } else {
         delta *= 2.0; // Modo píxeles: ritmo ágil y estándar de navegación
       }
+
+      delta *= scrollSpeed;
 
       // Si ya está en los topes y se gira en esa dirección, permitir comportamiento nativo
       if ((el.scrollTop <= 0 && delta < 0) || (el.scrollTop >= maxScroll && delta > 0)) {
@@ -529,7 +535,7 @@ function TinyEditor({
         smoothScrollRafRef.current = null;
       }
     };
-  }, [syncScrollPos]);
+  }, [syncScrollPos, scrollSpeed]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;

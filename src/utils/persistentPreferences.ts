@@ -39,6 +39,7 @@ export const PERSISTENT_KEYS = [
   "lyra_theme_migrated_v2",
   "welcome_dismissed",
   "welcome_manually_restored",
+  "scroll-speed",
 ] as const;
 
 export type PersistentKey = (typeof PERSISTENT_KEYS)[number];
@@ -59,6 +60,7 @@ export interface PreferencesData {
   lyra_theme_migrated_v2?: string | boolean;
   welcome_dismissed?: string | boolean;
   welcome_manually_restored?: string | boolean;
+  "scroll-speed"?: string | number;
   initialized?: boolean;
   updatedAt?: number;
 }

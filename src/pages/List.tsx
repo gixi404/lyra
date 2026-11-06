@@ -15,6 +15,7 @@ import {
   type ListViewMode,
 } from "../utils/listScroll.ts";
 import { startLocalFirstListInitialization } from "../utils/listInitialization";
+import useScrollSpeed from "../hooks/useScrollSpeed";
 
 function List(): Component {
   const { getFilesWithStats } = useFile(),
@@ -31,6 +32,8 @@ function List(): Component {
     currentView: ListViewMode = paperIsOpen ? "paper" : "active",
     containerRef = useRef<HTMLDivElement>(null),
     hasRestoredRef = useRef<boolean>(false);
+
+  useScrollSpeed(containerRef);
 
   // Restauración determinista del scroll al montar o al alternar entre notas activas y archivadas
   useLayoutEffect(() => {

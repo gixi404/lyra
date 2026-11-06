@@ -221,7 +221,16 @@ function MainContainer({ children }: PropsWithChildren): Component {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, [isFullscreen]);
 
-  // Gestionar scroll contenedor independiente por vista (sin interferencias de in-editor)
+  useEffect(() => {
+    if (pathIs(PAGES.preferences)) {
+      document.documentElement.classList.add("in-preferences");
+    } else {
+      document.documentElement.classList.remove("in-preferences");
+    }
+    return () => {
+      document.documentElement.classList.remove("in-preferences");
+    };
+  }, []);
 
   useEffect(() => {
     if (!pathIs(PAGES.file)) {
@@ -286,16 +295,21 @@ function MainContainer({ children }: PropsWithChildren): Component {
     };
   }, []);
 
+  const isPreferences = pathIs(PAGES.preferences);
+  const isFile = pathIs(PAGES.file);
+
   return (
     <main
       className={twMerge(
         isDay ? "bg-[#e0e0e0] text-gray-800" : "bg-[#101010] text-gray-200/90",
-        pathIs(PAGES.file)
+        isFile
           ? "gap-0 items-stretch"
           : "gap-y-10 lg:gap-y-20 items-center",
         twJoin(
           myFontValue(),
-          "w-full h-screen overflow-hidden flex flex-col justify-start relative select-none",
+          isPreferences
+            ? "w-full min-h-screen flex flex-col justify-start relative select-none"
+            : "w-full h-screen overflow-hidden flex flex-col justify-start relative select-none",
         ),
       )}
     >
@@ -325,12 +339,18 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
       <Header />
       <DropOverlay visible={isDraggingOver} />
-      {pathIs(PAGES.file) ? (
+      {isFile ? (
         <div className="w-full flex-1 flex flex-col items-center justify-start h-full overflow-hidden">
           {children}
         </div>
       ) : (
-        <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start h-full overflow-hidden">
+        <animated.div
+          style={pageStyles}
+          className={twMerge(
+            "w-full flex-1 flex flex-col items-center justify-start",
+            !isPreferences && "h-full overflow-hidden"
+          )}
+        >
           {children}
         </animated.div>
       )}
