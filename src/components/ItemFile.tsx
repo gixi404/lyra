@@ -10,12 +10,14 @@ import type { Component, File } from "../utils/types";
 import { getScrollPos, setListScroll } from "../utils/listScroll";
 import { getFileDirectory, noteLabel, noteTitle } from "../utils/noteName";
 
-function ItemFile({ fileName, isExiting = false, isHomonym = false }: Props): Component {
+function ItemFile({ fileName, isExiting = false }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
     { readFile } = useFile(),
     setSelectedFile = fileStore(state => state.setSelectedFile);
+
+  const directory = getFileDirectory(fileName);
 
   function getListLabel(name: string): string {
     return noteTitle(name);
@@ -55,14 +57,14 @@ function ItemFile({ fileName, isExiting = false, isHomonym = false }: Props): Co
         title={fileName}
       >
         <span className="truncate">{getListLabel(fileName)}</span>
-        {isHomonym && (
+        {directory && (
           <span
             className={twMerge(
               "text-xs ml-2 font-normal truncate shrink-0 tracking-tight select-none opacity-60",
               isDay ? "text-neutral-500" : "text-zinc-400"
             )}
           >
-            {getFileDirectory(fileName) || "lyra"}
+            {directory}
           </span>
         )}
       </span>
@@ -80,5 +82,4 @@ export default ItemFile;
 interface Props {
   fileName: string;
   isExiting?: boolean;
-  isHomonym?: boolean;
 }

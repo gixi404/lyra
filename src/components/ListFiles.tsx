@@ -14,7 +14,7 @@ import type { Component } from "../utils/types";
 import { AlertCircle } from "lucide-react";
 import { includeRetainedExits } from "../utils/listExit";
 import { deleteArchivedBatch } from "../utils/archiveDeletion";
-import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
+import { noteLabel, noteSuccessMessage } from "../utils/noteName";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
 
@@ -167,21 +167,6 @@ const ListFiles = memo(({ arr }: Props): Component => {
     fileStore.getState().flushPendingExits();
   }, [paperIsOpen, resetSearch]);
 
-  const homonymSet = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const f of arr) {
-      const title = noteTitle(f).toLowerCase();
-      counts.set(title, (counts.get(title) || 0) + 1);
-    }
-    const homonyms = new Set<string>();
-    for (const [title, count] of counts.entries()) {
-      if (count > 1) {
-        homonyms.add(title);
-      }
-    }
-    return homonyms;
-  }, [arr]);
-
   function renderFiles(): Component {
     if (len(files) === 0) {
       if (len(normalizedSearch) > 0) return <NoMatches />;
@@ -195,7 +180,6 @@ const ListFiles = memo(({ arr }: Props): Component => {
             fileName={n}
             key={n}
             isExiting={exitingFiles.includes(n)}
-            isHomonym={homonymSet.has(noteTitle(n).toLowerCase())}
           />
         ))}
       </>

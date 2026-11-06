@@ -156,3 +156,25 @@ test("Filtrado de búsqueda abarca tanto el nombre como las subcarpetas", () => 
   const apuntesMatch = files.filter(f => f.toLowerCase().includes("apuntes"));
   assert.deepEqual(apuntesMatch, ["desarrollo/rust/apuntes.rs"]);
 });
+
+test("Todas las notas en subcarpetas obtienen su carpeta de origen y las de la raíz no", () => {
+  const files = [
+    { name: "nota.txt", expectedDir: "" },
+    { name: "trabajo/proyecto.md", expectedDir: "trabajo" },
+    { name: "trabajo/clientes/reunion.txt", expectedDir: "trabajo/clientes" },
+    { name: "personal/ideas.txt", expectedDir: "personal" },
+    { name: "desarrollo/rust/apuntes.rs", expectedDir: "desarrollo/rust" },
+  ];
+
+  for (const file of files) {
+    const dir = getFileDirectory(file.name);
+    assert.equal(dir, file.expectedDir);
+    // En la raíz no hay etiqueta (falso/vacío)
+    if (file.expectedDir === "") {
+      assert.equal(Boolean(dir), false);
+    } else {
+      // En subcarpeta siempre hay etiqueta con la ruta relativa completa
+      assert.equal(Boolean(dir), true);
+    }
+  }
+});
