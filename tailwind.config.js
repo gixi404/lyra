@@ -19,7 +19,23 @@ export default {
     "font-cinzel",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        background: "var(--color-background)",
+        surface: "var(--color-surface)",
+        "surface-elevated": "var(--color-surface-elevated)",
+        hover: "var(--color-hover)",
+        border: "var(--color-border)",
+        "text-primary": "var(--color-text-primary)",
+        "text-secondary": "var(--color-text-secondary)",
+        accent: "var(--color-accent)",
+        "accent-hover": "var(--color-accent-hover)",
+        "accent-subtle": "var(--color-accent-subtle)",
+        danger: "var(--color-danger)",
+        "danger-hover": "var(--color-danger-hover)",
+        "danger-subtle": "var(--color-danger-subtle)",
+      },
+    },
     fontFamily: {
       duo: ['"iA Writer Duo"', "monospace"],
       inter: ['"Inter"', "sans-serif"],

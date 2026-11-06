@@ -19,6 +19,7 @@ import { twMerge } from "tailwind-merge";
 import MainContainer from "../components/MainContainer";
 import DefaultAppModal from "../components/DefaultAppModal";
 import usePreferences from "../hooks/usePreferences";
+import useScrollSpeed from "../hooks/useScrollSpeed";
 import useStorage from "../hooks/useStorage";
 import { MAIN_FOLDER, PAGES, THEMES } from "../utils/consts";
 import translations from "../utils/dictionary";
@@ -140,6 +141,8 @@ function Preferences(): Component {
     [configuringDefaultApp, setConfiguringDefaultApp] = useState<boolean>(false),
     [associationStatus, setAssociationStatus] = useState<DefaultAppAssociationStatus | null>(null);
 
+  useScrollSpeed();
+
   useEffect(() => {
     let isMounted = true;
     const queryStatus = async () => {
@@ -245,6 +248,7 @@ function Preferences(): Component {
   function handleScrollSpeedChange(newSpeed: number): void {
     const normalized = normalizeScrollSpeed(newSpeed);
     setItem("scroll-speed", String(normalized));
+    configStore.getState().bumpPrefTick();
   }
 
   async function openFolder(): Promise<void> {
@@ -332,7 +336,7 @@ function Preferences(): Component {
                   "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
                   isDay
                     ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
-                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
+                    : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030] shadow-sm",
                   checkingUpdate && "opacity-40 cursor-not-allowed"
                 )}
               >
@@ -360,7 +364,7 @@ function Preferences(): Component {
                   "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
                   isDay
                     ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
-                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm"
+                    : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030] shadow-sm"
                 )}
               >
                 <span>Abrir</span>
@@ -381,14 +385,14 @@ function Preferences(): Component {
                     "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 pr-8 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
                     isDay
                       ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
-                      : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                      : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030]"
                   )}
                 >
                   {fontsOptions.map(opt => (
                     <option
                       key={opt.value}
                       value={opt.value}
-                      className={isDay ? "bg-white text-gray-900" : "bg-[#222222] text-zinc-100"}
+                      className={isDay ? "bg-white text-gray-900" : "bg-[#1A1A1A] text-zinc-100"}
                     >
                       {opt.label}
                     </option>
@@ -412,11 +416,11 @@ function Preferences(): Component {
                     "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
                     isDay
                       ? paragraphFocus
-                        ? "bg-indigo-50 text-indigo-600 border-indigo-300 font-semibold"
+                        ? "bg-[#E0F3FC] text-[#056391] border-[#70C9F4]/30 font-semibold"
                         : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
                       : paragraphFocus
                         ? "bg-sky-500/20 text-sky-300 border-sky-400/50 font-semibold"
-                        : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                        : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030]"
                   )}
                 >
                   {paragraphFocus ? (d.Enabled ?? "Activado") : (d.Disabled ?? "Desactivado")}
@@ -438,14 +442,14 @@ function Preferences(): Component {
                     "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-8 text-center [text-align-last:center] rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
                     isDay
                       ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
-                      : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                      : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030]"
                   )}
                 >
                   {alignsOptions.map(opt => (
                     <option
                       key={opt.value}
                       value={opt.value}
-                      className={isDay ? "bg-white text-gray-900 text-center" : "bg-[#222222] text-zinc-100 text-center"}
+                      className={isDay ? "bg-white text-gray-900 text-center" : "bg-[#1A1A1A] text-zinc-100 text-center"}
                     >
                       {opt.label}
                     </option>
@@ -469,14 +473,14 @@ function Preferences(): Component {
                     "appearance-none cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 pr-8 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors",
                     isDay
                       ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50"
-                      : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                      : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030]"
                   )}
                 >
                   {themesOptions.map(opt => (
                     <option
                       key={opt.value}
                       value={opt.value}
-                      className={isDay ? "bg-white text-gray-900" : "bg-[#222222] text-zinc-100"}
+                      className={isDay ? "bg-white text-gray-900" : "bg-[#1A1A1A] text-zinc-100"}
                     >
                       {opt.label}
                     </option>
@@ -484,35 +488,6 @@ function Preferences(): Component {
                 </select>
                 <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
               </div>
-            </div>
-
-            {/* Aplicación predeterminada */}
-            <div className="flex justify-between items-center w-full gap-x-2">
-              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
-                <AppWindow size={24} className="sm:w-[28px] sm:h-[28px]" />
-                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>
-                  Aplicación predeterminada
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleConfigureDefaultApp}
-                disabled={isDefaultAppButtonDisabled}
-                className={twMerge(
-                  "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
-                  isDay
-                    ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
-                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
-                  isDefaultAppButtonDisabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
-                )}
-              >
-                {configuringDefaultApp && (
-                  <RefreshCwIcon size={14} className="animate-spin shrink-0" />
-                )}
-                <span>
-                  {configuringDefaultApp ? "Configurando..." : "Configurar"}
-                </span>
-              </button>
             </div>
 
             {/* Velocidad de desplazamiento */}
@@ -548,6 +523,37 @@ function Preferences(): Component {
                   {formatScrollSpeed(currentScrollSpeed)}
                 </span>
               </div>
+            </div>
+
+
+
+            {/* Editor predeterminado */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <AppWindow size={24} className="sm:w-[28px] sm:h-[28px]" />
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>
+                  Editor predeterminado
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleConfigureDefaultApp}
+                disabled={isDefaultAppButtonDisabled}
+                className={twMerge(
+                  "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                  isDay
+                    ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
+                    : "bg-[#1A1A1A] text-zinc-100 border-zinc-700 hover:bg-[#303030] shadow-sm",
+                  isDefaultAppButtonDisabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
+                )}
+              >
+                {configuringDefaultApp && (
+                  <RefreshCwIcon size={14} className="animate-spin shrink-0" />
+                )}
+                <span>
+                  {configuringDefaultApp ? "Configurando..." : "Configurar"}
+                </span>
+              </button>
             </div>
 
 

@@ -139,7 +139,7 @@ function PendingAuthorizationDialog(): JSX.Element | null {
             role="alert"
             className={`mt-4 text-sm rounded-xl px-3 py-2 border ${
               isDay
-                ? "text-rose-700 border-rose-200 bg-rose-50"
+                ? "text-[#A92B35] border-rose-200 bg-rose-50"
                 : "text-rose-300 border-rose-900/60 bg-rose-950/40"
             }`}
           >
@@ -166,7 +166,7 @@ function PendingAuthorizationDialog(): JSX.Element | null {
             disabled={!canConfirm}
             className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${
               isDay
-                ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20"
+                ? "bg-[#70C9F4] hover:bg-[#98DDFB] text-[#181B20] shadow-[#70C9F4]/20"
                 : "bg-sky-500 hover:bg-sky-400 text-zinc-950 font-semibold shadow-sky-500/20"
             }`}
           >

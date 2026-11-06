@@ -555,11 +555,11 @@ test("14. Preferencias: Ubicación e integridad del control deslizante de veloci
   // 1. Debe incluir la sección «Velocidad de desplazamiento»
   const scrollSectionIndex = code.indexOf("{/* Velocidad de desplazamiento */}");
   const temaIndex = code.indexOf("{/* Tema */}");
-  const defaultAppIndex = code.indexOf("{/* Aplicación predeterminada */}");
+  const defaultAppIndex = code.indexOf("{/* Editor predeterminado */}");
 
   assert.ok(scrollSectionIndex !== -1, "Debe existir la sección Velocidad de desplazamiento");
   assert.ok(temaIndex !== -1, "Debe existir la sección Tema");
-  assert.ok(defaultAppIndex !== -1, "Debe existir la sección Aplicación predeterminada");
+  assert.ok(defaultAppIndex !== -1, "Debe existir la sección Editor predeterminado");
 
   // 2. Debe ubicarse después de «Tema» y antes de «Aplicación predeterminada»
   assert.ok(

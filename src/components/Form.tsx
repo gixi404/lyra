@@ -294,9 +294,9 @@ function Form(): Component {
               className={twMerge(
                 "p-1.5 transition-all duration-150 rounded-lg cursor-pointer active:scale-95",
                 isDay
-                  ? "text-neutral-600 hover:text-indigo-600 hover:bg-indigo-50"
+                  ? "text-neutral-600 hover:text-[#056391] hover:bg-[#E0F3FC]"
                   : "text-zinc-400 hover:text-sky-400 hover:bg-sky-500/10",
-                paperIsOpen && (isDay ? "text-indigo-600 bg-indigo-50" : "text-sky-400 bg-sky-500/10")
+                paperIsOpen && (isDay ? "text-[#056391] bg-[#E0F3FC]" : "text-sky-400 bg-sky-500/10")
               )}
             >
               <ArchiveIcon
@@ -311,7 +311,7 @@ function Form(): Component {
               type="button"
               onClick={() => setIsModalOpen(true)}
               title="Crear nuevo archivo"
-              className="w-10 h-10 rounded-xl bg-[#00a8ff] hover:bg-[#0096e6] text-black font-semibold flex items-center justify-center transition-all duration-150 active:scale-95 ml-1 cursor-pointer shadow-sm"
+              className="w-10 h-10 rounded-xl bg-[#70C9F4] hover:bg-[#98DDFB] text-black font-semibold flex items-center justify-center transition-all duration-150 active:scale-95 ml-1 cursor-pointer shadow-sm"
             >
               <AddIcon size={20} strokeWidth={2.5} />
             </button>

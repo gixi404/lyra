@@ -3,6 +3,48 @@
 @tailwind utilities;
 
 @layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+  }
+
+  :root,
+  html.dark,
+  html.dark body,
+  html.dark #root {
+    --color-background: #101010;
+    --color-surface: #1A1A1A;
+    --color-surface-elevated: #242424;
+    --color-hover: #303030;
+    --color-border: #383838;
+    --color-text-primary: #F0F0F0;
+    --color-text-secondary: #A3A3A3;
+    --color-accent: #70C9F4;
+    --color-accent-hover: #98DDFB;
+    --color-accent-subtle: #193342;
+    --color-danger: #F07575;
+    --color-danger-hover: #FF9696;
+    --color-danger-subtle: #402020;
+  }
+
+  html.light,
+  html.light body,
+  html.light #root {
+    --color-background: #F7F8FA;
+    --color-surface: #FFFFFF;
+    --color-surface-elevated: #EEF1F5;
+    --color-hover: #E6EBF0;
+    --color-border: #DCE1E7;
+    --color-text-primary: #181B20;
+    --color-text-secondary: #626C78;
+    --color-accent: #70C9F4;
+    --color-accent-hover: #98DDFB;
+    --color-accent-subtle: #E0F3FC;
+    --color-danger: #F07575;
+    --color-danger-hover: #FF9696;
+    --color-danger-subtle: #FCE9EA;
+  }
+
   html, body, #root {
     width: 100%;
     height: 100%;
@@ -10,15 +52,16 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background-color: #101010;
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
   }
 
   html.light, html.light body, html.light #root {
-    background-color: #e0e0e0;
+    background-color: var(--color-background);
   }
 
   html.dark, html.dark body, html.dark #root {
-    background-color: #101010;
+    background-color: var(--color-background);
   }
 
   html.in-preferences,
@@ -28,10 +71,13 @@
     overflow-x: hidden;
     height: auto;
     min-height: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
   }
 
   body {
-    @apply caret-[#00a8ff] text-zinc-200 flex flex-col justify-start items-stretch select-none antialiased;
+    @apply caret-[var(--color-accent)] flex flex-col justify-start items-stretch select-none antialiased;
+    color: var(--color-text-primary);
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 }
@@ -83,7 +129,6 @@ details summary {
   border-radius: 9999px;
   border: none !important;
   box-shadow: none !important;
-  transition: background-color 300ms ease-in-out !important;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -130,9 +175,8 @@ body.is-typing .auto-hide-ui {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
+  background: transparent !important;
 }
-
-
 
 .normal-opacity {
   @apply !opacity-90 !text-white;

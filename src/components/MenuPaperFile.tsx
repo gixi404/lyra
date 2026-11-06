@@ -271,7 +271,7 @@ function MenuPaperFile({ fileName }: Props): Component {
             className={twMerge(
               "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
               isDay
-                ? "hover:bg-neutral-100 hover:text-indigo-600"
+                ? "hover:bg-neutral-100 hover:text-[#056391]"
                 : "hover:bg-zinc-800 hover:text-sky-400"
             )}
           >
@@ -296,7 +296,7 @@ function MenuPaperFile({ fileName }: Props): Component {
             className={twMerge(
               "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
               isDay
-                ? "hover:bg-neutral-100 hover:text-indigo-600"
+                ? "hover:bg-neutral-100 hover:text-[#056391]"
                 : "hover:bg-zinc-800 hover:text-sky-400"
             )}
           >
@@ -346,7 +346,7 @@ function MenuPaperFile({ fileName }: Props): Component {
             className={twMerge(
               "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
               isDay
-                ? "hover:bg-rose-50 hover:text-rose-600"
+                ? "hover:bg-rose-50 hover:text-[#A92B35]"
                 : "hover:bg-rose-500/20 hover:text-rose-400"
             )}
           >

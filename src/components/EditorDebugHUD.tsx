@@ -129,7 +129,7 @@ export default function EditorDebugHUD({
               <button
                 type="button"
                 onClick={handleSave}
-                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-sky-600 hover:bg-sky-500 text-white rounded text-[11px] font-medium transition cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#70C9F4] hover:bg-[#98DDFB] text-[#181B20] rounded text-[11px] font-medium transition cursor-pointer"
               >
                 <Download size={12} />
                 <span>Guardar Log</span>

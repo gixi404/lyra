@@ -107,7 +107,7 @@ function ModalSort({ isOpen, onClose }: ModalSortProps): Component | null {
                   }`}
                 >
                   <div className="flex items-center gap-x-2.5">
-                    <SlidersHorizontal className={`w-5 h-5 ${isDay ? "text-indigo-600" : "text-sky-400"}`} />
+                    <SlidersHorizontal className={`w-5 h-5 ${isDay ? "text-[#056391]" : "text-sky-400"}`} />
                     <h3 className="text-base font-semibold tracking-tight">
                       Ordenar archivos
                     </h3>
@@ -139,7 +139,7 @@ function ModalSort({ isOpen, onClose }: ModalSortProps): Component | null {
                         className={`flex items-center justify-between px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors cursor-pointer select-none ${
                           isChecked
                             ? isDay
-                              ? "bg-indigo-50/80 border-indigo-200 text-indigo-900"
+                              ? "bg-[#E0F3FC]/80 border-[#70C9F4]/30 text-[#181B20]"
                               : "bg-sky-500/10 border-sky-500/30 text-sky-200"
                             : isDay
                               ? "bg-neutral-50/60 border-neutral-200/80 text-neutral-700 hover:bg-neutral-100"
@@ -151,7 +151,7 @@ function ModalSort({ isOpen, onClose }: ModalSortProps): Component | null {
                           className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
                             isChecked
                               ? isDay
-                                ? "bg-indigo-600 border-indigo-600 text-white"
+                                ? "bg-[#70C9F4] border-[#70C9F4] text-[#181B20]"
                                 : "bg-sky-500 border-sky-500 text-black"
                               : isDay
                                 ? "border-neutral-300 bg-white"

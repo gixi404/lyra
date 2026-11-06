@@ -983,7 +983,7 @@ function TinyEditor({
       .editor-textarea {
         -webkit-appearance: none !important;
         appearance: none !important;
-        caret-color: #00a8ff !important;
+        caret-color: #70C9F4 !important;
         color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
         -webkit-text-fill-color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
       }
@@ -1142,7 +1142,7 @@ function TinyEditor({
           backgroundColor: "transparent",
           color: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
           WebkitTextFillColor: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
-          caretColor: "#00a8ff",
+          caretColor: "#70C9F4",
           paddingTop: "70px",
           paddingBottom: "50vh",
           paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
@@ -1223,7 +1223,7 @@ const EditorScrollbar = memo(function EditorScrollbar({
         onPointerUp={onThumbPointerUp}
         onPointerCancel={onThumbPointerUp}
         className={twMerge(
-          "absolute right-1 w-1.5 rounded-full touch-none select-none",
+          "absolute right-1 w-1 rounded-full touch-none select-none transition-[width,background-color] duration-150 ease-out hover:right-0.5 hover:w-2 active:right-0.5 active:w-2",
           isDay
             ? "bg-gray-400/60 hover:bg-gray-500/80 active:bg-gray-600/90"
             : "bg-zinc-500/50 hover:bg-zinc-400/80 active:bg-zinc-300/90"

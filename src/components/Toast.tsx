@@ -50,7 +50,7 @@ function Toast(): JSX.Element | null {
                     t.msg ? "ml-1.5" : ""
                   } ${
                     isDay
-                      ? "text-sky-600 hover:text-sky-700 decoration-sky-600/50 hover:decoration-sky-700"
+                      ? "text-[#056391] hover:text-[#056391] decoration-[#056391]/50 hover:decoration-[#056391]"
                       : "text-sky-400 hover:text-sky-300 decoration-sky-400/50 hover:decoration-sky-300"
                   } underline underline-offset-2 font-semibold cursor-pointer transition-all duration-150 outline-none hover:brightness-110 active:scale-95 inline-block`}
                 >

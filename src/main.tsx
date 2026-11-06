@@ -34,7 +34,7 @@ try {
     ((!savedTheme || savedTheme === "auto" || savedTheme === "nothing") &&
       !window.matchMedia("(prefers-color-scheme: dark)").matches);
   const isDark = !isLight;
-  const initialBg = isDark ? "#101010" : "#e0e0e0";
+  const initialBg = isDark ? "#101010" : "#F7F8FA";
   document.documentElement.style.backgroundColor = initialBg;
   document.body.style.backgroundColor = initialBg;
   if (isDark) {
@@ -61,7 +61,7 @@ try {
 
 createRoot(root).render(
   <StrictMode>
-    <Suspense fallback={<div className="w-full min-h-screen bg-[#101010] light:bg-[#e0e0e0]" />}>
+    <Suspense fallback={<div className="w-full min-h-screen bg-[#101010] light:bg-[#F7F8FA]" />}>
       <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </Suspense>
     <Toast />

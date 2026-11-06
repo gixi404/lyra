@@ -426,7 +426,7 @@ test("15. Preferencias: «Aplicación predeterminada» se ubica inmediatamente d
   const code = fs.readFileSync(preferencesPath, "utf-8");
 
   const temaIndex = code.indexOf("{/* Tema */}");
-  const defaultAppIndex = code.indexOf("{/* Aplicación predeterminada */}");
+  const defaultAppIndex = code.indexOf("{/* Editor predeterminado */}");
   const novedadesIndex = code.indexOf("{/* Bloque inferior: Novedades y Atajos */}");
 
   assert.ok(temaIndex !== -1, "Debe existir la sección Tema");
@@ -444,7 +444,7 @@ test("15. Preferencias: «Aplicación predeterminada» se ubica inmediatamente d
   );
 
   // Asegurar que no esté duplicada
-  const firstIndex = code.indexOf("{/* Aplicación predeterminada */}");
-  const lastIndex = code.lastIndexOf("{/* Aplicación predeterminada */}");
+  const firstIndex = code.indexOf("{/* Editor predeterminado */}");
+  const lastIndex = code.lastIndexOf("{/* Editor predeterminado */}");
   assert.equal(firstIndex, lastIndex, "La sección Aplicación predeterminada no debe estar duplicada");
 });
