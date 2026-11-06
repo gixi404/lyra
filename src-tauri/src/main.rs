@@ -818,7 +818,7 @@ async fn save_note_atomic(
     let target_path = gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)
         .map_err(|e| format!("Ruta o nombre de archivo inválido: {e}"))?;
 
-    // Coordinación exclusiva por archivo para prevenir condiciones de carrera TOCTOU
+    // Coordinación exclusiva por archivo para mitigar condiciones de carrera TOCTOU
     // con descargas o reemplazos concurrentes del motor de Google Drive.
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
     let mtime = gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {

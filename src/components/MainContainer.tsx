@@ -28,6 +28,7 @@ import "@fontsource/nunito/latin-ext.css";
 import "@fontsource/cinzel/latin.css";
 import "@fontsource/cinzel/latin-ext.css";
 import { animated, useSpring } from "@react-spring/web";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
@@ -80,7 +81,6 @@ function MainContainer({ children }: PropsWithChildren): Component {
     if (isTauri) {
       void (async () => {
         try {
-          const { getCurrentWebview } = await import("@tauri-apps/api/webview");
           const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
             if (!isMounted) return;
             if (event.payload.type === "enter" || event.payload.type === "over") {

@@ -493,7 +493,7 @@ pub fn resolve_safe_path(base_dir: &std::path::Path, file_name: &str) -> Result<
 
 /// Garantiza la creación segura y componente a componente de la jerarquía de directorios padre
 /// para una nota anidada dentro de `base_dir`, verificando en cada paso que ningún componente
-/// sea un enlace simbólico ni intente escapar de `base_dir`, protegiendo contra condiciones TOCTOU.
+/// sea un enlace simbólico ni intente escapar de `base_dir` (ofrece mitigación parcial basada en rutas contra condiciones de carrera TOCTOU).
 pub fn ensure_safe_parent_hierarchy(base_dir: &std::path::Path, file_name: &str) -> Result<PathBuf, String> {
     ensure_safe_base_dir(base_dir)?;
     if !is_safe_relative_path(file_name) {
@@ -607,7 +607,7 @@ pub fn ensure_safe_parent_hierarchy(base_dir: &std::path::Path, file_name: &str)
     Ok(current)
 }
 
-/// Coordinador de bloqueos por archivo para evitar condiciones de carrera TOCTOU entre
+/// Coordinador de bloqueos por archivo para mitigar condiciones de carrera TOCTOU entre
 /// el guardado local del editor (IPC save_note_atomic) y la descarga/reemplazo de notas de Google Drive.
 /// No utiliza un bloqueo global sobre todas las notas, sino un bloqueo específico por nombre de archivo.
 #[derive(Default, Clone)]
@@ -881,7 +881,7 @@ pub fn process_stale_tmp_file(
 }
 
 /// Lee atómicamente desde el descriptor del archivo abierto sus metadatos (mtime),
-/// su contenido íntegro y calcula MD5 y tamaño, garantizando que el snapshot no sufra de desfases TOCTOU.
+/// su contenido íntegro y calcula MD5 y tamaño, mitigando desfases temporales TOCTOU.
 pub fn read_file_snapshot(
     path: &std::path::Path,
     fallback_mtime: i64,
@@ -1009,7 +1009,7 @@ pub fn write_file_atomic(target_path: &std::path::Path, content: &[u8]) -> Resul
     let mut retries = 5;
     let mut backoff_ms = 10;
     loop {
-        // Auditoría defensiva anti-TOCTOU previa a cada intento de rename atómico:
+        // Auditoría defensiva previa a cada intento de rename atómico (mitigación parcial basada en rutas contra TOCTOU):
         // Si durante la escritura un proceso externo suplantó el directorio padre o el destino por un enlace simbólico, abortar y limpiar
         if let Ok(meta) = std::fs::symlink_metadata(parent_dir) {
             if meta.file_type().is_symlink() {
@@ -1068,7 +1068,7 @@ fn split_filename(filename: &str) -> (String, String) {
     }
 }
 
-/// Escribe de forma atómica y sin carreras TOCTOU una copia de conflicto en el disco local.
+/// Escribe de forma atómica una copia de conflicto en el disco local mitigando condiciones de carrera.
 /// Si ya existe un archivo con la misma marca temporal (por ejemplo, ejecuciones consecutivas
 /// en el mismo segundo), genera un sufijo numérico secuencial ` (1)`, ` (2)`, etc.
 pub fn write_unique_conflict_file(
@@ -1750,7 +1750,7 @@ pub async fn run_sync_with_client_and_emitter_with_id(
                                 Error(String),
                             }
 
-                            // Coordinación por archivo: verificación y reemplazo atómicos sin TOCTOU
+                            // Coordinación por archivo: verificación y reemplazo atómicos (mitigación de carreras TOCTOU)
                             let foreign_authorization = ctx.has_foreign_authorization(name) || !ctx.can_upload(name);
                             let outcome = lock_coord.with_file_lock(name, || {
                                 let current_disk = fs::read(path).ok();
@@ -2278,7 +2278,7 @@ pub async fn run_sync_with_client_and_emitter_with_id(
                             Error(String),
                         }
 
-                        // Coordinación por archivo: verificación y reemplazo atómicos sin TOCTOU
+                        // Coordinación por archivo: verificación y reemplazo atómicos (mitigación de carreras TOCTOU)
                         let outcome = lock_coord.with_file_lock(remote_name, || {
                             if path.exists() {
                                 let local_bytes = fs::read(&path).unwrap_or_default();

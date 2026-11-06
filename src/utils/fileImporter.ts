@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
 import { fileStore } from "../store/fileStore.ts";
@@ -207,7 +208,6 @@ export async function initExternalFileListener(): Promise<() => void> {
 
   let unlisten: (() => void) | null = null;
   try {
-    const { listen } = await import("@tauri-apps/api/event");
     unlisten = await listen<string[]>("lyra://open-files", (event) => {
       if (Array.isArray(event.payload) && event.payload.length > 0) {
         void handleExternalFileImport(event.payload);
