@@ -12,6 +12,7 @@ import { scheduleSavePersistentPreferences } from "./persistentPreferences.ts";
 import { fileStore } from "../store/fileStore.ts";
 import { setArchiveState } from "./archiveState.ts";
 import { hasSupportedNoteExtension } from "./noteName.ts";
+import { logger } from "./logger.ts";
 
 export const WELCOME_FILE_NAME: string = WELCOME_ES;
 
@@ -278,7 +279,7 @@ export async function ensureWelcomeFileState(
       activeWelcome: existingWelcome && !isArchived ? existingWelcome : null,
     };
   } catch (err) {
-    console.error("Error en ensureWelcomeFileState:", err);
+    logger.error("Error en ensureWelcomeFileState:", err);
     return { created: false, activeWelcome: null };
   }
 }
@@ -330,7 +331,7 @@ export async function autoArchiveWelcomeOnSync(
       return true;
     }
   } catch (err) {
-    console.warn("Error al intentar autoarchivar archivo de bienvenida tras sincronización:", err);
+    logger.warn("Error al intentar autoarchivar archivo de bienvenida tras sincronización:", err);
   }
   return false;
 }

@@ -22,6 +22,7 @@ import {
   resolveStoredFileName,
 } from "./noteName";
 import { pathIs, scrollToNovedades } from "./navigation";
+import { logger } from "./logger.ts";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
 
@@ -182,7 +183,7 @@ async function verifyMainFolderInternal(): Promise<void> {
     }
   } catch (e: unknown) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.error(`catch 'verifyMainFolder' ${errorMessage}`);
+    logger.error(`catch 'verifyMainFolder' ${errorMessage}`);
   }
 }
 

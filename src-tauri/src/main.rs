@@ -91,6 +91,7 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
         let entries = match std::fs::read_dir(&current_dir) {
             Ok(e) => e,
             Err(err) => {
+                #[cfg(debug_assertions)]
                 eprintln!("[list_notes] Skipping unreadable directory '{}': {err}", current_dir.display());
                 continue;
             }
@@ -101,6 +102,7 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
             match entry {
                 Ok(e) => dir_entries.push(e),
                 Err(err) => {
+                    #[cfg(debug_assertions)]
                     eprintln!("[list_notes] Skipping unreadable entry in '{}': {err}", current_dir.display());
                 }
             }
@@ -836,6 +838,7 @@ async fn save_note_atomic(
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
         if let Err(e) = gdrive::provenance::record_local_write(&lyra_dir, &file_name, None, false) {
+            #[cfg(debug_assertions)]
             eprintln!("[save_note_atomic] Note saved locally without updated cloud authorization: {e}");
         }
         Ok::<i64, String>(mtime)
@@ -957,6 +960,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "[Lyra Backend] Iniciando v{} (compilado: {})",
                 gdrive::BACKEND_VERSION,

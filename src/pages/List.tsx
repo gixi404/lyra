@@ -16,6 +16,7 @@ import {
 } from "../utils/listScroll.ts";
 import { startLocalFirstListInitialization } from "../utils/listInitialization";
 import useScrollSpeed from "../hooks/useScrollSpeed";
+import { logger } from "../utils/logger.ts";
 
 function List(): Component {
   const { getFilesWithStats } = useFile(),
@@ -112,7 +113,7 @@ function List(): Component {
       getFilesWithStats,
       verifyMainFolder,
       ({ files: filesList, stats }) => setFilesWithStats(filesList, stats),
-      error => console.error("Could not initialize note list", error),
+      error => logger.error("Could not initialize note list", error),
     );
   }, [fileIsEdited, getFilesWithStats, setFilesWithStats]);
 

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { configStore } from "../store/configStore.ts";
 import { fileStore } from "../store/fileStore.ts";
 import { savePersistentPreferencesNow } from "./persistentPreferences.ts";
+import { logger } from "./logger.ts";
 
 export interface ArchiveProjection {
   archivedNames: string[];
@@ -28,7 +29,7 @@ async function applyProjection(projection: ArchiveProjection, request: number): 
     try {
       await savePersistentPreferencesNow();
     } catch (error) {
-      console.warn("Could not update the legacy archive projection", error);
+      logger.warn("Could not update the legacy archive projection", error);
     }
   }
   return projection;

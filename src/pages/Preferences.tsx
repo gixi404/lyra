@@ -46,6 +46,7 @@ import {
   SCROLL_SPEED_STEP,
   normalizeScrollSpeed,
 } from "../utils/scrollSpeed";
+import { logger } from "../utils/logger.ts";
 
 const d = translations(),
   fontsOptions: Options[] = [
@@ -252,7 +253,7 @@ function Preferences(): Component {
       const path: string = await join(docPath, MAIN_FOLDER);
       await invoke("open_folder", { path });
     } catch (err) {
-      console.error(`catch 'openFolder' ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(`catch 'openFolder' ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -485,6 +486,35 @@ function Preferences(): Component {
               </div>
             </div>
 
+            {/* Aplicación predeterminada */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <AppWindow size={24} className="sm:w-[28px] sm:h-[28px]" />
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>
+                  Aplicación predeterminada
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleConfigureDefaultApp}
+                disabled={isDefaultAppButtonDisabled}
+                className={twMerge(
+                  "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                  isDay
+                    ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
+                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
+                  isDefaultAppButtonDisabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
+                )}
+              >
+                {configuringDefaultApp && (
+                  <RefreshCwIcon size={14} className="animate-spin shrink-0" />
+                )}
+                <span>
+                  {configuringDefaultApp ? "Configurando..." : "Configurar"}
+                </span>
+              </button>
+            </div>
+
             {/* Velocidad de desplazamiento */}
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
@@ -518,35 +548,6 @@ function Preferences(): Component {
                   {formatScrollSpeed(currentScrollSpeed)}
                 </span>
               </div>
-            </div>
-
-            {/* Aplicación predeterminada */}
-            <div className="flex justify-between items-center w-full gap-x-2">
-              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
-                <AppWindow size={24} className="sm:w-[28px] sm:h-[28px]" />
-                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>
-                  Aplicación predeterminada
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleConfigureDefaultApp}
-                disabled={isDefaultAppButtonDisabled}
-                className={twMerge(
-                  "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm sm:text-base font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
-                  isDay
-                    ? "bg-white text-gray-900 border-gray-300 hover:bg-gray-50 shadow-sm"
-                    : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c] shadow-sm",
-                  isDefaultAppButtonDisabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
-                )}
-              >
-                {configuringDefaultApp && (
-                  <RefreshCwIcon size={14} className="animate-spin shrink-0" />
-                )}
-                <span>
-                  {configuringDefaultApp ? "Configurando..." : "Configurar"}
-                </span>
-              </button>
             </div>
 
 

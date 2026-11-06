@@ -43,7 +43,7 @@ class EditorDebugger {
     name: string,
     details?: Record<string, unknown>
   ): void {
-    if (!import.meta.env.DEV && this.listeners.length === 0) {
+    if (!((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false) && this.listeners.length === 0) {
       return;
     }
 
@@ -64,7 +64,7 @@ class EditorDebugger {
       this.logs.shift();
     }
 
-    if (import.meta.env.DEV) {
+    if (((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false)) {
       const color =
         category === "TRANSITION"
           ? "#f59e0b"
@@ -101,10 +101,10 @@ class EditorDebugger {
     const fileName = `${MAIN_FOLDER}/editor_debug.log`;
     try {
       await writeTextFile(fileName, logContent, BASE_DIRECTORY);
-      console.log(`[Lyra Debug] Log successfully written to ${fileName}`);
+      if (((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false)) console.log(`[Lyra Debug] Log successfully written to ${fileName}`);
       return `Guardado con éxito en ~/Documents/${fileName}`;
     } catch (err) {
-      console.error("[Lyra Debug] Failed to write log file:", err);
+      if (((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false)) console.error("[Lyra Debug] Failed to write log file:", err);
       // Fallback: download as text file in browser context
       try {
         const blob = new Blob([logContent], { type: "text/plain" });

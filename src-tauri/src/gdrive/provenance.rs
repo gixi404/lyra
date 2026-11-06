@@ -275,6 +275,7 @@ pub fn load_ledger(path: &Path) -> Result<Option<ProvenanceLedger>, String> {
             if bak_path.exists() {
                 if let Ok(content) = fs::read_to_string(&bak_path) {
                     if let Ok(ledger) = parse_ledger(&content) {
+                        #[cfg(debug_assertions)]
                         eprintln!(
                             "[Provenance] Libro de procedencia recuperado desde '{}' ({main_err}).",
                             bak_path.display()
@@ -546,6 +547,7 @@ pub fn create_local_note(
     file.write_all(content).map_err(|e| format!("Cannot write note: {e}"))?;
     file.sync_all().map_err(|e| format!("Cannot sync note: {e}"))?;
     if let Err(e) = record_local_write(lyra_dir, name, account_key, true) {
+        #[cfg(debug_assertions)]
         eprintln!("[create_local_note] Note is local only: {e}");
     }
     Ok(())

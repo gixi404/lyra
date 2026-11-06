@@ -21,6 +21,7 @@ import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal";
 import ModalInfo from "./ModalInfo";
 import { getFileBaseName, getFileDirectory, noteLabel, noteTitle } from "../utils/noteName";
+import { logger } from "../utils/logger.ts";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
@@ -107,10 +108,10 @@ function MenuFile({ fileName }: Props): Component {
           await invoke("open_folder", { path: downloadsPath });
         }
       } catch (openErr) {
-        console.warn("Could not open Downloads folder:", openErr);
+        logger.warn("Could not open Downloads folder:", openErr);
       }
     } catch (err) {
-      console.error("Error exporting PDF:", err);
+      logger.error("Error exporting PDF:", err);
       notification("error", `No se pudo exportar ${noteLabel(fileName)} a PDF`);
     }
   }
@@ -197,7 +198,7 @@ function MenuFile({ fileName }: Props): Component {
         editedFile();
       });
     } catch (err) {
-      console.error("Error al persistir archivado de nota:", err);
+      logger.error("Error al persistir archivado de nota:", err);
       fileStore.getState().releaseRetainedExit(archivedName);
       if (mountedRef.current) setIsTrashOpen(false);
       notification("error", `No se pudo archivar ${noteLabel(archivedName)}`);

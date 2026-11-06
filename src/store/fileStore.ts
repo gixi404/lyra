@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { File } from "../utils/types";
 import { getAnimationDuration } from "../utils/motion.ts";
 import { flushEditorDrafts } from "../utils/editorPersistence.ts";
+import { logger } from "../utils/logger.ts";
 
 export interface FileItemStats {
   mtime: number;
@@ -153,7 +154,7 @@ export const fileStore = create<FileStoreState>(set => ({
       try {
         pending.commit();
       } catch (err) {
-        console.error("Error al confirmar salida pendiente:", err);
+        logger.error("Error al confirmar salida pendiente:", err);
       }
     }
     set(state => ({

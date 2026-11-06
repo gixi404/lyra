@@ -15,6 +15,7 @@ import { AlertCircle } from "lucide-react";
 import { includeRetainedExits } from "../utils/listExit";
 import { deleteArchivedBatch } from "../utils/archiveDeletion";
 import { noteLabel, noteSuccessMessage } from "../utils/noteName";
+import { logger } from "../utils/logger.ts";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
 
@@ -86,7 +87,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
         name => fileStore.getState().releaseRetainedExit(name),
       );
       for (const { name, error } of failed) {
-        console.error(`Error al eliminar ${name}:`, error);
+        logger.error(`Error al eliminar ${name}:`, error);
       }
 
       if (deleted.length > 0) {

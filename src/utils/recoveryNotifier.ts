@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useToastStore } from "../store/toastStore.ts";
 import { fileStore } from "../store/fileStore.ts";
 import { noteLabel } from "./noteName.ts";
+import { logger } from "./logger.ts";
 
 const notifiedNotes = new Set<string>();
 let pendingBatch: string[] = [];
@@ -114,7 +115,7 @@ async function initializeRecoveryNotifier(transport: RecoveryNotifierTransport):
     isInitialized = true;
   } catch (e) {
     unlisten?.();
-    console.warn("[RecoveryNotifier] Error al inicializar notificador de recuperaciones:", e);
+    logger.warn("[RecoveryNotifier] Error al inicializar notificador de recuperaciones:", e);
   }
 }
 

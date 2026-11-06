@@ -111,6 +111,7 @@ pub fn load_manifest_from_path(path: &std::path::Path) -> SyncManifest {
             if let Ok(manifest) = serde_json::from_str::<SyncManifest>(&content) {
                 return manifest;
             } else {
+                #[cfg(debug_assertions)]
                 eprintln!("[SyncManifest] Advertencia: El manifiesto principal en '{}' está dañado o incompleto. Intentando recuperar desde copia de seguridad .bak...", path.display());
             }
         }
@@ -121,6 +122,7 @@ pub fn load_manifest_from_path(path: &std::path::Path) -> SyncManifest {
     if bak_path.exists() {
         if let Ok(content) = fs::read_to_string(&bak_path) {
             if let Ok(manifest) = serde_json::from_str::<SyncManifest>(&content) {
+                #[cfg(debug_assertions)]
                 eprintln!("[SyncManifest] Manifiesto recuperado exitosamente desde '{}'.", bak_path.display());
                 return manifest;
             }
@@ -232,6 +234,7 @@ pub fn load_manifest_for_account_dir(
             // Si contiene archivos o tombstones pero no sabemos de qué cuenta es,
             // NO se asigna a ciegas para evitar transferir tombstones/mapeos a otra cuenta.
             // Se preserva intacto el archivo heredado.
+            #[cfg(debug_assertions)]
             eprintln!(
                 "[SyncManifest] Manifiesto heredado preservado sin asociar arbitrariamente a '{}'.",
                 account_key
@@ -1212,6 +1215,7 @@ pub fn sanitize_error_message(err: &str) -> String {
 
 pub fn log_sync_msg(lyra_dir: &std::path::Path, msg: &str) {
     let now = Utc::now().to_rfc3339();
+    #[cfg(debug_assertions)]
     eprintln!("{msg}");
 
     let log_file = lyra_dir.join(".gdrive_sync.log");

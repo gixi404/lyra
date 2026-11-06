@@ -12,6 +12,7 @@ import { useSyncStore } from "./store/syncStore";
 import { configStore } from "./store/configStore";
 import { router } from "./router";
 import { initExternalFileListener } from "./utils/fileImporter";
+import { logger } from "./utils/logger.ts";
 
 const root = document.getElementById("root") as Container;
 
@@ -100,7 +101,7 @@ void initPersistentPreferences().then(async () => {
       void useSyncStore.getState().syncNow(true);
     }, 1500);
   }
-}).catch(error => console.error("Could not initialize archive state", error));
+}).catch(error => logger.error("Could not initialize archive state", error));
 
 let lastFocusSyncTimestamp = Date.now();
 const FOCUS_SYNC_THROTTLE_MS = 180_000; // 3 minutos de throttle

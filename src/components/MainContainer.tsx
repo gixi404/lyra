@@ -41,6 +41,7 @@ import Header from "./Header";
 import DropOverlay from "./DropOverlay";
 import { triggerWindowReady } from "../utils/window";
 import { handleExternalFileImport } from "../utils/fileImporter";
+import { logger } from "../utils/logger.ts";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {
@@ -100,7 +101,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
             unlisten();
           }
         } catch (err) {
-          console.warn("No se pudo inicializar listener nativo de arrastrar y soltar:", err);
+          logger.warn("No se pudo inicializar listener nativo de arrastrar y soltar:", err);
         }
       })();
     }

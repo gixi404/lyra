@@ -21,6 +21,7 @@ import {
   registerEditorSession,
   subscribeUpdateInstall,
 } from "../utils/editorPersistence";
+import { logger } from "../utils/logger.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 const TinyEditor = lazy(() => import("../components/TinyEditor"));
@@ -300,7 +301,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
           }
         }).catch(error => {
           markDetachedSaveFailure(coordinator.getFileName());
-          console.error("Could not finish editor save during unmount", error);
+          logger.error("Could not finish editor save during unmount", error);
         }).finally(release);
       }
     };

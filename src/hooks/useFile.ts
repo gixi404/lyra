@@ -21,6 +21,7 @@ import {
   stat,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
+import { logger } from "../utils/logger.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 
@@ -217,7 +218,7 @@ function useFile(): Files {
       try {
         await writeTextFile(pathFile, INTRO_ES, BASE_DIRECTORY);
       } catch (err) {
-        console.warn("Could not overwrite legacy welcome file on disk:", err);
+        logger.warn("Could not overwrite legacy welcome file on disk:", err);
       }
     }
     return content;
@@ -269,7 +270,7 @@ function useFile(): Files {
     try {
       fileStat = await stat(pathFile, BASE_DIRECTORY);
     } catch (err) {
-      console.warn("Could not get fs.stat, using content fallback:", err);
+      logger.warn("Could not get fs.stat, using content fallback:", err);
     }
 
     const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;

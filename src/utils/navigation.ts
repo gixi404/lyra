@@ -1,4 +1,5 @@
 import { PAGES } from "./consts.ts";
+import { logger } from "./logger.ts";
 
 export type NavigateHandler = (path: string) => void | Promise<unknown>;
 
@@ -16,14 +17,14 @@ function executeHandlerSafely(handler: NavigateHandler, path: string, fallbackTo
     const result = handler(path);
     if (result && typeof (result as Promise<unknown>).catch === "function") {
       (result as Promise<unknown>).catch((err) => {
-        console.warn(`Error asíncrono al ejecutar navegación a '${path}':`, err);
+        logger.warn(`Error asíncrono al ejecutar navegación a '${path}':`, err);
         if (fallbackToLocation) {
           fallbackLocation(path);
         }
       });
     }
   } catch (e) {
-    console.warn(`Error sincrónico al ejecutar navegación a '${path}':`, e);
+    logger.warn(`Error sincrónico al ejecutar navegación a '${path}':`, e);
     if (fallbackToLocation) {
       fallbackLocation(path);
     }

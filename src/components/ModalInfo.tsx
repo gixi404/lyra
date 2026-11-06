@@ -15,6 +15,7 @@ import {
 import useFile, { type FileStats } from "../hooks/useFile";
 import { themes } from "../utils/helpers";
 import type { Component } from "../utils/types";
+import { logger } from "../utils/logger.ts";
 
 interface ModalInfoProps {
   isOpen: boolean;
@@ -48,7 +49,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
         }
       })
       .catch(err => {
-        console.error("Error loading file stats:", err);
+        logger.error("Error loading file stats:", err);
         if (isMounted) setLoading(false);
       });
 

@@ -19,6 +19,7 @@ import {
   type UpdateFailureCategory,
   type UpdateFailureInfo,
 } from "./updaterVersion.ts";
+import { logger } from "./logger.ts";
 
 function notification(
   type: ToastType,
@@ -75,7 +76,7 @@ export async function restartInstalledUpdate(): Promise<void> {
       updaterNotification("error", "No se pudo guardar todos los cambios. Revisa tus notas y vuelve a intentar el reinicio", undefined, 8000);
     }
   } catch (error) {
-    console.error("Could not safely restart after update", error);
+    logger.error("Could not safely restart after update", error);
     updaterNotification("error", "No se pudo reiniciar Lyra. Tus cambios permanecen disponibles", undefined, 8000);
   } finally {
     restartInProgress = false;
@@ -107,7 +108,7 @@ export function openNovedades(): void {
       navigateTo(PAGES.preferences);
     }
   } catch (e) {
-    console.error("Error al abrir novedades:", e);
+    logger.error("Error al abrir novedades:", e);
   }
 }
 
@@ -156,7 +157,7 @@ export async function notifyIfJustUpdated(): Promise<void> {
       window.localStorage.removeItem("lyra_pending_install_version");
     }
   } catch (err) {
-    console.error("Error al comprobar versión al inicio:", err);
+    logger.error("Error al comprobar versión al inicio:", err);
   }
 }
 
@@ -295,7 +296,7 @@ async function executeNativePackageUpdate(
         7000
       );
     } else {
-      console.warn("Comprobación automática de fondo falló:", failure.message);
+      logger.warn("Comprobación automática de fondo falló:", failure.message);
     }
     return false;
   }
@@ -391,7 +392,7 @@ export async function checkAndApplyUpdate(
         ? await options.getInstallInfo()
         : await invoke<InstallationInfo>("get_installation_info");
     } catch (e) {
-      console.warn("No se pudo obtener información de instalación:", e);
+      logger.warn("No se pudo obtener información de instalación:", e);
     }
 
     // Para RPM y DEB: usar exclusivamente el gestor de paquetes nativo, sin intervención del plugin de Tauri
@@ -481,7 +482,7 @@ export async function checkAndApplyUpdate(
       if (update.download) {
         await update.download((event: { event: string; data?: unknown }) => {
           if (event.event === "Finished") {
-            console.log("Descarga de actualización finalizada exitosamente.");
+            // trace log removed
           }
         });
       }
@@ -577,7 +578,7 @@ export async function checkAndApplyUpdate(
       } else if (isManual) {
         updaterNotification("error", `No se pudo actualizar Lyra: ${failure.message}`, undefined, 6000);
       } else {
-        console.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
+        logger.warn("Comprobación automática de fondo falló silenciosamente:", errorMsg);
       }
       return false;
     } finally {

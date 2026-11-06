@@ -166,6 +166,7 @@ pub async fn gdrive_sync_now(app: tauri::AppHandle, reason: Option<String>, requ
 
 async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut request_id: Option<String>) -> Result<SyncResult, String> {
     let Some(_sync_guard) = begin_sync(&IS_SYNCING) else {
+        #[cfg(debug_assertions)]
         eprintln!("[GDrive Sync] Sincronización en curso. Marcando SYNC_QUEUED=true para trailing sync.");
         let mut queued = SYNC_QUEUED_CONTEXT.lock().unwrap();
         *queued = prefer_queued_context(queued.take(), reason, request_id);
@@ -186,6 +187,7 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
         let sync_id = format!("sync-{}-{:04x}", chrono::Utc::now().format("%H%M%S"), rand_num);
         let now_str = chrono::Utc::now().to_rfc3339();
 
+        #[cfg(debug_assertions)]
         eprintln!("[GDrive Sync #{sync_id}] ({now_str}) Solicitud gdrive_sync_now recibida en backend.");
         let _ = app.emit("gdrive:sync_started", SyncStartPayload {
             sync_id: &sync_id, reason, request_id: request_id.as_deref(),
@@ -215,6 +217,7 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
                     return Err(error);
                 }
 
+                #[cfg(debug_assertions)]
                 eprintln!(
                     "[GDrive Sync #{sync_id}] Completado exitosamente. Subidos: {}, Descargados: {}, Conflictos: {}, Errores: {}",
                     res.uploaded.len(),
@@ -228,8 +231,10 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
             }
             Err(e) => {
                 let sanitized = sync::sanitize_error_message(&e);
+                #[cfg(debug_assertions)]
                 eprintln!("[GDrive Sync #{sync_id}] ERROR en run_sync: {sanitized}");
                 if let Err(save_error) = update_manifest_last_error(&sync_manifest_path, Some(sanitized.clone())).await {
+                    #[cfg(debug_assertions)]
                     eprintln!("[GDrive Sync #{sync_id}] Could not persist sync error: {save_error}");
                 }
 
@@ -243,6 +248,7 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
         }
         let queued = SYNC_QUEUED_CONTEXT.lock().unwrap().take();
         (reason, request_id) = queued.unwrap_or((SyncReason::Background, None));
+        #[cfg(debug_assertions)]
         eprintln!("[GDrive Sync] Solicitudes rezagadas detectadas (SYNC_QUEUED=true). Iniciando trailing sync...");
     }
 
@@ -308,12 +314,14 @@ pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String) -> Res
         if local_file_path.exists() {
             if let Err(e) = std::fs::remove_file(&local_file_path) {
                 // ROLLBACK: si falla la eliminación física local, revertir el manifiesto inmediatamente
+                #[cfg(debug_assertions)]
                 eprintln!("[gdrive_delete_file] Error eliminando '{}': {e}. Revertiendo tombstone en manifiesto...", local_file_path.display());
                 manifest.pending_deletions.remove(&file_name);
                 if let Some(prev) = previous_manifest_item {
                     manifest.files.insert(file_name.clone(), prev);
                 }
                 if let Err(save_err) = sync::save_manifest_to_path(&manifest_path, &manifest) {
+                    #[cfg(debug_assertions)]
                     eprintln!("[gdrive_delete_file] Error al persistir el rollback del manifiesto: {save_err}");
                     return Err(format!("No se pudo eliminar el archivo local ({e}) y falló el guardado del rollback: {save_err}"));
                 }
@@ -333,6 +341,7 @@ pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String) -> Res
                 &lyra_dir, &manifest_path, &file_name, &pending, &account.account_key,
                 || client.trash_file("", &did),
             ).await {
+                #[cfg(debug_assertions)]
                 eprintln!("[gdrive_delete_file] La eliminación remota de '{file_name}' queda pendiente: {e}");
             }
         }

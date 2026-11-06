@@ -2,6 +2,7 @@ import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-f
 import { join } from "@tauri-apps/api/path";
 import { BASE_DIRECTORY, MAIN_FOLDER } from "./consts.ts";
 import { configStore } from "../store/configStore.ts";
+import { logger } from "./logger.ts";
 
 const PREFERENCES_FILE_NAME = ".preferences.json";
 
@@ -18,7 +19,7 @@ export async function ensurePreferencesDirectory(): Promise<void> {
       !msg.includes("ya existe") &&
       !msg.includes("AlreadyExists")
     ) {
-      console.warn("ensurePreferencesDirectory warning:", err);
+      logger.warn("ensurePreferencesDirectory warning:", err);
     }
   }
 }
@@ -176,7 +177,7 @@ async function initPersistentPreferencesInternal(): Promise<void> {
       await savePersistentPreferencesNow();
     }
   } catch (err) {
-    console.error("Error al inicializar preferencias persistentes:", err);
+    logger.error("Error al inicializar preferencias persistentes:", err);
   }
 }
 
@@ -240,7 +241,7 @@ async function processSaveQueue(): Promise<void> {
       req.resolve();
     }
   } catch (err) {
-    console.error("Error al guardar preferencias persistentes en disco:", err);
+    logger.error("Error al guardar preferencias persistentes en disco:", err);
     for (const req of currentBatch) {
       req.reject(err);
     }

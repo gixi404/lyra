@@ -18,6 +18,7 @@ import Modal from "./Modal";
 import ModalInfo from "./ModalInfo";
 import { runExclusiveDeletion } from "../utils/noteDeletion";
 import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
+import { logger } from "../utils/logger.ts";
 
 function MenuPaperFile({ fileName }: Props): Component {
   const d = translations(),
@@ -110,10 +111,10 @@ function MenuPaperFile({ fileName }: Props): Component {
           await invoke("open_folder", { path: downloadsPath });
         }
       } catch (openErr) {
-        console.warn("Could not open Downloads folder:", openErr);
+        logger.warn("Could not open Downloads folder:", openErr);
       }
     } catch (err) {
-      console.error("Error exporting PDF:", err);
+      logger.error("Error exporting PDF:", err);
       notification("error", `No se pudo exportar ${noteLabel(fileName)} a PDF`);
     }
   }
@@ -178,11 +179,11 @@ function MenuPaperFile({ fileName }: Props): Component {
         editedFile();
       });
     } catch (err) {
-      console.error("Error al persistir recuperación de nota:", err);
+      logger.error("Error al persistir recuperación de nota:", err);
       fileStore.getState().releaseRetainedExit(restoringName);
       if (isWelcome) {
         try { setWelcomeManuallyRestored(prevWelcomeRestored === "true"); }
-        catch (restoreError) { console.warn("Could not restore welcome preference:", restoreError); }
+        catch (restoreError) { logger.warn("Could not restore welcome preference:", restoreError); }
       }
       if (mountedRef.current) setIsRestoreOpen(false);
       notification("error", `No se pudo recuperar ${noteLabel(restoringName)}`);
@@ -208,7 +209,7 @@ function MenuPaperFile({ fileName }: Props): Component {
         });
       },
       failed: error => {
-        console.error("Could not delete note:", error);
+        logger.error("Could not delete note:", error);
         if (mountedRef.current) setIsDeleteOpen(false);
         notification("error", `No se pudo eliminar ${noteLabel(fileName)}`);
       },

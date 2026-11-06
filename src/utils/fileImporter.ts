@@ -8,6 +8,7 @@ import { noteLabel } from "./noteName.ts";
 import { BASE_DIRECTORY, MAIN_FOLDER, PAGES } from "./consts.ts";
 import { navigateTo } from "./navigation.ts";
 import { flushActiveEditors } from "./editorPersistence.ts";
+import { logger } from "./logger.ts";
 
 function notification(
   type: ToastType,
@@ -105,7 +106,7 @@ export async function handleExternalFileImport(paths: string[]): Promise<boolean
   try {
     const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (!isTauri) {
-      console.warn("Importación externa no disponible fuera de Tauri");
+      logger.warn("Importación externa no disponible fuera de Tauri");
       return false;
     }
 
@@ -214,7 +215,7 @@ export async function initExternalFileListener(): Promise<() => void> {
       }
     });
   } catch (err) {
-    console.warn("No se pudo registrar listener lyra://open-files:", err);
+    logger.warn("No se pudo registrar listener lyra://open-files:", err);
   }
 
   // Drenar archivos recibidos en arranque en frío tras montar la aplicación
@@ -225,7 +226,7 @@ export async function initExternalFileListener(): Promise<() => void> {
         void handleExternalFileImport(pending);
       }
     } catch (err) {
-      console.warn("No se pudo obtener archivos pendientes de arranque:", err);
+      logger.warn("No se pudo obtener archivos pendientes de arranque:", err);
     }
   }, 350);
 

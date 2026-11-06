@@ -318,6 +318,7 @@ pub async fn import_paths(
                             active_account,
                             true,
                         ) {
+                            #[cfg(debug_assertions)]
                             eprintln!("[Importer] Nota importada localmente, aviso en procedencia: {e}");
                         }
 
