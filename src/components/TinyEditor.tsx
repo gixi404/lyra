@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useCallback, useState, useMemo, memo } from "react";
+import { useRef, useEffect, useCallback, useState, useMemo, memo } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import { twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences";
@@ -10,14 +10,13 @@ import { editorDebug } from "../utils/editorDebug";
 import { navigation, themes } from "../utils/helpers";
 import { PAGES } from "../utils/consts";
 import type { Component } from "../utils/types";
-import { getEditorScroll, setEditorScroll } from "../utils/listScroll";
 
 interface TinyEditorProps {
-  fileName?: string;
   content: string;
   onContentChange: (content: string) => void;
   initialCaretPos?: number;
   readOnly?: boolean;
+  fileName?: string;
 }
 
 function getParagraphRange(
@@ -66,7 +65,6 @@ function getParagraphRange(
 }
 
 function TinyEditor({
-  fileName,
   content,
   onContentChange,
   initialCaretPos,
@@ -85,11 +83,9 @@ function TinyEditor({
     isDraggingThumbRef = useRef<boolean>(false),
     dragStartYRef = useRef<number>(0),
     dragStartScrollTopRef = useRef<number>(0),
-    lastScrollTopRef = useRef<number>(0),
     { goTo } = navigation(),
     { isDay } = themes(),
-    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue, myScrollSpeed } = usePreferences(),
-    scrollSpeed: number = myScrollSpeed(),
+    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue, scrollSpeed = 1 } = usePreferences(),
     [fontSizeOverride, setFontSizeOverride] = useState<string | null>(null),
     fontSize: string = fontSizeOverride ?? myFontSize(),
     fontClass: string = myFontValue(),
@@ -136,7 +132,7 @@ function TinyEditor({
       }
       document.body.classList.remove("is-typing");
     };
-  }, [fileName]);
+  }, []);
 
   const paragraphs = useMemo(() => content.split("\n"), [content]);
 
@@ -251,31 +247,14 @@ function TinyEditor({
     if (display.scrollTop !== textarea.scrollTop) {
       display.scrollTop = textarea.scrollTop;
     }
-    lastScrollTopRef.current = textarea.scrollTop;
     updateScrollThumb();
-    if (fileName) {
-      setEditorScroll(fileName, textarea.scrollTop);
-    }
-  }, [updateScrollThumb, fileName]);
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    if (lastScrollTopRef.current > 0 && textarea.scrollTop === 0) {
-      const max = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
-      const restored = Math.min(lastScrollTopRef.current, max);
-      textarea.scrollTop = restored;
-      if (displayRef.current) {
-        displayRef.current.scrollTop = restored;
-      }
-    }
-    updateScrollThumb();
-  }, [content, updateScrollThumb]);
+  }, [updateScrollThumb]);
 
   useEffect(() => {
+    updateScrollThumb();
     window.addEventListener("resize", updateScrollThumb);
     return () => window.removeEventListener("resize", updateScrollThumb);
-  }, [updateScrollThumb]);
+  }, [updateScrollThumb, content]);
 
   const handleThumbPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -470,9 +449,6 @@ function TinyEditor({
       const maxScroll = el.scrollHeight - el.clientHeight;
       if (maxScroll <= 0) return;
 
-      if (e.ctrlKey) return;
-      if (e.deltaY === 0 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-
       let delta = e.deltaY;
       if (e.deltaMode === 1) {
         delta *= 65; // Modo líneas: ~2 líneas de texto por muesca
@@ -654,45 +630,6 @@ function TinyEditor({
       return () => cancelAnimationFrame(raf);
     }
   }, [initialCaretPos, updateCaretState]);
-
-  useLayoutEffect(() => {
-    if (!fileName || typeof initialCaretPos === "number") return;
-    const saved = getEditorScroll(fileName);
-    if (saved <= 0) return;
-
-    const el = textareaRef.current;
-    if (!el) return;
-
-    const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    const clamped = max > 0 ? Math.min(saved, max) : saved;
-    el.scrollTop = clamped;
-    lastScrollTopRef.current = clamped;
-    targetScrollTopRef.current = clamped;
-    if (displayRef.current) {
-      displayRef.current.scrollTop = clamped;
-    }
-    if (lastSnapshotRef.current) {
-      lastSnapshotRef.current.scrollTop = clamped;
-    }
-    updateScrollThumb();
-
-    // Sincronización única de resguardo por si el layout de fuentes recalculó la altura
-    const rafId = requestAnimationFrame(() => {
-      const currentEl = textareaRef.current;
-      if (!currentEl) return;
-      const currentMax = Math.max(0, currentEl.scrollHeight - currentEl.clientHeight);
-      if (currentMax > 0 && currentEl.scrollTop < Math.min(saved, currentMax)) {
-        const nextClamped = Math.min(saved, currentMax);
-        currentEl.scrollTop = nextClamped;
-        lastScrollTopRef.current = nextClamped;
-        targetScrollTopRef.current = nextClamped;
-        if (displayRef.current) displayRef.current.scrollTop = nextClamped;
-        updateScrollThumb();
-      }
-    });
-
-    return () => cancelAnimationFrame(rafId);
-  }, [fileName, initialCaretPos, updateScrollThumb]);
 
   const handleUndo = useCallback(() => {
     if (wordTimerRef.current) {
@@ -983,7 +920,7 @@ function TinyEditor({
       .editor-textarea {
         -webkit-appearance: none !important;
         appearance: none !important;
-        caret-color: #70C9F4 !important;
+        caret-color: #00a8ff !important;
         color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
         -webkit-text-fill-color: ${needsDisplayLayer ? "transparent !important" : isDay ? "#1f2937 !important" : "#e5e7eb !important"};
       }
@@ -1142,7 +1079,7 @@ function TinyEditor({
           backgroundColor: "transparent",
           color: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
           WebkitTextFillColor: needsDisplayLayer ? "transparent" : (isDay ? "#1f2937" : "#e5e7eb"),
-          caretColor: "#70C9F4",
+          caretColor: "#00a8ff",
           paddingTop: "70px",
           paddingBottom: "50vh",
           paddingLeft: "clamp(1.5rem, calc(50% - 374px), 50%)",
@@ -1223,7 +1160,7 @@ const EditorScrollbar = memo(function EditorScrollbar({
         onPointerUp={onThumbPointerUp}
         onPointerCancel={onThumbPointerUp}
         className={twMerge(
-          "absolute right-1 w-1 rounded-full touch-none select-none transition-[width,background-color] duration-150 ease-out hover:right-0.5 hover:w-2 active:right-0.5 active:w-2",
+          "absolute right-1 w-1.5 rounded-full touch-none select-none",
           isDay
             ? "bg-gray-400/60 hover:bg-gray-500/80 active:bg-gray-600/90"
             : "bg-zinc-500/50 hover:bg-zinc-400/80 active:bg-zinc-300/90"

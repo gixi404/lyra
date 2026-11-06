@@ -28,7 +28,6 @@ import "@fontsource/nunito/latin-ext.css";
 import "@fontsource/cinzel/latin.css";
 import "@fontsource/cinzel/latin-ext.css";
 import { animated, useSpring } from "@react-spring/web";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
@@ -41,7 +40,6 @@ import Header from "./Header";
 import DropOverlay from "./DropOverlay";
 import { triggerWindowReady } from "../utils/window";
 import { handleExternalFileImport } from "../utils/fileImporter";
-import { logger } from "../utils/logger.ts";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {
@@ -82,6 +80,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
     if (isTauri) {
       void (async () => {
         try {
+          const { getCurrentWebview } = await import("@tauri-apps/api/webview");
           const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
             if (!isMounted) return;
             if (event.payload.type === "enter" || event.payload.type === "over") {
@@ -101,7 +100,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
             unlisten();
           }
         } catch (err) {
-          logger.warn("No se pudo inicializar listener nativo de arrastrar y soltar:", err);
+          console.warn("No se pudo inicializar listener nativo de arrastrar y soltar:", err);
         }
       })();
     }
@@ -115,7 +114,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
   }, []);
 
   useEffect(() => {
-    const bg = isDay ? "#F7F8FA" : "#101010";
+    const bg = isDay ? "#e0e0e0" : "#101010";
     document.documentElement.style.backgroundColor = bg;
     document.body.style.backgroundColor = bg;
     document.documentElement.classList.toggle("dark", !isDay);
@@ -223,13 +222,13 @@ function MainContainer({ children }: PropsWithChildren): Component {
   }, [isFullscreen]);
 
   useEffect(() => {
-    if (pathIs(PAGES.preferences)) {
-      document.documentElement.classList.add("in-preferences");
+    if (pathIs(PAGES.file)) {
+      document.documentElement.classList.add("in-editor");
     } else {
-      document.documentElement.classList.remove("in-preferences");
+      document.documentElement.classList.remove("in-editor");
     }
     return () => {
-      document.documentElement.classList.remove("in-preferences");
+      document.documentElement.classList.remove("in-editor");
     };
   }, []);
 
@@ -296,21 +295,16 @@ function MainContainer({ children }: PropsWithChildren): Component {
     };
   }, []);
 
-  const isPreferences = pathIs(PAGES.preferences);
-  const isFile = pathIs(PAGES.file);
-
   return (
     <main
       className={twMerge(
-        isDay ? "bg-[#F7F8FA] text-gray-800" : "bg-[#101010] text-gray-200/90",
-        isFile
+        isDay ? "bg-[#e0e0e0] text-gray-800" : "bg-[#101010] text-gray-200/90",
+        pathIs(PAGES.file)
           ? "gap-0 items-stretch"
           : "gap-y-10 lg:gap-y-20 items-center",
         twJoin(
           myFontValue(),
-          isPreferences
-            ? "w-full min-h-screen flex flex-col justify-start relative select-none"
-            : "w-full h-screen overflow-hidden flex flex-col justify-start relative select-none",
+          "w-full min-h-screen flex flex-col justify-start",
         ),
       )}
     >
@@ -340,18 +334,12 @@ function MainContainer({ children }: PropsWithChildren): Component {
 
       <Header />
       <DropOverlay visible={isDraggingOver} />
-      {isFile ? (
-        <div className="w-full flex-1 flex flex-col items-center justify-start h-full overflow-hidden">
+      {pathIs(PAGES.file) ? (
+        <div className="w-full flex-1 flex flex-col items-center justify-start">
           {children}
         </div>
       ) : (
-        <animated.div
-          style={pageStyles}
-          className={twMerge(
-            "w-full flex-1 flex flex-col items-center justify-start",
-            !isPreferences && "h-full overflow-hidden"
-          )}
-        >
+        <animated.div style={pageStyles} className="w-full flex-1 flex flex-col items-center justify-start">
           {children}
         </animated.div>
       )}

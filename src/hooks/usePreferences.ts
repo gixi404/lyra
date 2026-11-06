@@ -104,6 +104,7 @@ function usePreferences(): Preferences {
     myPaper,
     myScroll,
     myScrollSpeed,
+    scrollSpeed: 1,
   };
 }
 
@@ -122,4 +123,5 @@ interface Preferences {
   myPaper: (files?: string[]) => string[];
   myScroll: (fileName: string) => number;
   myScrollSpeed: () => number;
+  scrollSpeed: number;
 }
