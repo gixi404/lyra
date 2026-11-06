@@ -37,6 +37,7 @@ export const LEGACY_WELCOME_NAMES: readonly string[] = [
 export interface WelcomeFsEntry {
   name: string;
   isFile: boolean;
+  isDirectory?: boolean;
 }
 
 export interface WelcomeFsOps {
@@ -162,6 +163,34 @@ export interface WelcomeStateResult {
   activeWelcome: string | null;
 }
 
+async function getSupportedFilesRecursively(
+  fsOps: WelcomeFsOps,
+  folder: string,
+  relPrefix = ""
+): Promise<string[]> {
+  try {
+    const entries = await fsOps.readDir(folder);
+    const validFiles: string[] = [];
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const relPath = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+      if (entry.isFile && hasSupportedNoteExtension(entry.name)) {
+        validFiles.push(relPath);
+      } else if (!entry.isFile || entry.isDirectory) {
+        try {
+          const sub = await getSupportedFilesRecursively(fsOps, `${folder}/${entry.name}`, relPath);
+          validFiles.push(...sub);
+        } catch {
+          // ignore unreadable subfolders
+        }
+      }
+    }
+    return validFiles;
+  } catch {
+    return [];
+  }
+}
+
 export async function ensureWelcomeFileState(
   fsOps: WelcomeFsOps = defaultFsOps,
   storageOps: WelcomeStorageOps = defaultStorageOps
@@ -188,14 +217,7 @@ export async function ensureWelcomeFileState(
       }
     }
 
-    const entries = await fsOps.readDir(MAIN_FOLDER);
-    const validFiles = entries
-      .filter(e => e.isFile && !e.name.startsWith("."))
-      .map(e => e.name)
-      .filter(
-        (name): name is string =>
-          typeof name === "string" && hasSupportedNoteExtension(name)
-      );
+    const validFiles = await getSupportedFilesRecursively(fsOps, MAIN_FOLDER);
 
     const existingWelcome = validFiles.find(name => isWelcomeFileName(name));
     const realNotes = validFiles.filter(name => !isWelcomeFileName(name));
@@ -272,14 +294,7 @@ export async function autoArchiveWelcomeOnSync(
   }
 
   try {
-    const entries = await fsOps.readDir(MAIN_FOLDER);
-    const validFiles = entries
-      .filter(e => e.isFile && !e.name.startsWith("."))
-      .map(e => e.name)
-      .filter(
-        (name): name is string =>
-          typeof name === "string" && hasSupportedNoteExtension(name)
-      );
+    const validFiles = await getSupportedFilesRecursively(fsOps, MAIN_FOLDER);
 
     const existingWelcome = validFiles.find(name => isWelcomeFileName(name));
     if (!existingWelcome) {

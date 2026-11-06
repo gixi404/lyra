@@ -12,7 +12,7 @@ import {
   resolveDisplayFileName,
 } from "../utils/helpers";
 import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome";
-import { ensureNoteExtension, hasSupportedNoteExtension } from "../utils/noteName";
+import { ensureNoteExtension, getFileBaseName, getFileDirectory, hasSupportedNoteExtension } from "../utils/noteName";
 import {
   DirEntry,
   exists,
@@ -46,7 +46,12 @@ function useFile(): Files {
 
   async function renameFile(oldName: string, newName: string): Promise<string> {
     if (!oldName || !newName) throw new Error("Both old and new names are required");
-    const nextDisplayName: string = resolveDisplayName(newName, oldName);
+    const oldDir = getFileDirectory(oldName);
+    const resolvedBase = resolveDisplayName(getFileBaseName(newName), getFileBaseName(oldName));
+    const nextDisplayName: string = newName.includes("/")
+      ? newName
+      : (oldDir ? `${oldDir}/${resolvedBase}` : resolvedBase);
+
     if (oldName !== nextDisplayName) {
       const existsAlready = await fileExists(nextDisplayName);
       if (existsAlready) {
@@ -96,15 +101,31 @@ function useFile(): Files {
   }, [getFilePath]);
 
   const getFiles = useCallback(async (): Promise<string[]> => {
-    const dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
-    return dir
-      .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
-      .map((f: DirEntry) => f.name)
-      .filter(
-        (name): name is string =>
-          typeof name === "string" && hasSupportedNoteExtension(name)
-      )
-      .sort((a: string, b: string) => a.localeCompare(b));
+    const isTauri = typeof window !== "undefined" &&
+      Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+    if (isTauri) {
+      const listing = await invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
+      return listing.files;
+    }
+    const readSubdir = async (folder: string, prefix = ""): Promise<string[]> => {
+      const dir: DirEntry[] = await readDir(folder, BASE_DIRECTORY);
+      const res: string[] = [];
+      for (const f of dir) {
+        if (f.name.startsWith(".")) continue;
+        const rel = prefix ? `${prefix}/${f.name}` : f.name;
+        if (f.isFile && hasSupportedNoteExtension(f.name)) {
+          res.push(rel);
+        } else if (f.isDirectory) {
+          try {
+            const sub = await readSubdir(`${folder}/${f.name}`, rel);
+            res.push(...sub);
+          } catch {}
+        }
+      }
+      return res;
+    };
+    const files = await readSubdir(MAIN_FOLDER);
+    return files.sort((a, b) => a.localeCompare(b));
   }, []);
 
   const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats> }> => {
@@ -113,32 +134,40 @@ function useFile(): Files {
     if (isTauri) {
       return invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
     }
-    const dir: DirEntry[] = await readDir(MAIN_FOLDER, BASE_DIRECTORY);
-    const validNames = dir
-      .filter((f: DirEntry) => f.isFile && !f.name.startsWith("."))
-      .map((f: DirEntry) => f.name)
-      .filter(
-        (name): name is string =>
-          typeof name === "string" && hasSupportedNoteExtension(name)
-      );
-
-    const statsResults = await Promise.all(
-      validNames.map(async name => {
-        try {
-          const { pathFile } = await getFilePath(name);
-          const st = await stat(pathFile, BASE_DIRECTORY);
-          const mtime = st.mtime ? new Date(st.mtime).getTime() : 0;
-          const birthtime = st.birthtime ? new Date(st.birthtime).getTime() : mtime;
-          return { name, mtime, birthtime };
-        } catch {
-          return { name, mtime: 0, birthtime: 0 };
+    const readSubdir = async (
+      folder: string,
+      prefix = ""
+    ): Promise<Array<{ rel: string; mtime: number; birthtime: number }>> => {
+      const dir: DirEntry[] = await readDir(folder, BASE_DIRECTORY);
+      const res: Array<{ rel: string; mtime: number; birthtime: number }> = [];
+      for (const f of dir) {
+        if (f.name.startsWith(".")) continue;
+        const rel = prefix ? `${prefix}/${f.name}` : f.name;
+        if (f.isFile && hasSupportedNoteExtension(f.name)) {
+          let mtime = 0;
+          let birthtime = 0;
+          try {
+            const { pathFile } = await getFilePath(rel);
+            const st = await stat(pathFile, BASE_DIRECTORY);
+            mtime = st.mtime ? new Date(st.mtime).getTime() : 0;
+            birthtime = st.birthtime ? new Date(st.birthtime).getTime() : mtime;
+          } catch {}
+          res.push({ rel, mtime, birthtime });
+        } else if (f.isDirectory) {
+          try {
+            const sub = await readSubdir(`${folder}/${f.name}`, rel);
+            res.push(...sub);
+          } catch {}
         }
-      })
-    );
+      }
+      return res;
+    };
 
+    const items = await readSubdir(MAIN_FOLDER);
+    const validNames = items.map(i => i.rel).sort((a, b) => a.localeCompare(b));
     const stats: Record<string, FileItemStats> = {};
-    for (const item of statsResults) {
-      stats[item.name] = { mtime: item.mtime, birthtime: item.birthtime };
+    for (const item of items) {
+      stats[item.rel] = { mtime: item.mtime, birthtime: item.birthtime };
     }
 
     return { files: validNames, stats };

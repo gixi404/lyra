@@ -48,12 +48,51 @@ export function ensureNoteExtension(fileName: string, currentName?: string): str
   return `${fileName}.txt`;
 }
 
+export function getFileDirectory(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash !== -1 ? normalized.slice(0, lastSlash) : "";
+}
+
+export function getFileBaseName(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash !== -1 ? normalized.slice(lastSlash + 1) : normalized;
+}
+
 export function noteTitle(fileName: string): string {
-  const lower = fileName.toLowerCase();
+  const baseName = getFileBaseName(fileName);
+  const lower = baseName.toLowerCase();
   const extension = HIDDEN_NOTE_EXTENSIONS.find(value => lower.endsWith(value));
-  return extension && fileName.length > extension.length
-    ? fileName.slice(0, -extension.length)
-    : fileName;
+  return extension && baseName.length > extension.length
+    ? baseName.slice(0, -extension.length)
+    : baseName;
+}
+
+export function getLegacyFileName(fileName: string): string {
+  const dir = getFileDirectory(fileName);
+  const baseTitle = noteTitle(getFileBaseName(fileName));
+  return dir ? `${dir}/${baseTitle}` : baseTitle;
+}
+
+export function resolveStoredFileName(fileName: string, files: string[]): string | null {
+  if (files.includes(fileName)) return fileName;
+  if (hasSupportedNoteExtension(fileName)) return null;
+
+  for (const ext of SUPPORTED_NOTE_EXTENSIONS) {
+    const candidate = `${fileName}${ext}`;
+    if (files.includes(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+export function normalizeStoredFileNames(fileNames: string[], files: string[]): string[] {
+  const normalizedNames = fileNames
+    .map(fileName => resolveStoredFileName(fileName, files))
+    .filter((fileName): fileName is string => Boolean(fileName));
+
+  return Array.from(new Set(normalizedNames));
 }
 
 export const RESERVED_WINDOWS_NAMES = new Set([

@@ -8,9 +8,9 @@ import { PAGES } from "../utils/consts";
 import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types";
 import { getScrollPos, setListScroll } from "../utils/listScroll";
-import { noteLabel, noteTitle } from "../utils/noteName";
+import { getFileDirectory, noteLabel, noteTitle } from "../utils/noteName";
 
-function ItemFile({ fileName, isExiting = false }: Props): Component {
+function ItemFile({ fileName, isExiting = false, isHomonym = false }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
@@ -51,10 +51,20 @@ function ItemFile({ fileName, isExiting = false }: Props): Component {
       )}
     >
       <span
-        className="text-sm sm:text-[15px] truncate pr-4 text-left font-normal"
-        title={getListLabel(fileName)}
+        className="text-sm sm:text-[15px] truncate pr-4 text-left font-normal flex items-center min-w-0"
+        title={fileName}
       >
-        {getListLabel(fileName)}
+        <span className="truncate">{getListLabel(fileName)}</span>
+        {isHomonym && (
+          <span
+            className={twMerge(
+              "text-xs ml-2 font-normal truncate shrink-0 tracking-tight select-none opacity-60",
+              isDay ? "text-neutral-500" : "text-zinc-400"
+            )}
+          >
+            {getFileDirectory(fileName) || "lyra"}
+          </span>
+        )}
       </span>
 
       <div className="flex items-center gap-x-2 shrink-0">
@@ -70,4 +80,5 @@ export default ItemFile;
 interface Props {
   fileName: string;
   isExiting?: boolean;
+  isHomonym?: boolean;
 }

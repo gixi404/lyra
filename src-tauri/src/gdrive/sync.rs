@@ -364,31 +364,247 @@ pub fn ensure_safe_base_dir(base_dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn is_safe_relative_path(path_str: &str) -> bool {
+    if path_str.is_empty() || path_str != path_str.trim() {
+        return false;
+    }
+
+    // Normalizar separadores a barra diagonal '/'
+    let normalized = path_str.replace('\\', "/");
+
+    if normalized.starts_with('/') || normalized.ends_with('/') {
+        return false;
+    }
+
+    if normalized.starts_with('.')
+        || normalized.ends_with('.')
+        || normalized.starts_with(' ')
+        || normalized.ends_with(' ')
+    {
+        return false;
+    }
+
+    let parts: Vec<&str> = normalized.split('/').collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    for (idx, part) in parts.iter().enumerate() {
+        let is_last = idx == parts.len() - 1;
+        if part.is_empty() || *part != part.trim() {
+            return false;
+        }
+
+        // Prohibir '.' y '..' en cualquier componente (prevención estricta de path traversal)
+        if *part == "."
+            || *part == ".."
+            || part.starts_with('.')
+            || part.ends_with('.')
+            || part.starts_with(' ')
+            || part.ends_with(' ')
+        {
+            return false;
+        }
+
+        // Caracteres prohibidos en Windows y POSIX
+        for ch in part.chars() {
+            if ch.is_control()
+                || ch == '<'
+                || ch == '>'
+                || ch == ':'
+                || ch == '"'
+                || ch == '|'
+                || ch == '?'
+                || ch == '*'
+            {
+                return false;
+            }
+        }
+
+        // Nombres reservados de dispositivos de Windows
+        let primary_stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+        if WINDOWS_RESERVED_NAMES.contains(&primary_stem.as_str()) {
+            return false;
+        }
+
+        // El componente final debe tener una extensión soportada
+        if is_last {
+            if let Some(dot_idx) = part.rfind('.') {
+                let ext = part[dot_idx..].to_ascii_lowercase();
+                if !SUPPORTED_EXTENSIONS.iter().any(|s| *s == ext) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 pub fn resolve_safe_path(base_dir: &std::path::Path, file_name: &str) -> Result<PathBuf, String> {
     ensure_safe_base_dir(base_dir)?;
-    if !is_safe_filename(file_name) {
-        return Err(format!("Nombre de archivo inválido o no seguro: '{file_name}'"));
+    if !is_safe_relative_path(file_name) {
+        return Err(format!("Ruta o nombre de archivo inválido o no seguro: '{file_name}'"));
     }
 
-    let target_path = base_dir.join(file_name);
+    let canonical_base = base_dir
+        .canonicalize()
+        .map_err(|e| format!("Cannot inspect notes directory: {e}"))?;
 
-    // Verificar que el padre inmediato sea exactamente base_dir
-    if target_path.parent() != Some(base_dir) {
-        return Err(format!(
-            "La ruta calculada para '{file_name}' intenta escapar del directorio base"
-        ));
+    let normalized = file_name.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').collect();
+    if parts.is_empty() {
+        return Err("Ruta o nombre de archivo vacío".to_string());
     }
 
-    // Verificar que target_path no sea un enlace simbólico (prevención estricta de symlink traversal)
-    if let Ok(meta) = std::fs::symlink_metadata(&target_path) {
+    let mut current = canonical_base.clone();
+    for (idx, comp) in parts.iter().enumerate() {
+        current.push(comp);
+        let is_last = idx == parts.len() - 1;
+
+        if let Ok(meta) = std::fs::symlink_metadata(&current) {
+            if meta.file_type().is_symlink() {
+                return Err(format!(
+                    "Componente '{}' es un enlace simbólico no permitido",
+                    current.display()
+                ));
+            }
+            if !is_last && !meta.file_type().is_dir() {
+                return Err(format!(
+                    "Componente intermedio '{}' no es un directorio válido",
+                    current.display()
+                ));
+            }
+            let canon = current.canonicalize().map_err(|e| {
+                format!("No se puede inspeccionar ruta '{file_name}': {e}")
+            })?;
+            if !canon.starts_with(&canonical_base) {
+                return Err(format!(
+                    "La ruta calculada para '{file_name}' intenta escapar del directorio base"
+                ));
+            }
+        }
+    }
+
+    Ok(current)
+}
+
+/// Garantiza la creación segura y componente a componente de la jerarquía de directorios padre
+/// para una nota anidada dentro de `base_dir`, verificando en cada paso que ningún componente
+/// sea un enlace simbólico ni intente escapar de `base_dir`, protegiendo contra condiciones TOCTOU.
+pub fn ensure_safe_parent_hierarchy(base_dir: &std::path::Path, file_name: &str) -> Result<PathBuf, String> {
+    ensure_safe_base_dir(base_dir)?;
+    if !is_safe_relative_path(file_name) {
+        return Err(format!("Ruta o nombre de archivo inválido o no seguro: '{file_name}'"));
+    }
+
+    let canonical_base = base_dir
+        .canonicalize()
+        .map_err(|e| format!("Cannot inspect notes directory: {e}"))?;
+
+    let normalized = file_name.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').collect();
+    if parts.is_empty() {
+        return Err("Ruta de archivo vacía".to_string());
+    }
+
+    let mut current = canonical_base.clone();
+    // Iterar componente a componente sobre todos los directorios intermedios
+    for comp in &parts[..parts.len().saturating_sub(1)] {
+        current.push(comp);
+
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "El componente de directorio '{}' es un enlace simbólico no permitido",
+                        current.display()
+                    ));
+                }
+                if !meta.file_type().is_dir() {
+                    return Err(format!(
+                        "El componente '{}' existe pero no es un directorio",
+                        current.display()
+                    ));
+                }
+                let canon = current.canonicalize().map_err(|e| {
+                    format!("No se pudo inspeccionar directorio '{}': {e}", current.display())
+                })?;
+                if !canon.starts_with(&canonical_base) {
+                    return Err(format!(
+                        "El directorio '{}' intenta escapar del directorio base",
+                        current.display()
+                    ));
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Crear exclusivamente este único directorio sin seguir symlinks (evitar create_dir_all)
+                std::fs::create_dir(&current).map_err(|e| {
+                    format!("No se pudo crear directorio '{}': {e}", current.display())
+                })?;
+
+                // Auditoría post-creación frente a sustituciones o anomalías de ruta:
+                // Si la validación falla, fallar en cerrado inmediatamente sin intentar borrar el nodo,
+                // evitando eliminar recursos que pudieran haber sido suplantados por un proceso externo.
+                let meta = std::fs::symlink_metadata(&current).map_err(|e| {
+                    format!("No se pudo auditar directorio recién creado '{}': {e}", current.display())
+                })?;
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "El directorio recién creado '{}' es un enlace simbólico no permitido",
+                        current.display()
+                    ));
+                }
+                if !meta.file_type().is_dir() {
+                    return Err(format!(
+                        "El componente creado '{}' no es un directorio",
+                        current.display()
+                    ));
+                }
+                let canon = current.canonicalize().map_err(|e| {
+                    format!("No se pudo inspeccionar directorio '{}': {e}", current.display())
+                })?;
+                if !canon.starts_with(&canonical_base) {
+                    return Err(format!(
+                        "El directorio creado '{}' escapa del directorio base",
+                        current.display()
+                    ));
+                }
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Error al inspeccionar componente '{}': {err}",
+                    current.display()
+                ));
+            }
+        }
+    }
+
+    let file_comp = parts.last().unwrap();
+    current.push(file_comp);
+
+    // Auditoría del archivo destino si ya existe
+    if let Ok(meta) = std::fs::symlink_metadata(&current) {
         if meta.file_type().is_symlink() {
             return Err(format!(
-                "Enlace simbólico '{file_name}' no permitido (los archivos de Lyra deben ser archivos regulares)"
+                "El archivo destino '{}' es un enlace simbólico no permitido",
+                current.display()
+            ));
+        }
+        let canon = current.canonicalize().map_err(|e| {
+            format!("No se pudo inspeccionar archivo '{}': {e}", current.display())
+        })?;
+        if !canon.starts_with(&canonical_base) {
+            return Err(format!(
+                "El archivo '{}' escapa del directorio base",
+                current.display()
             ));
         }
     }
 
-    Ok(target_path)
+    Ok(current)
 }
 
 /// Coordinador de bloqueos por archivo para evitar condiciones de carrera TOCTOU entre
@@ -717,7 +933,36 @@ pub fn write_file_atomic(target_path: &std::path::Path, content: &[u8]) -> Resul
         )
     })?;
 
-    // Rechazar explícitamente si el destino actual es un enlace simbólico (prevención de TOCTOU / symlink escape)
+    // Validar rigurosamente que el directorio padre existe físicamente, es un directorio y NO un enlace simbólico
+    let parent_meta = std::fs::symlink_metadata(parent_dir).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "No se puede acceder al directorio contenedor '{}': {e}",
+                parent_dir.display()
+            ),
+        )
+    })?;
+    if parent_meta.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "Directorio contenedor '{}' es un enlace simbólico no permitido",
+                parent_dir.display()
+            ),
+        ));
+    }
+    if !parent_meta.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "Ruta contenedora '{}' no es un directorio válido",
+                parent_dir.display()
+            ),
+        ));
+    }
+
+    // Rechazar explícitamente si el destino actual ya existe y es un enlace simbólico
     if let Ok(meta) = std::fs::symlink_metadata(target_path) {
         if meta.file_type().is_symlink() {
             return Err(std::io::Error::new(
@@ -764,6 +1009,33 @@ pub fn write_file_atomic(target_path: &std::path::Path, content: &[u8]) -> Resul
     let mut retries = 5;
     let mut backoff_ms = 10;
     loop {
+        // Auditoría defensiva anti-TOCTOU previa a cada intento de rename atómico:
+        // Si durante la escritura un proceso externo suplantó el directorio padre o el destino por un enlace simbólico, abortar y limpiar
+        if let Ok(meta) = std::fs::symlink_metadata(parent_dir) {
+            if meta.file_type().is_symlink() {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "Directorio contenedor '{}' fue suplantado por un enlace simbólico durante la escritura",
+                        parent_dir.display()
+                    ),
+                ));
+            }
+        }
+        if let Ok(meta) = std::fs::symlink_metadata(target_path) {
+            if meta.file_type().is_symlink() {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "Destino '{}' fue suplantado por un enlace simbólico durante la escritura",
+                        target_path.display()
+                    ),
+                ));
+            }
+        }
+
         match std::fs::rename(&tmp_path, target_path) {
             Ok(()) => {
                 // Durabilidad POSIX en Unix: sincronizar descriptor del directorio padre
@@ -4225,11 +4497,26 @@ mod tests {
         assert!(safe.is_ok());
         assert_eq!(safe.unwrap(), temp_dir.join("mi_nota.txt"));
 
+        // Archivos seguros en raíz y subcarpetas
+        let safe_sub = resolve_safe_path(&temp_dir, "sub/nota.txt");
+        assert!(safe_sub.is_ok());
+        assert_eq!(safe_sub.unwrap(), temp_dir.join("sub").join("nota.txt"));
+
+        let safe_nested = resolve_safe_path(&temp_dir, "trabajo/clientes/reunion.txt");
+        assert!(safe_nested.is_ok());
+        assert_eq!(safe_nested.unwrap(), temp_dir.join("trabajo").join("clientes").join("reunion.txt"));
+
         // Path traversal bloqueado
         assert!(resolve_safe_path(&temp_dir, "../nota.txt").is_err());
         assert!(resolve_safe_path(&temp_dir, "../../objetivo.txt").is_err());
-        assert!(resolve_safe_path(&temp_dir, "sub/nota.txt").is_err());
+        assert!(resolve_safe_path(&temp_dir, "sub/../nota.txt").is_err());
+        assert!(resolve_safe_path(&temp_dir, "sub/../../objetivo.txt").is_err());
+        assert!(resolve_safe_path(&temp_dir, "/absoluta.txt").is_err());
         assert!(resolve_safe_path(&temp_dir, "CON.txt").is_err());
+        assert!(resolve_safe_path(&temp_dir, "sub/CON.txt").is_err());
+        assert!(resolve_safe_path(&temp_dir, "CON/nota.txt").is_err());
+        assert!(resolve_safe_path(&temp_dir, "sub/nota.exe").is_err());
+        assert!(resolve_safe_path(&temp_dir, ".oculto/nota.txt").is_err());
 
         // Enlace simbólico que intenta escapar del directorio base
         #[cfg(unix)]
@@ -4249,6 +4536,95 @@ mod tests {
                 err_msg.contains("simbólico") || err_msg.contains("no permitido"),
                 "El error debe indicar rechazo de enlace simbólico: {err_msg}"
             );
+
+            let _ = std::fs::remove_dir_all(&outside_dir);
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_ensure_safe_parent_hierarchy_and_symlinks() {
+        let temp_dir = std::env::temp_dir().join(format!("lyra_test_hierarchy_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // 1. Creación correcta de jerarquía profunda de directorios
+        let nested_target = ensure_safe_parent_hierarchy(&temp_dir, "trabajo/clientes/2026/reunion.txt");
+        assert!(nested_target.is_ok(), "Debe crear la jerarquía de directorios de forma segura");
+        let target_path = nested_target.unwrap();
+        assert_eq!(target_path, temp_dir.join("trabajo").join("clientes").join("2026").join("reunion.txt"));
+        assert!(temp_dir.join("trabajo").join("clientes").join("2026").is_dir());
+
+        // 2. Intento de path traversal rechazado
+        assert!(ensure_safe_parent_hierarchy(&temp_dir, "../escape.txt").is_err());
+        assert!(ensure_safe_parent_hierarchy(&temp_dir, "trabajo/../../escape.txt").is_err());
+
+        // 3. Protección frente a enlaces simbólicos en directorios intermedios (anti-symlink traversal)
+        #[cfg(unix)]
+        {
+            let outside_dir = std::env::temp_dir().join(format!("lyra_test_outside_hier_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+            let _ = std::fs::create_dir_all(&outside_dir);
+
+            // Symlink intermedio apuntando fuera del directorio base
+            let symlink_sub = temp_dir.join("sub_externo");
+            std::os::unix::fs::symlink(&outside_dir, &symlink_sub).unwrap();
+
+            let res_outside = ensure_safe_parent_hierarchy(&temp_dir, "sub_externo/nota.txt");
+            assert!(res_outside.is_err(), "Debe rechazar subdirectorios intermedios que sean enlaces simbólicos");
+            assert!(res_outside.unwrap_err().contains("enlace simbólico"));
+
+            // Symlink intermedio apuntando a otro directorio interno
+            let internal_sub = temp_dir.join("sub_interno");
+            let _ = std::fs::create_dir_all(&internal_sub);
+            let symlink_internal = temp_dir.join("sub_link_int");
+            std::os::unix::fs::symlink(&internal_sub, &symlink_internal).unwrap();
+
+            let res_int = ensure_safe_parent_hierarchy(&temp_dir, "sub_link_int/nota.txt");
+            assert!(res_int.is_err(), "Debe rechazar enlaces simbólicos incluso si apuntan internamente");
+
+            // Symlink en el archivo destino
+            let secret_file = outside_dir.join("secreto.txt");
+            std::fs::write(&secret_file, "sensible").unwrap();
+            let symlink_dest = temp_dir.join("trabajo").join("link_destino.txt");
+            std::os::unix::fs::symlink(&secret_file, &symlink_dest).unwrap();
+
+            let res_dest = ensure_safe_parent_hierarchy(&temp_dir, "trabajo/link_destino.txt");
+            assert!(res_dest.is_err(), "Debe rechazar archivos destino que sean enlaces simbólicos");
+
+            let _ = std::fs::remove_dir_all(&outside_dir);
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_write_file_atomic_parent_symlink_defense() {
+        let temp_dir = std::env::temp_dir().join(format!("lyra_test_atomic_defense_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // 1. Escritura en subcarpeta legítima creada vía ensure_safe_parent_hierarchy
+        let target = ensure_safe_parent_hierarchy(&temp_dir, "sub/legitima/nota.txt").unwrap();
+        assert!(write_file_atomic(&target, b"datos legitimos").is_ok());
+        assert_eq!(std::fs::read(&target).unwrap(), b"datos legitimos");
+
+        // 2. Rechazo estricto si el directorio padre es un symlink (prevención TOCTOU y escape)
+        #[cfg(unix)]
+        {
+            let outside_dir = std::env::temp_dir().join(format!("lyra_test_outside_atomic_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+            let _ = std::fs::create_dir_all(&outside_dir);
+
+            let symlink_parent = temp_dir.join("padre_symlink");
+            std::os::unix::fs::symlink(&outside_dir, &symlink_parent).unwrap();
+
+            let malicious_target = symlink_parent.join("nota.txt");
+            let res = write_file_atomic(&malicious_target, b"intento malicioso");
+            assert!(res.is_err(), "write_file_atomic debe rechazar escribir si el directorio contenedor es un symlink");
+            assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+
+            // Comprobar que no se escribió nada en outside_dir ni quedó temporal alguno
+            assert!(!outside_dir.join("nota.txt").exists());
+            let outside_entries: Vec<_> = std::fs::read_dir(&outside_dir).unwrap().flatten().collect();
+            assert_eq!(outside_entries.len(), 0);
 
             let _ = std::fs::remove_dir_all(&outside_dir);
         }

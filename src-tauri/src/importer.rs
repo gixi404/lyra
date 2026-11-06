@@ -211,10 +211,11 @@ pub fn write_unique_imported_file(
 }
 
 /// Comprueba de forma canónica y segura si una ruta apunta a un archivo que ya reside
-/// directamente dentro del directorio de notas de Lyra (`lyra_dir`).
+/// dentro del directorio de notas de Lyra (`lyra_dir`) o cualquiera de sus subcarpetas.
 ///
 /// Resuelve symlinks, rutas relativas/absolutas, normalización de separadores y `..`.
-/// Rechaza subdirectorios, rutas fuera de `lyra_dir`, archivos ocultos o extensiones no soportadas.
+/// Rechaza rutas fuera de `lyra_dir`, archivos ocultos o extensiones no soportadas.
+/// Retorna la ruta relativa normalizada con '/' respecto a `lyra_dir`.
 pub fn is_internal_lyra_file(lyra_dir: &Path, file_path: &Path) -> Option<String> {
     let canonical_lyra = lyra_dir.canonicalize().ok()?;
     let canonical_file = file_path.canonicalize().ok()?;
@@ -223,12 +224,28 @@ pub fn is_internal_lyra_file(lyra_dir: &Path, file_path: &Path) -> Option<String
         return None;
     }
 
-    let parent = canonical_file.parent()?;
-    if parent == canonical_lyra {
-        let file_name = canonical_file.file_name()?.to_str()?;
-        if !file_name.starts_with('.') && gdrive::sync::has_supported_extension(file_name) {
-            return Some(file_name.to_string());
+    if let Ok(rel) = canonical_file.strip_prefix(&canonical_lyra) {
+        let mut components = Vec::new();
+        for comp in rel.components() {
+            match comp {
+                std::path::Component::Normal(os_str) => {
+                    let s = os_str.to_str()?;
+                    if s.starts_with('.') {
+                        return None;
+                    }
+                    components.push(s);
+                }
+                _ => return None,
+            }
         }
+        if components.is_empty() {
+            return None;
+        }
+        let last = components.last()?;
+        if !gdrive::sync::has_supported_extension(last) {
+            return None;
+        }
+        return Some(components.join("/"));
     }
 
     None
@@ -550,14 +567,24 @@ mod tests {
             None
         );
 
-        // 3. Archivo dentro de subdirectorio (Lyra solo admite raíz de notas)
+        // 3. Archivo dentro de subdirectorio (detectado recursivamente como archivo interno)
         let sub_dir = lyra_dir.path().join("subcarpeta");
         fs::create_dir(&sub_dir).unwrap();
         let sub_file = sub_dir.join("nota.txt");
         fs::write(&sub_file, "sub").unwrap();
         assert_eq!(
             is_internal_lyra_file(lyra_dir.path(), &sub_file),
-            None
+            Some("subcarpeta/nota.txt".to_string())
+        );
+
+        // 3b. Archivo anidado en múltiples niveles
+        let nested_dir = sub_dir.join("nivel2");
+        fs::create_dir(&nested_dir).unwrap();
+        let nested_file = nested_dir.join("apuntes.md");
+        fs::write(&nested_file, "apuntes").unwrap();
+        assert_eq!(
+            is_internal_lyra_file(lyra_dir.path(), &nested_file),
+            Some("subcarpeta/nivel2/apuntes.md".to_string())
         );
 
         // 4. Ruta con escape de directorio ..

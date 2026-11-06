@@ -72,26 +72,115 @@ fn timestamp_ms(value: Option<std::time::SystemTime>) -> u128 {
 
 fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
     let mut listing = NoteListing { files: Vec::new(), stats: std::collections::HashMap::new() };
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("Could not list notes: {e}"))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Could not read note entry: {e}"))?;
-        if !entry.file_type().map_err(|e| format!("Could not inspect note entry: {e}"))?.is_file() {
-            continue;
-        }
-        let Ok(name) = entry.file_name().into_string() else { continue; };
-        if name.starts_with('.') || !gdrive::sync::has_supported_extension(&name) {
-            continue;
-        }
-        let stats = match entry.metadata() {
-            Ok(metadata) => {
-                let mtime = timestamp_ms(metadata.modified().ok());
-                NoteStats { mtime, birthtime: metadata.created().ok().map(|time| timestamp_ms(Some(time))).unwrap_or(mtime) }
-            }
-            Err(_) => NoteStats { mtime: 0, birthtime: 0 },
-        };
-        listing.stats.insert(name.clone(), stats);
-        listing.files.push(name);
+
+    if !dir.exists() {
+        return Err(format!("Could not list notes: directory '{}' does not exist", dir.display()));
     }
+
+    let root_canonical = dir
+        .canonicalize()
+        .map_err(|e| format!("Could not inspect notes folder: {e}"))?;
+
+    let mut visited_dirs: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
+    visited_dirs.insert(root_canonical.clone());
+
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back((dir.to_path_buf(), String::new()));
+
+    while let Some((current_dir, rel_prefix)) = queue.pop_front() {
+        let entries = match std::fs::read_dir(&current_dir) {
+            Ok(e) => e,
+            Err(err) => {
+                eprintln!("[list_notes] Skipping unreadable directory '{}': {err}", current_dir.display());
+                continue;
+            }
+        };
+
+        let mut dir_entries = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(e) => dir_entries.push(e),
+                Err(err) => {
+                    eprintln!("[list_notes] Skipping unreadable entry in '{}': {err}", current_dir.display());
+                }
+            }
+        }
+        dir_entries.sort_by_key(|e| e.file_name());
+
+        for entry in dir_entries {
+            let file_name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+
+            // Ignorar archivos y directorios ocultos (.git, .gdrive, .tmp_save_*, etc.)
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+
+            let entry_path = entry.path();
+
+            if file_type.is_dir() {
+                if let Ok(canonical_dir) = entry_path.canonicalize() {
+                    if canonical_dir.starts_with(&root_canonical) && visited_dirs.insert(canonical_dir) {
+                        let next_prefix = if rel_prefix.is_empty() {
+                            file_name
+                        } else {
+                            format!("{rel_prefix}/{file_name}")
+                        };
+                        queue.push_back((entry_path, next_prefix));
+                    }
+                }
+            } else if file_type.is_file() {
+                if !gdrive::sync::has_supported_extension(&file_name) {
+                    continue;
+                }
+
+                let rel_path = if rel_prefix.is_empty() {
+                    file_name
+                } else {
+                    format!("{rel_prefix}/{file_name}")
+                };
+
+                let stats = match entry.metadata() {
+                    Ok(metadata) => {
+                        let mtime = timestamp_ms(metadata.modified().ok());
+                        let birthtime = metadata
+                            .created()
+                            .ok()
+                            .map(|time| timestamp_ms(Some(time)))
+                            .unwrap_or(mtime);
+                        NoteStats { mtime, birthtime }
+                    }
+                    Err(_) => NoteStats { mtime: 0, birthtime: 0 },
+                };
+
+                listing.stats.insert(rel_path.clone(), stats);
+                listing.files.push(rel_path);
+            } else if file_type.is_symlink() {
+                if let Ok(target_canonical) = entry_path.canonicalize() {
+                    if target_canonical.starts_with(&root_canonical)
+                        && target_canonical.is_dir()
+                        && visited_dirs.insert(target_canonical)
+                    {
+                        let next_prefix = if rel_prefix.is_empty() {
+                            file_name
+                        } else {
+                            format!("{rel_prefix}/{file_name}")
+                        };
+                        queue.push_back((entry_path, next_prefix));
+                    }
+                }
+            }
+        }
+    }
+
+    listing.files.sort();
     Ok(listing)
 }
 
@@ -466,6 +555,142 @@ mod tests {
         assert!(res3.is_err());
         assert!(res3.unwrap_err().contains("no es compatible con la instalación activa"));
     }
+
+    #[test]
+    fn test_recursive_note_enumeration_comprehensive() {
+        let base = std::env::temp_dir().join(format!("lyra_recursive_test_{}", rand::random::<u64>()));
+        fs::create_dir_all(&base).unwrap();
+
+        // 1. Archivo en la raíz
+        fs::write(base.join("nota_raiz.txt"), "raiz").unwrap();
+
+        // 2. Archivo en una subcarpeta
+        let sub_trabajo = base.join("trabajo");
+        fs::create_dir_all(&sub_trabajo).unwrap();
+        fs::write(sub_trabajo.join("proyecto.md"), "proyecto").unwrap();
+
+        // 3. Archivo anidado en múltiples niveles
+        let sub_clientes = sub_trabajo.join("clientes");
+        fs::create_dir_all(&sub_clientes).unwrap();
+        fs::write(sub_clientes.join("reunion.txt"), "reunion").unwrap();
+
+        // 4. Dos archivos con el mismo nombre en carpetas diferentes (homónimos)
+        let sub_personal = base.join("personal");
+        fs::create_dir_all(&sub_personal).unwrap();
+        fs::write(sub_personal.join("notas.txt"), "personal").unwrap();
+
+        let sub_desarrollo = base.join("desarrollo");
+        fs::create_dir_all(&sub_desarrollo).unwrap();
+        fs::write(sub_desarrollo.join("notas.txt"), "desarrollo").unwrap();
+
+        // Archivo en raíz con el mismo nombre también
+        fs::write(base.join("notas.txt"), "raiz notas").unwrap();
+
+        // Archivo técnico en subcarpeta profunda
+        let sub_rust = sub_desarrollo.join("rust");
+        fs::create_dir_all(&sub_rust).unwrap();
+        fs::write(sub_rust.join("apuntes.rs"), "fn main() {}").unwrap();
+
+        // 5. Extensiones incompatibles que deben ser ignoradas
+        fs::write(base.join("foto.png"), "bin").unwrap();
+        fs::write(sub_trabajo.join("archivo.exe"), "bin").unwrap();
+        fs::write(sub_clientes.join("documento.pdf"), "bin").unwrap();
+
+        // 6. Archivos y directorios ocultos que deben ser ignorados
+        fs::write(base.join(".gdrive_manifest.json"), "{}").unwrap();
+        fs::write(sub_trabajo.join(".tmp_save_123_temp.txt"), "tmp").unwrap();
+        let sub_git = base.join(".git");
+        fs::create_dir_all(&sub_git).unwrap();
+        fs::write(sub_git.join("config.txt"), "git config").unwrap();
+
+        // 7. Directorios vacíos (no deben generar entradas ni fallos)
+        let sub_vacia = base.join("carpeta_vacia");
+        fs::create_dir_all(&sub_vacia).unwrap();
+        let sub_vacia_anidada = sub_vacia.join("otra_vacia");
+        fs::create_dir_all(&sub_vacia_anidada).unwrap();
+
+        // 8. Enlaces simbólicos: symlink apuntando fuera de raíz debe ser ignorado
+        #[cfg(unix)]
+        {
+            let outside = std::env::temp_dir().join(format!("lyra_outside_{}", rand::random::<u64>()));
+            fs::create_dir_all(&outside).unwrap();
+            let outside_file = outside.join("secreto.txt");
+            fs::write(&outside_file, "secreto").unwrap();
+            let outside_dir = outside.join("carpeta_externa");
+            fs::create_dir_all(&outside_dir).unwrap();
+            fs::write(outside_dir.join("externo.md"), "externo").unwrap();
+
+            // Symlink a archivo externo
+            let link_file = base.join("link_externo.txt");
+            let _ = std::os::unix::fs::symlink(&outside_file, &link_file);
+
+            // Symlink a directorio externo
+            let link_dir = base.join("link_dir_externo");
+            let _ = std::os::unix::fs::symlink(&outside_dir, &link_dir);
+
+            // Symlink loop / ciclo interno
+            let loop_link = sub_desarrollo.join("ciclo_link");
+            let _ = std::os::unix::fs::symlink(&base, &loop_link);
+
+            let listed = list_note_files_with_stats_at(&base).unwrap();
+
+            // No debe incluir archivos externos enlazados
+            assert!(!listed.files.contains(&"link_externo.txt".to_string()));
+            assert!(!listed.files.iter().any(|f| f.contains("externo.md")));
+
+            let _ = fs::remove_dir_all(outside);
+        }
+
+        // Ejecutar listado y verificar
+        let listing = list_note_files_with_stats_at(&base).unwrap();
+
+        // Verificar que los 6 archivos esperados están presentes:
+        // 1. nota_raiz.txt
+        // 2. notas.txt
+        // 3. trabajo/proyecto.md
+        // 4. trabajo/clientes/reunion.txt
+        // 5. personal/notas.txt
+        // 6. desarrollo/notas.txt
+        // 7. desarrollo/rust/apuntes.rs
+        assert!(listing.files.contains(&"nota_raiz.txt".to_string()));
+        assert!(listing.files.contains(&"notas.txt".to_string()));
+        assert!(listing.files.contains(&"trabajo/proyecto.md".to_string()));
+        assert!(listing.files.contains(&"trabajo/clientes/reunion.txt".to_string()));
+        assert!(listing.files.contains(&"personal/notas.txt".to_string()));
+        assert!(listing.files.contains(&"desarrollo/notas.txt".to_string()));
+        assert!(listing.files.contains(&"desarrollo/rust/apuntes.rs".to_string()));
+
+        // Homónimos coexisten
+        let homonimos: Vec<_> = listing.files.iter().filter(|f| f.ends_with("notas.txt")).collect();
+        assert_eq!(homonimos.len(), 3);
+
+        // Incompatibles y ocultos excluidos
+        assert!(!listing.files.contains(&"foto.png".to_string()));
+        assert!(!listing.files.iter().any(|f| f.ends_with(".exe") || f.ends_with(".pdf")));
+        assert!(!listing.files.iter().any(|f| f.starts_with(".gdrive") || f.contains(".tmp_save") || f.contains(".git")));
+
+        // Stats existen para cada archivo
+        for f in &listing.files {
+            assert!(listing.stats.contains_key(f));
+            assert!(listing.stats[f].mtime > 0);
+        }
+
+        // Orden determinista (ordenado alfabéticamente)
+        let mut sorted = listing.files.clone();
+        sorted.sort();
+        assert_eq!(listing.files, sorted);
+
+        // Directorio grande con 300 archivos en múltiples subcarpetas
+        for i in 0..100 {
+            fs::write(sub_trabajo.join(format!("tarea_{i}.md")), "test").unwrap();
+            fs::write(sub_clientes.join(format!("cliente_{i}.txt")), "test").unwrap();
+            fs::write(sub_rust.join(format!("mod_{i}.rs")), "test").unwrap();
+        }
+        let large_listing = list_note_files_with_stats_at(&base).unwrap();
+        assert!(large_listing.files.len() >= 307);
+
+        let _ = fs::remove_dir_all(base);
+    }
 }
 
 #[tauri::command]
@@ -549,7 +774,7 @@ async fn create_note(
 ) -> Result<(), String> {
     let doc_dir = app.path().document_dir().map_err(|e| format!("Cannot resolve Documents: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)?;
+    gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)?;
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
     let account = gdrive::auth::verify_current_account(&app).ok();
     gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
@@ -590,7 +815,7 @@ async fn save_note_atomic(
         .document_dir()
         .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    let target_path = gdrive::sync::resolve_safe_path(&lyra_dir, &file_name)
+    let target_path = gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)
         .map_err(|e| format!("Ruta o nombre de archivo inválido: {e}"))?;
 
     // Coordinación exclusiva por archivo para prevenir condiciones de carrera TOCTOU

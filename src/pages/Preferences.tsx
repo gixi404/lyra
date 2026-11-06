@@ -397,6 +397,32 @@ function Preferences(): Component {
               </div>
             </div>
 
+            {/* Enfoque en párrafo */}
+            <div className="flex justify-between items-center w-full gap-x-2">
+              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
+                <FocusIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
+                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>{d.ParagraphFocus ?? "Enfoque en párrafo"}</p>
+              </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={toggleParagraphFocus}
+                  className={twMerge(
+                    "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
+                    isDay
+                      ? paragraphFocus
+                        ? "bg-indigo-50 text-indigo-600 border-indigo-300 font-semibold"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                      : paragraphFocus
+                        ? "bg-sky-500/20 text-sky-300 border-sky-400/50 font-semibold"
+                        : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
+                  )}
+                >
+                  {paragraphFocus ? (d.Enabled ?? "Activado") : (d.Disabled ?? "Desactivado")}
+                </button>
+              </div>
+            </div>
+
             {/* Alineación */}
             <div className="flex justify-between items-center w-full gap-x-2">
               <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
@@ -425,32 +451,6 @@ function Preferences(): Component {
                   ))}
                 </select>
                 <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
-              </div>
-            </div>
-
-            {/* Enfoque en párrafo */}
-            <div className="flex justify-between items-center w-full gap-x-2">
-              <div className="flex justify-center items-center gap-x-2 sm:gap-x-3">
-                <FocusIcon size={22} className="sm:w-[25px] sm:h-[25px]" />
-                <p className={`text-sm sm:text-md font-medium ${isDay ? "text-neutral-900" : "text-zinc-100"}`}>{d.ParagraphFocus ?? "Enfoque en párrafo"}</p>
-              </div>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={toggleParagraphFocus}
-                  className={twMerge(
-                    "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
-                    isDay
-                      ? paragraphFocus
-                        ? "bg-indigo-50 text-indigo-600 border-indigo-300 font-semibold"
-                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                      : paragraphFocus
-                        ? "bg-sky-500/20 text-sky-300 border-sky-400/50 font-semibold"
-                        : "bg-[#222222] text-zinc-100 border-zinc-700 hover:bg-[#2c2c2c]"
-                  )}
-                >
-                  {paragraphFocus ? (d.Enabled ?? "Activado") : (d.Disabled ?? "Desactivado")}
-                </button>
               </div>
             </div>
 

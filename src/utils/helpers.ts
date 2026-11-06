@@ -13,10 +13,13 @@ import {
 import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
 import {
   ensureNoteExtension,
+  getFileBaseName,
+  getFileDirectory,
+  getLegacyFileName,
   hasSupportedNoteExtension,
   isReservedWindowsFileName,
-  noteTitle,
-  SUPPORTED_NOTE_EXTENSIONS,
+  normalizeStoredFileNames,
+  resolveStoredFileName,
 } from "./noteName";
 import { pathIs, scrollToNovedades } from "./navigation";
 
@@ -79,10 +82,6 @@ function sanitizeFileName(name: string): string {
   return name.replace(/\?/g, "@");
 }
 
-function getLegacyFileName(fileName: string): string {
-  return noteTitle(fileName);
-}
-
 function getEditableFileName(fileName: string): string {
   return getLegacyFileName(fileName);
 }
@@ -103,26 +102,6 @@ function getCompatibleStorageKeys(fileName: string, suffix: string = "", prefix:
     const scopedName = prefix ? `${prefix}:${name}` : name;
     return `${scopedName}${suffix}`;
   });
-}
-
-function resolveStoredFileName(fileName: string, files: string[]): string | null {
-  if (files.includes(fileName)) return fileName;
-  if (hasSupportedNoteExtension(fileName)) return null;
-
-  for (const ext of SUPPORTED_NOTE_EXTENSIONS) {
-    const candidate: string = `${fileName}${ext}`;
-    if (files.includes(candidate)) return candidate;
-  }
-
-  return null;
-}
-
-function normalizeStoredFileNames(fileNames: string[], files: string[]): string[] {
-  const normalizedNames = fileNames
-    .map(fileName => resolveStoredFileName(fileName, files))
-    .filter((fileName): fileName is string => Boolean(fileName));
-
-  return Array.from(new Set(normalizedNames));
 }
 
 function useThemes(): Themes {
@@ -245,6 +224,8 @@ export {
   getAnimationDuration,
   getDate,
   getEditableFileName,
+  getFileBaseName,
+  getFileDirectory,
   len,
   nameIsValid,
   useAppNavigation,

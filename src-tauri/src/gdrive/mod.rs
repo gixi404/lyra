@@ -476,7 +476,7 @@ pub async fn gdrive_note_renamed(
 ) -> Result<bool, String> {
     let lyra_dir = resolve_lyra_dir(&app)?;
     let old_path = sync::resolve_safe_path(&lyra_dir, &old_name)?;
-    let new_path = sync::resolve_safe_path(&lyra_dir, &new_name)?;
+    let new_path = sync::ensure_safe_parent_hierarchy(&lyra_dir, &new_name)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
     if new_path.exists() {
         return Err("Destination note already exists".to_string());

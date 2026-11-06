@@ -20,7 +20,7 @@ import type { Component } from "../utils/types";
 import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal";
 import ModalInfo from "./ModalInfo";
-import { noteLabel, noteTitle } from "../utils/noteName";
+import { getFileBaseName, getFileDirectory, noteLabel, noteTitle } from "../utils/noteName";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
@@ -152,10 +152,14 @@ function MenuFile({ fileName }: Props): Component {
 
   function handleEditConfirm(value?: string): void {
     if (!value) return notification("error", d.InvalidName);
-    const sanitizedName: string = sanitizeFileName(getEditableFileName(value));
-    if (!nameIsValid(sanitizedName)) return;
+    const sanitizedBase: string = sanitizeFileName(getEditableFileName(value));
+    if (!nameIsValid(sanitizedBase)) return;
 
-    const nextDisplayName: string = resolveDisplayName(sanitizedName, fileName);
+    const currentBaseName = getFileBaseName(fileName);
+    const nextBaseWithExt: string = resolveDisplayName(sanitizedBase, currentBaseName);
+    const dir = getFileDirectory(fileName);
+    const nextDisplayName: string = dir ? `${dir}/${nextBaseWithExt}` : nextBaseWithExt;
+
     if (nextDisplayName === fileName) {
       setIsEditOpen(false);
       return;
@@ -167,7 +171,7 @@ function MenuFile({ fileName }: Props): Component {
     }
 
     setIsEditOpen(false);
-    renameFile(fileName, sanitizedName)
+    renameFile(fileName, nextDisplayName)
       .catch(() => notification("error", `No se pudo renombrar ${noteLabel(fileName)}`));
   }
 
@@ -356,7 +360,7 @@ function MenuFile({ fileName }: Props): Component {
         onConfirm={handleEditConfirm}
         title={d.EnterNewName}
         hasInput
-        initialValue={getEditableFileName(fileName)}
+        initialValue={getEditableFileName(getFileBaseName(fileName))}
         confirmText={d.Change}
         cancelText={d.Cancel}
       />
