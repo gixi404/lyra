@@ -94,20 +94,23 @@ export function getListContainer(): HTMLElement | null {
   return document.getElementById("lyra-list-scroll-container");
 }
 
-export function getScrollPos(view?: ListViewMode): number {
-  const container = getListContainer();
-  if (container) {
-    return container.scrollTop;
-  }
-  const mode = getEffectiveView(view);
-  return listScrollPositions[mode] ?? 0;
+// El contenedor del listado (#lyra-list-scroll-container) no es un scroll
+// independiente: el layout de MainContainer (html overflow-y: scroll) hace
+// que desplace la ventana. Solo es un scroll propio si su contenido excede
+// su altura visible.
+function isListContainerScrollable(el: HTMLElement): boolean {
+  return el.scrollHeight - el.clientHeight > 2;
 }
 
-export function getMaxScroll(): number {
-  const container = getListContainer();
-  if (container) {
-    return Math.max(0, container.scrollHeight - container.clientHeight);
-  }
+function getWindowScrollTop(): number {
+  if (typeof window === "undefined") return 0;
+  const fromWindow = typeof window.scrollY === "number" ? window.scrollY : 0;
+  if (fromWindow) return fromWindow;
+  if (typeof document === "undefined") return 0;
+  return document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+}
+
+function getWindowMaxScroll(): number {
   if (typeof document === "undefined" || typeof window === "undefined") return 0;
   const docEl = document.documentElement;
   const body = document.body;
@@ -116,13 +119,52 @@ export function getMaxScroll(): number {
   return Math.max(0, scrollHeight - clientHeight);
 }
 
+function setWindowScrollTop(y: number): number {
+  const max = getWindowMaxScroll();
+  const clamped = Math.max(0, Math.min(Math.round(y), max));
+  if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+    window.scrollTo({ top: clamped, left: 0, behavior: "instant" });
+  }
+  try {
+    if (typeof document !== "undefined" && document.documentElement && document.documentElement.scrollTop !== clamped) {
+      document.documentElement.scrollTop = clamped;
+    }
+  } catch {}
+  return clamped;
+}
+
+export function getScrollPos(view?: ListViewMode): number {
+  const container = getListContainer();
+  if (container && isListContainerScrollable(container)) {
+    return container.scrollTop;
+  }
+  if (container || typeof window !== "undefined") {
+    // El desplazamiento real ocurre en la ventana; si ya hay contenedor pero
+    // no es scrollable, su scrollTop es 0 y engañaría a los llamadores.
+    return getWindowScrollTop();
+  }
+  const mode = getEffectiveView(view);
+  return listScrollPositions[mode] ?? 0;
+}
+
+export function getMaxScroll(): number {
+  const container = getListContainer();
+  if (container && isListContainerScrollable(container)) {
+    return Math.max(0, container.scrollHeight - container.clientHeight);
+  }
+  return getWindowMaxScroll();
+}
+
 export function applyListScroll(y: number): number {
   const container = getListContainer();
-  if (container) {
+  if (container && isListContainerScrollable(container)) {
     const max = Math.max(0, container.scrollHeight - container.clientHeight);
     const clamped = Math.max(0, Math.min(Math.round(y), max));
     container.scrollTop = clamped;
     return clamped;
+  }
+  if (typeof window !== "undefined" && (container || typeof document !== "undefined")) {
+    return setWindowScrollTop(y);
   }
   return Math.max(0, Math.round(y));
 }

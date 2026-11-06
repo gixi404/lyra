@@ -416,7 +416,7 @@ function Preferences(): Component {
                     "cursor-pointer w-[140px] sm:w-[160px] h-10 px-3 rounded-md border text-sm font-medium outline-none transition-colors flex items-center justify-center gap-x-2",
                     isDay
                       ? paragraphFocus
-                        ? "bg-[#E0F3FC] text-[#056391] border-[#70C9F4]/30 font-semibold"
+                        ? "bg-accent-subtle text-accent-text border-accent/30 font-semibold"
                         : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
                       : paragraphFocus
                         ? "bg-sky-500/20 text-sky-300 border-sky-400/50 font-semibold"
@@ -510,7 +510,7 @@ function Preferences(): Component {
                   className={twMerge(
                     "w-full cursor-pointer h-1.5 rounded-lg outline-none transition-colors",
                     isDay
-                      ? "bg-neutral-200 accent-neutral-800"
+                      ? "bg-neutral-200 accent-accent-text"
                       : "bg-zinc-700 accent-sky-400"
                   )}
                 />

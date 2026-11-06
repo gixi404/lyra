@@ -163,7 +163,7 @@ function Modal({
                       placeholder={inputPlaceholder}
                       className={`w-full px-4 py-2.5 text-sm rounded-xl border outline-none transition-all ${
                         isDay
-                          ? "bg-neutral-50 border-neutral-300 text-neutral-900 focus:border-[#70C9F4] focus:bg-white focus:ring-2 focus:ring-[#70C9F4]/20"
+                          ? "bg-neutral-50 border-neutral-300 text-neutral-900 focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
                           : "bg-zinc-800/80 border-zinc-700 text-zinc-100 focus:border-sky-500 focus:bg-zinc-800 focus:ring-2 focus:ring-sky-500/20"
                       }`}
                     />
@@ -189,18 +189,18 @@ function Modal({
                       disabled={busy}
                       className={`px-4 py-2 text-sm font-medium rounded-xl transition-all select-none ${
                         busy
-                          ? `${variant === "danger" ? "bg-[#F07575] text-[#181B20]" : isDay
-                            ? "bg-[#70C9F4] text-[#181B20]" : "bg-sky-500 text-zinc-950"} opacity-40 cursor-not-allowed shadow-none`
+                          ? `${variant === "danger" ? "bg-danger text-ink" : isDay
+                            ? "bg-accent text-ink" : "bg-sky-500 text-zinc-950"} opacity-40 cursor-not-allowed shadow-none`
                           : variant === "danger"
-                          ? "bg-[#F07575] enabled:hover:bg-[#FF9696] text-[#181B20] shadow-[#F07575]/20 active:enabled:scale-95"
+                          ? "bg-danger enabled:hover:bg-danger-hover text-ink shadow-danger/20 active:enabled:scale-95"
                           : isDay
-                          ? "bg-[#70C9F4] enabled:hover:bg-[#98DDFB] text-[#181B20] shadow-[#70C9F4]/20 active:enabled:scale-95"
+                          ? "bg-accent enabled:hover:bg-accent-hover text-ink shadow-accent/20 active:enabled:scale-95"
                           : "bg-sky-500 enabled:hover:bg-sky-400 text-zinc-950 font-semibold shadow-sky-500/20 active:enabled:scale-95"
                       } disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:active:scale-100 ${
                         variant === "danger"
-                          ? "disabled:hover:bg-[#F07575]"
+                          ? "disabled:hover:bg-danger"
                           : isDay
-                          ? "disabled:hover:bg-[#70C9F4]"
+                          ? "disabled:hover:bg-accent"
                           : "disabled:hover:bg-sky-500"
                       }`}
                     >

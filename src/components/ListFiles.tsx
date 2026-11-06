@@ -197,7 +197,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
       {/* Cabecera DOCUMENTOS + Contador */}
       <div
         className={`flex items-center justify-between w-[680px] max-w-full px-1 pb-2.5 mb-1 border-b ${
-          isDay ? "border-neutral-200 text-neutral-500/85" : "border-zinc-800/80 text-zinc-400/85"
+          isDay ? "border-neutral-200 text-neutral-600/85" : "border-zinc-800/80 text-zinc-400/85"
         }`}
       >
         <div className="flex items-center gap-x-1.5">
@@ -255,9 +255,13 @@ const ListFiles = memo(({ arr }: Props): Component => {
               disabled={deletionBusy}
               className={`text-[11px] font-mono font-semibold tracking-wider transition-all duration-150 select-none ${
                 deletionBusy
-                  ? "text-rose-500/40 opacity-40 cursor-not-allowed"
-                  : "text-rose-500/90 enabled:hover:text-rose-500 cursor-pointer active:scale-95"
-              } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-rose-500/40 disabled:active:scale-100`}
+                  ? isDay
+                    ? "text-danger-text/40 opacity-40 cursor-not-allowed disabled:hover:text-danger-text/40"
+                    : "text-rose-500/40 opacity-40 cursor-not-allowed disabled:hover:text-rose-500/40"
+                  : isDay
+                    ? "text-danger-text/90 enabled:hover:text-danger-text cursor-pointer active:scale-95"
+                    : "text-rose-500/90 enabled:hover:text-rose-500 cursor-pointer active:scale-95"
+              } disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100`}
               title="Vaciar todos los archivos archivados"
             >
               Vaciar

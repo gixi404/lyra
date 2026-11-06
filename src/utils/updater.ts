@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { PAGES } from "./consts.ts";
 import { useToastStore, type ToastAction, type ToastType } from "../store/toastStore.ts";
-import { setListScroll } from "./listScroll.ts";
+import { getScrollPos, setListScroll } from "./listScroll.ts";
 import { pathIs, scrollToNovedades, navigateTo } from "./navigation.ts";
 import { prepareEditorsForRelaunch, runPreparedInstall, runPreparedRelaunch } from "./editorPersistence.ts";
 import { savePersistentPreferencesNow } from "./persistentPreferences.ts";
@@ -91,9 +91,7 @@ export function openNovedades(): void {
   if (typeof window === "undefined") return;
   try {
     if (pathIs(PAGES.list)) {
-      const container = typeof document !== "undefined" ? document.getElementById("lyra-list-scroll-container") : null;
-      const y = container ? container.scrollTop : 0;
-      setListScroll(y);
+      setListScroll(getScrollPos());
     }
 
     if (pathIs(PAGES.preferences)) {

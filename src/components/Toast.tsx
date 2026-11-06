@@ -29,13 +29,13 @@ function Toast(): JSX.Element | null {
               <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
             )}
             {t.type === "error" && (
-              <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+              <AlertCircle className={`w-4 h-4 shrink-0 ${isDay ? "text-danger-text" : "text-rose-500"}`} />
             )}
             {t.type === "info" && (
-              <Info className="w-4 h-4 text-sky-500 shrink-0" />
+              <Info className={`w-4 h-4 shrink-0 ${isDay ? "text-accent-text" : "text-sky-500"}`} />
             )}
             {t.type === "loading" && (
-              <Loader2 className="w-4 h-4 text-sky-500 animate-spin shrink-0" />
+              <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isDay ? "text-accent-text" : "text-sky-500"}`} />
             )}
             <div className="min-w-0 text-left select-none break-words">
               {Boolean(t.msg) && <span>{t.msg}</span>}
@@ -50,7 +50,7 @@ function Toast(): JSX.Element | null {
                     t.msg ? "ml-1.5" : ""
                   } ${
                     isDay
-                      ? "text-[#056391] hover:text-[#056391] decoration-[#056391]/50 hover:decoration-[#056391]"
+                      ? "text-accent-text hover:text-accent-text decoration-accent-text/50 hover:decoration-accent-text"
                       : "text-sky-400 hover:text-sky-300 decoration-sky-400/50 hover:decoration-sky-300"
                   } underline underline-offset-2 font-semibold cursor-pointer transition-all duration-150 outline-none hover:brightness-110 active:scale-95 inline-block`}
                 >

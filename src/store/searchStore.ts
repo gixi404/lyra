@@ -1,14 +1,13 @@
 import { create } from "zustand";
 import { scheduleSavePersistentPreferences } from "../utils/persistentPreferences.ts";
-import { resetListScroll } from "../utils/listScroll.ts";
+import { applyListScroll, resetListScroll } from "../utils/listScroll.ts";
 
 function resetContainerScroll(): void {
-  if (typeof document !== "undefined" && typeof document.getElementById === "function") {
-    const container = document.getElementById("lyra-list-scroll-container");
-    if (container) {
-      container.scrollTop = 0;
-    }
-  }
+  // El scroll real del listado es el de la ventana; applyListScroll lo
+  // resuelve (contenedor scrollable o ventana) en un único punto.
+  try {
+    applyListScroll(0);
+  } catch {}
 }
 
 export type SortOptionId = "mtime" | "az" | "za" | "recent" | "oldest" | "random";

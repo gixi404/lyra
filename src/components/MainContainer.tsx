@@ -114,7 +114,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
   }, []);
 
   useEffect(() => {
-    const bg = isDay ? "#e0e0e0" : "#101010";
+    const bg = isDay ? "#F7F8FA" : "#101010";
     document.documentElement.style.backgroundColor = bg;
     document.body.style.backgroundColor = bg;
     document.documentElement.classList.toggle("dark", !isDay);
@@ -298,7 +298,7 @@ function MainContainer({ children }: PropsWithChildren): Component {
   return (
     <main
       className={twMerge(
-        isDay ? "bg-[#e0e0e0] text-gray-800" : "bg-[#101010] text-gray-200/90",
+        isDay ? "bg-[#F7F8FA] text-gray-800" : "bg-[#101010] text-gray-200/90",
         pathIs(PAGES.file)
           ? "gap-0 items-stretch"
           : "gap-y-10 lg:gap-y-20 items-center",

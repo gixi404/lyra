@@ -3,6 +3,53 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Identidad celeste y rojiza — compartida entre ambos temas (no depende del tema) */
+    --color-accent: 112 201 244;        /* #70C9F4 */
+    --color-accent-hover: 152 221 251;  /* #98DDFB */
+    --color-danger: 240 117 117;        /* #F07575 */
+    --color-danger-hover: 255 150 150;  /* #FF9696 */
+    --color-accent-text: 5 99 145;      /* #056391 — variante oscura solo para texto sobre blanco (AA 6.56:1) */
+    --color-danger-text: 169 43 53;     /* #A92B35 — variante oscura solo para texto sobre blanco (AA 6.81:1) */
+    --color-ink: 24 27 32;              /* #181B20 — texto oscuro sobre rellenos celestes/rojos (AA 6.17–11.57:1) */
+
+    /* Neutros por defecto: modo noche (sin cambios) */
+    --color-background: 16 16 16;       /* #101010 */
+    --color-surface: 24 24 27;          /* #18181B zinc-900 */
+    --color-surface-elevated: 26 26 26; /* #1A1A1A */
+    --color-hover: 39 39 42;            /* zinc-800 */
+    --color-border: 39 39 42;           /* zinc-800 */
+    --color-text-primary: 244 244 245;  /* zinc-100 */
+    --color-text-secondary: 161 161 170;/* zinc-400 */
+    --color-accent-subtle: 112 201 244; /* usar con /15–/20 sobre fondo oscuro */
+    --color-danger-subtle: 240 117 117; /* usar con /15–/20 sobre fondo oscuro */
+  }
+
+  html.light {
+    /* Neutros del modo día: fondos blancos y grises claros, texto oscuro */
+    --color-background: 247 248 250;    /* #F7F8FA — gris muy claro de página */
+    --color-surface: 255 255 255;       /* #FFFFFF — superficies blancas */
+    --color-surface-elevated: 255 255 255;
+    --color-hover: 245 245 244;         /* neutral-100 */
+    --color-border: 229 229 229;        /* neutral-200 */
+    --color-text-primary: 23 23 23;     /* neutral-900 */
+    --color-text-secondary: 82 82 82;   /* neutral-600 — AA 7.35:1 sobre #F7F8FA */
+    --color-accent-subtle: 224 243 252; /* #E0F3FC — fondo celeste pálido */
+    --color-danger-subtle: 253 236 236; /* #FDECEC — fondo rojizo pálido */
+  }
+
+  html.dark {
+    --color-background: 16 16 16;
+    --color-surface: 24 24 27;
+    --color-surface-elevated: 26 26 26;
+    --color-hover: 39 39 42;
+    --color-border: 39 39 42;
+    --color-text-primary: 244 244 245;
+    --color-text-secondary: 161 161 170;
+    --color-accent-subtle: 112 201 244;
+    --color-danger-subtle: 240 117 117;
+  }
+
   html, body, #root {
     width: 100%;
     min-height: 100vh;
@@ -12,7 +59,7 @@
   }
 
   html.light, html.light body, html.light #root {
-    background-color: #e0e0e0;
+    background-color: #F7F8FA;
   }
 
   html.dark, html.dark body, html.dark #root {
@@ -32,7 +79,8 @@
   }
 
   body {
-    @apply caret-[#00a8ff] text-zinc-200 flex flex-col justify-start items-stretch select-none antialiased;
+    @apply caret-[#00a8ff] flex flex-col justify-start items-stretch select-none antialiased;
+    color: rgb(var(--color-text-primary));
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 }
@@ -57,6 +105,12 @@ details summary {
 
 ::selection {
   @apply bg-sky-500/30 text-sky-200;
+}
+
+html.light ::selection {
+  background-color: rgb(var(--color-accent) / 0.35);
+  color: #1f2937;
+  -webkit-text-fill-color: #1f2937;
 }
 
 ::-webkit-scrollbar {

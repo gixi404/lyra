@@ -303,7 +303,7 @@ function SearchReplaceModal({
           className={twMerge(
             "flex-1 px-2.5 py-1.5 rounded-lg text-sm border outline-none transition-colors",
             isDay
-              ? "bg-neutral-100 border-neutral-300 focus:border-[#70C9F4] text-neutral-900 placeholder:text-neutral-400"
+              ? "bg-neutral-100 border-neutral-300 focus:border-accent text-neutral-900 placeholder:text-neutral-600"
               : "bg-zinc-800 border-zinc-700 focus:border-sky-400 text-zinc-100 placeholder:text-zinc-500"
           )}
         />
@@ -317,7 +317,7 @@ function SearchReplaceModal({
             "p-1.5 rounded-lg border transition-colors cursor-pointer flex items-center justify-center",
             matchCase
               ? isDay
-                ? "bg-[#E0F3FC] text-[#056391] border-[#70C9F4]/30 font-bold"
+                ? "bg-accent-subtle text-accent-text border-accent/30 font-bold"
                 : "bg-sky-500/20 text-sky-300 border-sky-400/60 font-bold"
               : isDay
                 ? "bg-white border-neutral-300 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
@@ -367,7 +367,7 @@ function SearchReplaceModal({
           className={twMerge(
             "flex-1 px-2.5 py-1.5 rounded-lg text-sm border outline-none transition-colors",
             isDay
-              ? "bg-neutral-100 border-neutral-300 focus:border-[#70C9F4] text-neutral-900 placeholder:text-neutral-400"
+              ? "bg-neutral-100 border-neutral-300 focus:border-accent text-neutral-900 placeholder:text-neutral-600"
               : "bg-zinc-800 border-zinc-700 focus:border-sky-400 text-zinc-100 placeholder:text-zinc-500"
           )}
         />

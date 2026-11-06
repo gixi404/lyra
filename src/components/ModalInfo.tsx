@@ -129,7 +129,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
                   }`}
                 >
                   <div className="flex items-center gap-x-2.5">
-                    <Info className={`w-5 h-5 ${isDay ? "text-[#056391]" : "text-sky-400"}`} />
+                    <Info className={`w-5 h-5 ${isDay ? "text-accent-text" : "text-sky-400"}`} />
                     <h3 className="text-base font-semibold tracking-tight">
                       Información del archivo
                     </h3>

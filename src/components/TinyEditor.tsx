@@ -85,13 +85,14 @@ function TinyEditor({
     dragStartScrollTopRef = useRef<number>(0),
     { goTo } = navigation(),
     { isDay } = themes(),
-    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue, scrollSpeed = 1 } = usePreferences(),
+    { myFontSize, myAlign, mySpacing, myParagraphFocus, myFontValue, myScrollSpeed } = usePreferences(),
     [fontSizeOverride, setFontSizeOverride] = useState<string | null>(null),
     fontSize: string = fontSizeOverride ?? myFontSize(),
     fontClass: string = myFontValue(),
     textAlign: string = myAlign(),
     letterSpacing: number = mySpacing(),
     isParagraphFocus: boolean = myParagraphFocus(),
+    scrollSpeed: number = myScrollSpeed(),
     [{ startIdx, endIdx }, setActiveParaRange] = useState<{
       startIdx: number;
       endIdx: number;
@@ -185,10 +186,10 @@ function TinyEditor({
         const matchText = p.substring(m.startInPara, m.endInPara);
         const activeClass = m.isActive
           ? isDay
-            ? "bg-blue-500 text-white rounded-xs"
+            ? "bg-accent text-ink rounded-xs"
             : "bg-sky-400 text-slate-950 rounded-xs"
           : isDay
-            ? "bg-blue-200/80 text-blue-950 rounded-xs"
+            ? "bg-accent-subtle text-accent-text rounded-xs"
             : "bg-sky-500/30 text-sky-200 rounded-xs";
 
         elements.push(
@@ -446,6 +447,13 @@ function TinyEditor({
     targetScrollTopRef.current = el.scrollTop;
 
     const handleWheel = (e: WheelEvent) => {
+      // No interferir con zoom (Ctrl+rueda), eventos no cancelables o
+      // desplazamiento puramente horizontal.
+      if (e.ctrlKey) return;
+      if (typeof e.cancelable === "boolean" && !e.cancelable) return;
+      if (e.deltaY === 0) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+
       const maxScroll = el.scrollHeight - el.clientHeight;
       if (maxScroll <= 0) return;
 
@@ -926,12 +934,12 @@ function TinyEditor({
       }
 
       .editor-textarea::selection {
-        background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
+        background: ${isDay ? "rgba(112, 201, 244, 0.35)" : "rgba(56, 189, 248, 0.3)"} !important;
         color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
         -webkit-text-fill-color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
       }
       .editor-textarea::-moz-selection {
-        background: ${isDay ? "rgba(59, 130, 246, 0.3)" : "rgba(56, 189, 248, 0.3)"} !important;
+        background: ${isDay ? "rgba(112, 201, 244, 0.35)" : "rgba(56, 189, 248, 0.3)"} !important;
         color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
         -webkit-text-fill-color: ${needsDisplayLayer ? "transparent" : isDay ? "#1f2937" : "#e5e7eb"} !important;
       }
