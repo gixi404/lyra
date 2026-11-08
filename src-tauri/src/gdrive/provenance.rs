@@ -542,13 +542,23 @@ pub fn create_local_note(
     lyra_dir: &Path, name: &str, content: &[u8], account_key: Option<&str>,
 ) -> Result<(), String> {
     let target = lyra_dir.join(name);
-    let mut file = fs::OpenOptions::new().write(true).create_new(true)
-        .open(&target).map_err(|e| format!("Cannot create note: {e}"))?;
-    file.write_all(content).map_err(|e| format!("Cannot write note: {e}"))?;
-    file.sync_all().map_err(|e| format!("Cannot sync note: {e}"))?;
-    if let Err(e) = record_local_write(lyra_dir, name, account_key, true) {
+    match super::sync::write_file_atomic_exclusive(&target, content) {
+        Ok(outcome) => {
+            if outcome == super::sync::ExclusivePublishOutcome::PublishedUnsynced {
+                #[cfg(debug_assertions)]
+                eprintln!("[create_local_note] Note published without parent dir sync (durability degraded)");
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(format!("Cannot create note: {e}"));
+        }
+        Err(e) => {
+            return Err(format!("Cannot create note: {e}"));
+        }
+    }
+    if let Err(_e) = record_local_write(lyra_dir, name, account_key, true) {
         #[cfg(debug_assertions)]
-        eprintln!("[create_local_note] Note is local only: {e}");
+        eprintln!("[create_local_note] Note is local only: {_e}");
     }
     Ok(())
 }

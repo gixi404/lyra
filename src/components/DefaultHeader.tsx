@@ -276,9 +276,9 @@ function DefaultHeader(): Component {
         )}
       </div>
 
-      {/* Icono y texto Lyra a la derecha */}
+      {/* Logo a la derecha */}
       <div
-        className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center gap-x-2.5 h-[36px]"
+        className="auto-hide-ui no-print fixed top-4 right-4 sm:right-6 z-50 flex items-center h-[36px]"
         style={{
           transform: "translateZ(0)",
           WebkitBackfaceVisibility: "hidden",
@@ -286,10 +286,7 @@ function DefaultHeader(): Component {
         }}
       >
         {(pathIs(PAGES.list) || pathIs(PAGES.preferences)) && (
-          <div className="flex items-center gap-x-2.5 select-none">
-            <span className={`text-base font-semibold tracking-tight ${isDay ? "text-neutral-700" : "text-zinc-200"}`}>
-              Lyra
-            </span>
+          <div className="flex items-center select-none">
             <img src="/logo.png" alt="Lyra" className="w-[26px] h-[26px] object-contain" />
           </div>
         )}

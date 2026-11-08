@@ -166,6 +166,8 @@ test("6. handleExternalFileImport procesa importación individual exitosa y nave
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -210,6 +212,8 @@ test("7. handleExternalFileImport procesa importación múltiple abriendo la pri
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -259,6 +263,8 @@ test("8. handleExternalFileImport comunica errores parciales sin perder los arch
         ],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -307,6 +313,8 @@ test("9. handleExternalFileImport bloquea la navegación si el guardado pendient
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -367,6 +375,8 @@ test("10. handleExternalFileImport ignora eventos repetidos en la ventana de ded
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -412,6 +422,8 @@ test("11. handleExternalFileImport con archivo interno: se abre directamente sin
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -456,6 +468,8 @@ test("12. handleExternalFileImport con archivo ya abierto: reutiliza la nota act
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {
@@ -499,6 +513,8 @@ test("13. handleExternalFileImport con archivo externo: crea copia y notifica é
         errors: [],
       };
     }
+    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
   (globalThis as unknown as { window: { __TAURI_INTERNALS__: unknown } }).window.__TAURI_INTERNALS__ = {

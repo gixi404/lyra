@@ -774,6 +774,59 @@ pub fn write_unique_recovery_file(
     }
 }
 
+static ACTIVE_TMP_FILES: std::sync::LazyLock<Mutex<HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+
+static TEST_FAIL_TEMP_WRITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TEST_FAIL_LINK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TEST_FAIL_DIR_SYNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+pub fn test_inject_temp_write_failure(flag: bool) {
+    TEST_FAIL_TEMP_WRITE.store(flag, std::sync::atomic::Ordering::SeqCst);
+}
+#[cfg(test)]
+pub fn test_inject_link_failure(flag: bool) {
+    TEST_FAIL_LINK.store(flag, std::sync::atomic::Ordering::SeqCst);
+}
+#[cfg(test)]
+pub fn test_inject_dir_sync_failure(flag: bool) {
+    TEST_FAIL_DIR_SYNC.store(flag, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn register_active_tmp(path: &std::path::Path) {
+    if let Ok(mut set) = ACTIVE_TMP_FILES.lock() {
+        set.insert(path.to_path_buf());
+    }
+}
+
+pub fn unregister_active_tmp(path: &std::path::Path) {
+    if let Ok(mut set) = ACTIVE_TMP_FILES.lock() {
+        set.remove(path);
+    }
+}
+
+pub fn is_active_tmp(path: &std::path::Path) -> bool {
+    ACTIVE_TMP_FILES.lock().map(|set| set.contains(path)).unwrap_or(false)
+}
+
+pub struct ActiveTmpGuard {
+    path: PathBuf,
+}
+
+impl ActiveTmpGuard {
+    pub fn new(path: PathBuf) -> Self {
+        register_active_tmp(&path);
+        Self { path }
+    }
+}
+
+impl Drop for ActiveTmpGuard {
+    fn drop(&mut self) {
+        unregister_active_tmp(&self.path);
+    }
+}
+
 /// Limpia de manera preventiva archivos temporales (.tmp_save_*) huérfanos dejados por cierres abruptos o caídas.
 /// REGLA DE SEGURIDAD CRÍTICA: La antigüedad no es prueba de que el contenido sea descartable.
 /// Si un temporal contiene datos que no existen o difieren del archivo de destino,
@@ -782,24 +835,37 @@ pub fn write_unique_recovery_file(
 pub fn clean_stale_tmp_save_files(dir: &std::path::Path) -> Vec<String> {
     let mut recovered = Vec::new();
     if ensure_safe_base_dir(dir).is_err() { return recovered; }
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        let now = std::time::SystemTime::now();
+    // Recorrido recursivo sin seguir symlinks ni salir de dir.
+    let mut stack = vec![dir.to_path_buf()];
+    let mut visited: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    while let Some(current) = stack.pop() {
+        if let Ok(canon) = current.canonicalize() {
+            if !visited.insert(canon) { continue; }
+        }
+        let entries = match std::fs::read_dir(&current) { Ok(e) => e, Err(_) => continue };
         for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type() {
-                if ft.is_file() {
-                    let fname = entry.file_name().to_string_lossy().to_string();
-                    if fname.starts_with(".tmp_save_") {
-                        if let Ok(meta) = entry.metadata() {
-                            if let Ok(modified) = meta.modified() {
-                                if let Ok(duration) = now.duration_since(modified) {
-                                    if duration.as_secs() > 300 {
-                                        if let Some(rec_name) = process_stale_tmp_file(dir, &entry.path(), &fname) {
-                                            recovered.push(rec_name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            let ft = match entry.file_type() { Ok(f) => f, Err(_) => continue };
+            if ft.is_symlink() { continue; }
+            let path = entry.path();
+            if ft.is_dir() {
+                // No atravesar ocultos ni salir fuera (symlink ya excluido).
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') { continue; }
+                stack.push(path);
+                continue;
+            }
+            if !ft.is_file() { continue; }
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if !fname.starts_with(".tmp_save_") { continue; }
+            if is_active_tmp(&path) { continue; }
+            let meta = match entry.metadata() { Ok(m) => m, Err(_) => continue };
+            let modified = match meta.modified() { Ok(m) => m, Err(_) => continue };
+            let now = std::time::SystemTime::now();
+            if let Ok(duration) = now.duration_since(modified) {
+                if duration.as_secs() > 300 {
+                    if let Some(rec_name) = process_stale_tmp_file(&current, &path, &fname) {
+                        recovered.push(rec_name);
                     }
                 }
             }
@@ -984,6 +1050,7 @@ pub fn write_file_atomic(target_path: &std::path::Path, content: &[u8]) -> Resul
         .unwrap_or("file");
     let rand_id: u64 = rand::random();
     let tmp_path = parent_dir.join(format!(".tmp_save_{}_{}", rand_id, file_stem));
+    let _active_guard = ActiveTmpGuard::new(tmp_path.clone());
 
     // Limpieza oportunista amortizada de temporales huérfanos antiguos (~1 de cada 16 escrituras)
     if (rand_id & 0x0F) == 0 {
@@ -1061,6 +1128,175 @@ pub fn write_file_atomic(target_path: &std::path::Path, content: &[u8]) -> Resul
             }
         }
     }
+}
+
+/// Resultado de publicación exclusiva: `Published` = durable tras sync de dir;
+/// `PublishedUnsynced` = el destino EXISTE e íntegro, pero el sync del directorio
+/// falló (durabilidad débil). Nunca se reporta falso “no existe”.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExclusivePublishOutcome {
+    Published,
+    PublishedUnsynced,
+}
+
+/// Publicación atómica exclusiva para CREACIÓN (M7): escribe todo en un temporal
+/// `.tmp_save_*` con `sync_all`, luego publica con hard link `tmp → target`.
+/// El link falla con `AlreadyExists` si el destino existe (Unix y NTFS), sin
+/// sobrescribir nunca. Sin fallback `create_new+copy` (parcial si muere a mitad).
+/// Si el FS no admite hard links, error controlado sin destino parcial.
+pub fn write_file_atomic_exclusive(
+    target_path: &std::path::Path,
+    content: &[u8],
+) -> Result<ExclusivePublishOutcome, std::io::Error> {
+    use std::io::Write;
+
+    let parent_dir = target_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "El archivo destino no tiene un directorio padre válido",
+        )
+    })?;
+
+    let parent_meta = std::fs::symlink_metadata(parent_dir).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "No se puede acceder al directorio contenedor '{}': {e}",
+                parent_dir.display()
+            ),
+        )
+    })?;
+    if parent_meta.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "Directorio contenedor '{}' es un enlace simbólico no permitido",
+                parent_dir.display()
+            ),
+        ));
+    }
+    if !parent_meta.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Ruta contenedora '{}' no es un directorio válido", parent_dir.display()),
+        ));
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(target_path) {
+        if meta.file_type().is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "Destino '{}' es un enlace simbólico no permitido",
+                    target_path.display()
+                ),
+            ));
+        }
+    }
+
+    let file_stem = target_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let rand_id: u64 = rand::random();
+    let tmp_path = parent_dir.join(format!(".tmp_save_{}_{}", rand_id, file_stem));
+    let _active_guard = ActiveTmpGuard::new(tmp_path.clone());
+
+    if (rand_id & 0x0F) == 0 {
+        clean_stale_tmp_save_files(parent_dir);
+    }
+
+    // (Test seam) inyecta fallo a mitad de escritura del temporal.
+    if TEST_FAIL_TEMP_WRITE.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path);
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(std::io::Error::other(
+            "fallo inyectado de escritura de temporal (test)",
+        ));
+    }
+
+    let write_res = (|| -> Result<(), std::io::Error> {
+        let mut tmp_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        tmp_file.write_all(content)?;
+        tmp_file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    // Re-auditoría pre-publicación (TOCTOU parcial, mismo criterio que write_file_atomic).
+    if let Ok(meta) = std::fs::symlink_metadata(parent_dir) {
+        if meta.file_type().is_symlink() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "Directorio contenedor '{}' fue suplantado por un enlace simbólico durante la escritura",
+                    parent_dir.display()
+                ),
+            ));
+        }
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(target_path) {
+        if meta.file_type().is_symlink() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "Destino '{}' fue suplantado por un enlace simbólico durante la escritura",
+                    target_path.display()
+                ),
+            ));
+        }
+    }
+
+    // Publicación exclusiva: hard link (falla si el destino existe según FS).
+    if TEST_FAIL_LINK.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "hard links no disponibles en este volumen (test)",
+        ));
+    }
+    match std::fs::hard_link(&tmp_path, target_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!("No se pudo publicar la nota exclusiva: {e}"),
+            ));
+        }
+    }
+
+    // Commit point alcanzado: el destino EXISTE. Desvincular el temporal.
+    let _ = std::fs::remove_file(&tmp_path);
+
+    // Durabilidad POSIX: sync del directorio padre (best-effort, no falso error).
+    #[cfg(unix)]
+    {
+        if TEST_FAIL_DIR_SYNC.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(ExclusivePublishOutcome::PublishedUnsynced);
+        }
+        if let Ok(parent_file) = std::fs::File::open(parent_dir) {
+            if parent_file.sync_all().is_err() {
+                return Ok(ExclusivePublishOutcome::PublishedUnsynced);
+            }
+        }
+    }
+    Ok(ExclusivePublishOutcome::Published)
 }
 
 fn split_filename(filename: &str) -> (String, String) {
@@ -1214,18 +1450,25 @@ pub fn sanitize_error_message(err: &str) -> String {
 }
 
 pub fn log_sync_msg(lyra_dir: &std::path::Path, msg: &str) {
-    let now = Utc::now().to_rfc3339();
     #[cfg(debug_assertions)]
-    eprintln!("{msg}");
-
-    let log_file = lyra_dir.join(".gdrive_sync.log");
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
     {
-        let _ = writeln!(f, "[{now}] {msg}");
+        let now = Utc::now().to_rfc3339();
+        eprintln!("{msg}");
+
+        let log_file = lyra_dir.join(".gdrive_sync.log");
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+        {
+            let _ = writeln!(f, "[{now}] {msg}");
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = lyra_dir;
+        let _ = msg;
     }
 }
 
@@ -5587,5 +5830,182 @@ mod tests {
         ctx_b.persist().unwrap();
         server.join();
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // -----------------------------------------------------------------
+    // M7 — Creación atómica exclusiva (hard link publicado)
+    // -----------------------------------------------------------------
+    fn set_old(path: &PathBuf, secs_ago: u64) {
+        let f = std::fs::File::open(path).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago))
+            .unwrap();
+    }
+
+    static TEST_FAULT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn m7_two_simultaneous_creations_exactly_one_wins() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nueva.txt");
+        let results: Vec<_> = std::thread::scope(|s| {
+            let t = target.clone();
+            let a = s.spawn(move || write_file_atomic_exclusive(&t, b"contenido A"));
+            let b = s.spawn(move || write_file_atomic_exclusive(&target, b"contenido B"));
+            vec![a.join().unwrap(), b.join().unwrap()]
+        });
+        let ok = results.iter().filter(|r| r.is_ok()).count();
+        let already = results.iter().filter(|r| matches!(r.as_ref(), Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists)).count();
+        assert_eq!(ok, 1, "exactly one creation must win");
+        assert_eq!(already, 1, "loser must see AlreadyExists");
+        let bytes = std::fs::read(dir.path().join("nueva.txt")).unwrap();
+        assert!(bytes == b"contenido A" || bytes == b"contenido B");
+    }
+
+    #[test]
+    fn m7_temp_write_failure_leaves_no_destination() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nueva.txt");
+        test_inject_temp_write_failure(true);
+        let res = write_file_atomic_exclusive(&target, b"contenido");
+        test_inject_temp_write_failure(false);
+        assert!(res.is_err());
+        assert!(!target.exists(), "destination must be absent on temp write failure");
+    }
+
+    #[test]
+    fn m7_link_failure_has_no_destination() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nueva.txt");
+        test_inject_link_failure(true);
+        let err = write_file_atomic_exclusive(&target, b"contenido").unwrap_err();
+        test_inject_link_failure(false);
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert!(!target.exists(), "no partial note may exist on link failure");
+        // No fallback copy: directory must not contain a final note file.
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(!entries.contains(&"nueva.txt".to_string()));
+    }
+
+    #[test]
+    fn m7_dir_sync_failure_keeps_destination_intact() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nueva.txt");
+        test_inject_dir_sync_failure(true);
+        let outcome = write_file_atomic_exclusive(&target, b"contenido intacto").unwrap();
+        test_inject_dir_sync_failure(false);
+        assert_eq!(
+            outcome,
+            ExclusivePublishOutcome::PublishedUnsynced,
+            "dir-sync failure must not be reported as non-existence"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"contenido intacto");
+    }
+
+    #[test]
+    fn m7_active_old_temp_is_not_cleaned() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join(".tmp_save_123_nota.txt");
+        std::fs::write(&tmp, b"activo").unwrap();
+        set_old(&tmp, 400);
+        let _guard = ActiveTmpGuard::new(tmp.clone());
+        assert!(is_active_tmp(&tmp));
+        clean_stale_tmp_save_files(dir.path());
+        assert!(tmp.exists(), "active temp must survive cleanup even when old");
+        drop(_guard);
+        assert!(!is_active_tmp(&tmp));
+    }
+
+    #[test]
+    fn m7_abandoned_temp_is_cleaned_safely() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("nota.txt");
+        std::fs::write(&destino, b"identico").unwrap();
+        let tmp = dir.path().join(".tmp_save_999_nota.txt");
+        std::fs::write(&tmp, b"identico").unwrap();
+        set_old(&tmp, 400);
+        assert!(!is_active_tmp(&tmp));
+        clean_stale_tmp_save_files(dir.path());
+        assert!(!tmp.exists(), "abandoned duplicate temp must be cleaned");
+        assert_eq!(std::fs::read(&destino).unwrap(), b"identico");
+    }
+
+    #[test]
+    fn m7_symlink_target_rejected() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, b"real").unwrap();
+        let link = dir.path().join("nueva.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_file, &link).unwrap();
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&link, b"real").unwrap();
+            return;
+        }
+        let err = write_file_atomic_exclusive(&link, b"evil").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(std::fs::read(&outside_file).unwrap(), b"real");
+    }
+
+    #[test]
+    fn m7_concurrent_creation_in_new_subdir() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let target = sub.join("nota.txt");
+        let target_check = target.clone();
+        let results: Vec<_> = std::thread::scope(|s| {
+            let t = target.clone();
+            let a = s.spawn(move || write_file_atomic_exclusive(&t, b"A"));
+            let b = s.spawn(move || write_file_atomic_exclusive(&target, b"B"));
+            vec![a.join().unwrap(), b.join().unwrap()]
+        });
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        assert!(std::fs::read(&target_check).is_ok());
+    }
+
+    #[test]
+    fn m7_does_not_overwrite_existing_note() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nota.txt");
+        std::fs::write(&target, b"original").unwrap();
+        let err = write_file_atomic_exclusive(&target, b"evil").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&target).unwrap(), b"original");
+    }
+
+    #[test]
+    fn m7_cleanup_reaches_subdir_without_following_symlink() {
+        let _fault = TEST_FAULT_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("destino.txt"), b"igual").unwrap();
+        let tmp = sub.join(".tmp_save_777_destino.txt");
+        std::fs::write(&tmp, b"igual").unwrap();
+        set_old(&tmp, 400);
+        // Symlink externo que apunta fuera no debe seguirse ni borrarse.
+        let outside = tempfile::tempdir().unwrap();
+        let out_file = outside.path().join("fuera.tmp_save_1.txt");
+        std::fs::write(&out_file, b"fuera").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
+        clean_stale_tmp_save_files(dir.path());
+        assert!(!tmp.exists(), "stale temp in subdir must be cleaned (recursive)");
+        assert!(out_file.exists(), "external symlink target must be untouched");
     }
 }

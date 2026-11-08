@@ -36,7 +36,6 @@ export interface ImportBatchResponse {
   errors: ImportErrorItem[];
 }
 
-let isImportInProgress = false;
 const recentlyImportedPaths = new Map<string, number>();
 const DEDUP_WINDOW_MS = 1000;
 
@@ -49,122 +48,254 @@ function pruneRecentPaths(): void {
   }
 }
 
-export async function readImportedNoteContent(fileName: string): Promise<string> {
-  const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
-  if (isTauri) {
+export type ImportedNoteContent =
+  | { ok: true; content: string }
+  | { ok: false; error: string };
+
+export type ImportJobStatus = "completed" | "partial" | "failed" | "rejected";
+
+export interface ImportJobOutcome {
+  jobId: string;
+  status: ImportJobStatus;
+  imported: ImportedItem[];
+  errors: ImportErrorItem[];
+  reason?: string;
+  openingError?: string;
+}
+
+export interface ImportJobHandle {
+  jobId: string;
+  promise: Promise<ImportJobOutcome>;
+}
+
+type PendingImportJob = {
+  id: string;
+  paths: string[];
+  resolve: (outcome: ImportJobOutcome) => void;
+};
+
+const MAX_PENDING_IMPORTS = 32;
+const pendingImportJobs: PendingImportJob[] = [];
+let importWorkerActive = false;
+let importJobCounter = 0;
+const importOutcomeSubscribers = new Map<string, Set<(o: ImportJobOutcome) => void>>();
+
+export function subscribeImportJob(
+  jobId: string,
+  listener: (outcome: ImportJobOutcome) => void,
+): () => void {
+  let set = importOutcomeSubscribers.get(jobId);
+  if (!set) {
+    set = new Set();
+    importOutcomeSubscribers.set(jobId, set);
+  }
+  set.add(listener);
+  return () => {
+    set!.delete(listener);
+    if (set!.size === 0) importOutcomeSubscribers.delete(jobId);
+  };
+}
+
+function notifyImportOutcome(outcome: ImportJobOutcome): void {
+  const set = importOutcomeSubscribers.get(outcome.jobId);
+  if (!set) return;
+  for (const cb of [...set]) {
     try {
-      const pathFile = await join(MAIN_FOLDER, fileName);
-      return await readTextFile(pathFile, BASE_DIRECTORY);
-    } catch {
-      try {
-        return await readTextFile(`${MAIN_FOLDER}/${fileName}`, BASE_DIRECTORY);
-      } catch {
-        return "";
-      }
+      cb(outcome);
+    } catch (err) {
+      logger.warn("import outcome subscriber failed:", err);
     }
   }
-  return "";
+  importOutcomeSubscribers.delete(outcome.jobId);
+}
+
+/** Only for tests: reset FIFO queue and dedup state between cases. */
+export function __resetImportQueueForTests(): void {
+  pendingImportJobs.length = 0;
+  importWorkerActive = false;
+  recentlyImportedPaths.clear();
+  importOutcomeSubscribers.clear();
+}
+
+export function __getImportQueueDepthForTests(): number {
+  return pendingImportJobs.length;
+}
+
+export async function readImportedNoteContent(fileName: string): Promise<ImportedNoteContent> {
+  const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  if (!isTauri) {
+    return { ok: false, error: "Lectura no disponible fuera de Tauri" };
+  }
+  try {
+    const pathFile = await join(MAIN_FOLDER, fileName);
+    const content = await readTextFile(pathFile, BASE_DIRECTORY);
+    return { ok: true, content };
+  } catch {
+    try {
+      const content = await readTextFile(`${MAIN_FOLDER}/${fileName}`, BASE_DIRECTORY);
+      return { ok: true, content };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+  }
 }
 
 /**
- * Importa uno o varios archivos externos al directorio de notas de Lyra mediante copia segura.
- * Respeta los cambios pendientes del editor antes de navegar a la nota importada.
+ * Imports one or more external files via FIFO queue.
+ * Each accepted job resolves its promise with a verifiable outcome
+ * (independent of any component mounting). Dedup is sealed at
+ * execution time, never at enqueue time.
  */
-export async function handleExternalFileImport(paths: string[]): Promise<boolean> {
-  if (!paths || paths.length === 0) return false;
+export function enqueueExternalFileImport(paths: string[]): ImportJobHandle {
+  const jobId = `import-${++importJobCounter}-${Date.now().toString(36)}`;
+  let resolveOutcome!: (outcome: ImportJobOutcome) => void;
+  const promise = new Promise<ImportJobOutcome>((resolve) => {
+    resolveOutcome = resolve;
+  });
 
+  const uniquePaths = [...new Set((paths ?? []).filter(Boolean))];
+  if (uniquePaths.length === 0) {
+    const outcome: ImportJobOutcome = {
+      jobId,
+      status: "rejected",
+      imported: [],
+      errors: [],
+      reason: "empty",
+    };
+    resolveOutcome(outcome);
+    notifyImportOutcome(outcome);
+    return { jobId, promise };
+  }
+
+  if (pendingImportJobs.length >= MAX_PENDING_IMPORTS) {
+    const outcome: ImportJobOutcome = {
+      jobId,
+      status: "rejected",
+      imported: [],
+      errors: [{ path: uniquePaths[0], error: "Cola de importación llena" }],
+      reason: "queue_full",
+    };
+    notification("error", "Cola de importación llena: no se pudo encolar el lote.");
+    resolveOutcome(outcome);
+    notifyImportOutcome(outcome);
+    return { jobId, promise };
+  }
+
+  pendingImportJobs.push({ id: jobId, paths: uniquePaths, resolve: resolveOutcome });
+  void pumpImportQueue();
+  return { jobId, promise };
+}
+
+async function pumpImportQueue(): Promise<void> {
+  if (importWorkerActive) return;
+  importWorkerActive = true;
+  try {
+    while (pendingImportJobs.length > 0) {
+      const job = pendingImportJobs.shift()!;
+      let outcome: ImportJobOutcome;
+      try {
+        outcome = await executeImportJob(job);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        outcome = {
+          jobId: job.id,
+          status: "failed",
+          imported: [],
+          errors: [{ path: job.paths[0], error: msg }],
+        };
+      }
+      notifyImportOutcome(outcome);
+      job.resolve(outcome);
+    }
+  } finally {
+    importWorkerActive = false;
+  }
+}
+
+async function executeImportJob(job: PendingImportJob): Promise<ImportJobOutcome> {
   pruneRecentPaths();
   const now = Date.now();
 
-  // Filtrar rutas repetidas en una misma ráfaga de eventos del sistema operativo
-  const candidatePaths = paths.filter(p => {
+  const candidatePaths = job.paths.filter((p) => {
     const last = recentlyImportedPaths.get(p);
-    if (last && now - last < DEDUP_WINDOW_MS) {
-      return false;
-    }
+    if (last && now - last < DEDUP_WINDOW_MS) return false;
     return true;
   });
 
   if (candidatePaths.length === 0) {
-    return false;
+    return {
+      jobId: job.id,
+      status: "rejected",
+      imported: [],
+      errors: [],
+      reason: "duplicate",
+    };
   }
 
-  for (const p of candidatePaths) {
-    recentlyImportedPaths.set(p, now);
+  const stampCandidates = (importedPaths: string[]): void => {
+    const stamp = Date.now();
+    for (const p of importedPaths) {
+      recentlyImportedPaths.set(p, stamp);
+    }
+  };
+
+  const isTauri =
+    typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  if (!isTauri) {
+    logger.warn("Importación externa no disponible fuera de Tauri");
+    // Sin backend: no sellar dedup (retry posible).
+    return {
+      jobId: job.id,
+      status: "failed",
+      imported: [],
+      errors: [{ path: candidatePaths[0], error: "Importación no disponible fuera de Tauri" }],
+    };
   }
 
-  if (isImportInProgress) {
-    // Si ya hay una importación en curso, encolar tras breve pausa
-    setTimeout(() => {
-      void handleExternalFileImport(candidatePaths);
-    }, 150);
-    return false;
+  const response = await invoke<ImportBatchResponse>("import_external_files", {
+    paths: candidatePaths,
+  });
+  const imported = response.imported ?? [];
+  const errors = [...(response.errors ?? [])];
+
+  // M2-1: sellado al finalizar, solo rutas realmente importadas.
+  // Failed/partial-failed NO bloquean el reintento inmediato.
+  const importedPaths = imported
+    .map((i) => i.original_path)
+    .filter((p) => candidatePaths.includes(p));
+  stampCandidates(importedPaths);
+
+  for (const err of errors) {
+    notification("error", err.error);
   }
 
-  isImportInProgress = true;
+  if (imported.length === 0) {
+    return {
+      jobId: job.id,
+      status: errors.length > 0 ? "failed" : "failed",
+      imported: [],
+      errors,
+    };
+  }
 
-  try {
-    const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
-    if (!isTauri) {
-      logger.warn("Importación externa no disponible fuera de Tauri");
-      return false;
-    }
+  for (const item of imported) {
+    fileStore.getState().updateListFiles(item.file_name);
+  }
 
-    const response = await invoke<ImportBatchResponse>("import_external_files", {
-      paths: candidatePaths,
-    });
+  const finish = (openingError?: string): ImportJobOutcome => ({
+    jobId: job.id,
+    status: errors.length > 0 ? "partial" : "completed",
+    imported,
+    errors,
+    ...(openingError ? { openingError } : {}),
+  });
 
-    // 1. Notificar errores específicos de archivos rechazados o incompatibles
-    if (response.errors && response.errors.length > 0) {
-      for (const err of response.errors) {
-        notification("error", err.error);
-      }
-    }
+  const firstItem = imported[0];
+  const currentSelected = fileStore.getState().selectedFile;
+  const isAlreadyOpen = currentSelected.name === firstItem.file_name;
 
-    // Si no hubo ningún archivo importado exitosamente, concluir aquí
-    if (!response.imported || response.imported.length === 0) {
-      return false;
-    }
-
-    // 2. Registrar los archivos importados en el store local de notas
-    for (const item of response.imported) {
-      fileStore.getState().updateListFiles(item.file_name);
-    }
-
-    const firstItem = response.imported[0];
-    const currentSelected = fileStore.getState().selectedFile;
-    const isAlreadyOpen = currentSelected.name === firstItem.file_name;
-
-    // Caso B: Si la nota ya está abierta en el editor activo, reutilizarla y enfocarla
-    // sin re-leer de disco ni perder ediciones en memoria ni duplicar
-    if (isAlreadyOpen) {
-      navigateTo(PAGES.file);
-      setTimeout(() => {
-        if (typeof document !== "undefined") {
-          const textarea = document.querySelector<HTMLTextAreaElement>(".editor-textarea");
-          textarea?.focus();
-        }
-      }, 50);
-      return true;
-    }
-
-    // 3. Proteger cambios pendientes en el editor activo antes de cambiar de nota
-    const savedSuccessfully = await flushActiveEditors();
-    if (!savedSuccessfully) {
-      notification(
-        "error",
-        "Los archivos se importaron correctamente, pero no se pudo abrir la nota porque hay cambios pendientes que no pudieron guardarse."
-      );
-      return true;
-    }
-
-    // 4. Abrir la primera nota importada o interna
-    const content = await readImportedNoteContent(firstItem.file_name);
-
-    fileStore.getState().setSelectedFile({
-      name: firstItem.file_name,
-      content,
-    });
+  if (isAlreadyOpen) {
     navigateTo(PAGES.file);
     setTimeout(() => {
       if (typeof document !== "undefined") {
@@ -172,26 +303,58 @@ export async function handleExternalFileImport(paths: string[]): Promise<boolean
         textarea?.focus();
       }
     }, 50);
-
-    // 5. Notificación al usuario solo cuando se importen copias de archivos externos
-    const externalImported = response.imported.filter(item => !item.is_internal);
-    if (externalImported.length === 1) {
-      notification("success", `${noteLabel(externalImported[0].file_name)} se importó correctamente`);
-    } else if (externalImported.length > 1) {
-      notification(
-        "success",
-        `Se importaron ${externalImported.length} archivos (abriendo ${noteLabel(firstItem.file_name)})`
-      );
-    }
-
-    return true;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    notification("error", `Error al importar archivos: ${msg}`);
-    return false;
-  } finally {
-    isImportInProgress = false;
+    return finish();
   }
+
+  const savedSuccessfully = await flushActiveEditors();
+  if (!savedSuccessfully) {
+    const msg =
+      "Los archivos se importaron correctamente, pero no se pudo abrir la nota porque hay cambios pendientes que no pudieron guardarse.";
+    notification("error", msg);
+    return finish(msg);
+  }
+
+  const res = await readImportedNoteContent(firstItem.file_name);
+  if (!res.ok) {
+    const msg = `No se pudo leer ${noteLabel(firstItem.file_name)}: ${res.error}`;
+    notification("error", msg);
+    return finish(msg);
+  }
+  const content = res.content;
+  fileStore.getState().setSelectedFile({
+    name: firstItem.file_name,
+    content,
+  });
+  navigateTo(PAGES.file);
+  setTimeout(() => {
+    if (typeof document !== "undefined") {
+      const textarea = document.querySelector<HTMLTextAreaElement>(".editor-textarea");
+      textarea?.focus();
+    }
+  }, 50);
+
+  const externalImported = imported.filter((item) => !item.is_internal);
+  if (externalImported.length === 1) {
+    notification("success", `${noteLabel(externalImported[0].file_name)} se importó correctamente`);
+  } else if (externalImported.length > 1) {
+    notification(
+      "success",
+      `Se importaron ${externalImported.length} archivos (abriendo ${noteLabel(firstItem.file_name)})`,
+    );
+  }
+
+  return finish();
+}
+
+/**
+ * Legacy wrapper kept for existing callers/tests.
+ * Resolves true iff the job imported at least one file.
+ */
+export async function handleExternalFileImport(paths: string[]): Promise<boolean> {
+  if (!paths || paths.length === 0) return false;
+  const handle = enqueueExternalFileImport(paths);
+  const outcome = await handle.promise;
+  return outcome.status !== "rejected" && outcome.imported.length > 0;
 }
 
 let isListenerInitialized = false;
@@ -211,7 +374,7 @@ export async function initExternalFileListener(): Promise<() => void> {
   try {
     unlisten = await listen<string[]>("lyra://open-files", (event) => {
       if (Array.isArray(event.payload) && event.payload.length > 0) {
-        void handleExternalFileImport(event.payload);
+        void enqueueExternalFileImport(event.payload).promise;
       }
     });
   } catch (err) {
@@ -223,7 +386,7 @@ export async function initExternalFileListener(): Promise<() => void> {
     try {
       const pending = await invoke<string[]>("get_pending_open_files");
       if (Array.isArray(pending) && pending.length > 0) {
-        void handleExternalFileImport(pending);
+        void enqueueExternalFileImport(pending).promise;
       }
     } catch (err) {
       logger.warn("No se pudo obtener archivos pendientes de arranque:", err);

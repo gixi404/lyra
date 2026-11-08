@@ -1,5 +1,6 @@
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { BASE_DIRECTORY, MAIN_FOLDER } from "./consts";
+import { logger } from "./logger";
 
 export interface LogEntry {
   timestamp: number;
@@ -73,7 +74,7 @@ class EditorDebugger {
           : category === "STATE"
           ? "#10b981"
           : "#00a8ff";
-      console.log(
+      logger.log(
         `%c[${category}] ${name} @ ${timeStr} (+${entry.timestamp}ms)`,
         `color: ${color}; font-weight: bold`,
         details ?? ""
@@ -101,10 +102,10 @@ class EditorDebugger {
     const fileName = `${MAIN_FOLDER}/editor_debug.log`;
     try {
       await writeTextFile(fileName, logContent, BASE_DIRECTORY);
-      if (((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false)) console.log(`[Lyra Debug] Log successfully written to ${fileName}`);
+      logger.log(`[Lyra Debug] Log successfully written to ${fileName}`);
       return `Guardado con éxito en ~/Documents/${fileName}`;
     } catch (err) {
-      if (((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false)) console.error("[Lyra Debug] Failed to write log file:", err);
+      logger.error("[Lyra Debug] Failed to write log file:", err);
       // Fallback: download as text file in browser context
       try {
         const blob = new Blob([logContent], { type: "text/plain" });

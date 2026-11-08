@@ -13,6 +13,18 @@ import {
   normalizeText,
 } from "../utils/editorSyncCoordinator";
 import { reconcileDraftState } from "../utils/draftRecovery";
+import {
+  clearDraft as clearDraftStore,
+  flushDraftSync,
+  getDraftProtection as getPersistedDraftProtection,
+  markDraftSaved,
+  readDraftDisk,
+  readDraftLS,
+  seedDraftRevision,
+  subscribeDraftProtection,
+  writeDraft as writeDraftStore,
+  type DraftProtection,
+} from "../utils/draftStore.ts";
 import { noteLabel } from "../utils/noteName";
 import {
   clearDetachedSaveFailure,
@@ -46,10 +58,6 @@ function scheduleCloudSync(onSyncStart?: () => void): void {
 }
 
 
-function getDraftKey(fileName: string): string {
-  return `${DRAFT_STORAGE_PREFIX}:${fileName}`;
-}
-
 function readDraft(fileName: string): DraftPayload | null {
   if (!fileName) return null;
 
@@ -58,7 +66,10 @@ function readDraft(fileName: string): DraftPayload | null {
     if (draft !== null) return draft;
     return window.localStorage.getItem(key);
   }, null);
-  if (!rawDraft) return null;
+  if (!rawDraft) {
+    // Fallback legacy: draftStore LS (clave canónica).
+    return readDraftLS(fileName);
+  }
 
   try {
     const parsed: DraftPayload = JSON.parse(rawDraft);
@@ -83,12 +94,7 @@ function readDraft(fileName: string): DraftPayload | null {
 
 function writeDraft(fileName: string, draftContent: string): void {
   if (!fileName) return;
-
-  const payload: DraftPayload = {
-    content: draftContent,
-    updatedAt: Date.now(),
-  };
-  window.localStorage.setItem(getDraftKey(fileName), JSON.stringify(payload));
+  writeDraftStore(fileName, draftContent);
 }
 
 function clearDraft(fileName: string): void {
@@ -96,6 +102,7 @@ function clearDraft(fileName: string): void {
   getCompatibleStorageKeys(fileName, "", DRAFT_STORAGE_PREFIX).forEach(key => {
     window.localStorage.removeItem(key);
   });
+  clearDraftStore(fileName);
 }
 
 function saveLastModified(fileName: string, previousContent: string, currentContent: string): void {
@@ -148,9 +155,10 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       writeDraft,
       clearDraft,
       scheduleCloudSync: scheduleDebouncedCloudSync,
-      onSaveSuccess: (name, prev, current) => {
+      onSaveSuccess: (name, prev, current, savedRevision) => {
         saveLastModified(name, prev, current);
         clearDetachedSaveFailure(name);
+        markDraftSaved(name, current, savedRevision);
       },
       onSaveError: (name, _content, _err) => {
         notification("error", `No se pudo guardar ${noteLabel(name)}. Tus cambios se conservaron en un borrador local`);
@@ -193,9 +201,10 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       writeDraft,
       clearDraft,
       scheduleCloudSync: scheduleDebouncedCloudSync,
-      onSaveSuccess: (name, prev, current) => {
+      onSaveSuccess: (name, prev, current, savedRevision) => {
         saveLastModified(name, prev, current);
         clearDetachedSaveFailure(name);
+        markDraftSaved(name, current, savedRevision);
       },
       onSaveError: (name, _content, _err) => {
         notification("error", `No se pudo guardar ${noteLabel(name)}. Tus cambios se conservaron en un borrador local`);
@@ -261,20 +270,36 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
     }
   }, [selectedFile.name, goTo]);
 
+  const [protection, setProtection] = useState<DraftProtection>(getPersistedDraftProtection);
   useEffect(() => {
-    const flushOnLifecycleChange = (): void => {
+    const unsub = subscribeDraftProtection(() => {
+      setProtection(getPersistedDraftProtection());
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const flushOnLifecycleChange = (event?: BeforeUnloadEvent): void => {
       if (coordinatorRef.current) {
-        coordinatorRef.current.flushDraft();
+        const name = coordinatorRef.current.getFileName();
+        // Solo LS síncrono en beforeunload (no garantiza writes asíncronos).
+        const latest = coordinatorRef.current.getLatestContent();
+        const ok = flushDraftSync(name, latest);
         void coordinatorRef.current.flushAutosave();
+        if (!ok && event) {
+          // Preguntar al usuario: el respaldo aún no está confirmado.
+          event.preventDefault();
+        }
       }
     };
+    const flushOnPagehide = (): void => flushOnLifecycleChange();
 
     window.addEventListener("beforeunload", flushOnLifecycleChange);
-    window.addEventListener("pagehide", flushOnLifecycleChange);
+    window.addEventListener("pagehide", flushOnPagehide);
 
     return () => {
       window.removeEventListener("beforeunload", flushOnLifecycleChange);
-      window.removeEventListener("pagehide", flushOnLifecycleChange);
+      window.removeEventListener("pagehide", flushOnPagehide);
     };
   }, []);
 
@@ -330,13 +355,20 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
         return;
       }
 
+      // Sembrar con base canónica ANTES de pedir mtime/draft y antes de la
+      // primera edición (gana la carrera con el debounce de 250ms).
+      await seedDraftRevision(selectedFile.name, currentDiskContent);
+      if (isCancelled) return;
       const diskMtime = await getFileMtime(selectedFile.name);
+      if (isCancelled) return;
+      const diskDraft = await readDraftDisk(selectedFile.name);
       if (isCancelled) return;
 
       const result = await reconcileDraftState({
         fileName: selectedFile.name,
         diskContent: currentDiskContent,
         draft,
+        diskDraft,
         diskMtime,
         saveFile: async (name, newContent) => {
           await createFile(name, newContent);
@@ -440,6 +472,13 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
     <MainContainer>
       <Suspense fallback={<div className="w-full flex-1" />}>
         <div className="w-full flex-1 flex flex-col items-center justify-start animate-editor-enter">
+          {(protection === "pending" || protection === "unprotected") && (
+            <p role="alert" className="text-sm opacity-80">
+              {protection === "pending"
+                ? "Respaldando cambios…"
+                : "Cambios sin protección: no se pudo guardar el borrador."}
+            </p>
+          )}
           <TinyEditor
             key={selectedFile.name}
             fileName={selectedFile.name}

@@ -21,6 +21,7 @@ import {
   stat,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
+import { clearDraft as clearDraftStore, migrateDraftDisk } from "../utils/draftStore.ts";
 import { logger } from "../utils/logger.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
@@ -66,6 +67,20 @@ function useFile(): Files {
     moveCompatibleValue(oldName, nextDisplayName, "-scroll");
     syncPaperState(oldName, nextDisplayName);
     moveDetachedSaveFailure(oldName, nextDisplayName);
+    // M9: la identidad cambia con el nombre; migrar respaldo en disco.
+    // Si falla, el original se conserva (migrateDraftDisk no lo borra).
+    try {
+      const isTauri = typeof window !== "undefined" &&
+        Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+      if (isTauri) {
+        const mig = await migrateDraftDisk(oldName, nextDisplayName);
+        if (mig.error) {
+          logger.warn(`Rename de ${oldName} mantuvo respaldo original: ${mig.error}`);
+        }
+      }
+    } catch (err) {
+      logger.warn("Could not migrate disk draft on rename:", err);
+    }
 
     editedFile();
     return nextDisplayName;
@@ -82,6 +97,7 @@ function useFile(): Files {
     removeCompatibleKeys(name, "", DRAFT_STORAGE_PREFIX);
     removeCompatibleKeys(name, "-modified");
     removeCompatibleKeys(name, "-scroll");
+    clearDraftStore(name);
     syncPaperState(name);
     clearDetachedSaveFailure(name);
   }

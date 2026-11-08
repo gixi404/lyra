@@ -1,4 +1,5 @@
 import { normalizeText } from "./editorSyncCoordinator.ts";
+import { contentHash, type DraftDiskPayload } from "./draftStore.ts";
 
 export interface DraftPayload {
   content: string;
@@ -109,6 +110,9 @@ export interface ReconcileDraftParams {
   fileName: string;
   diskContent: string;
   draft: DraftPayload | null;
+  /** Respaldo en .drafts/ (con revisión y baseHash). Si existe, tiene autoridad
+   *  sobre heurísticas de updatedAt del borrador legacy en localStorage. */
+  diskDraft?: DraftDiskPayload | null;
   diskMtime: number | null;
   saveFile: (name: string, content: string) => Promise<void>;
   readFile: (name: string) => Promise<string>;
@@ -136,6 +140,7 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
     fileName,
     diskContent,
     draft,
+    diskDraft,
     diskMtime,
     saveFile,
     readFile,
@@ -146,8 +151,15 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
     dateTag,
   } = params;
 
+  // 0. Candidatos: respaldo en disco (con revisión) o legacy localStorage.
+  // Si hay disco, manda por revisión; si no, queda el legacy con updatedAt.
+  const hasDiskDraft = Boolean(diskDraft);
+  const effectiveDraft: DraftPayload | null = diskDraft
+    ? { content: diskDraft.content, updatedAt: diskDraft.updatedAt }
+    : draft;
+
   // 1. Si no hay borrador, cargar disco directamente
-  if (!draft) {
+  if (!effectiveDraft) {
     return {
       action: "use_disk",
       contentToLoad: diskContent,
@@ -156,7 +168,7 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
   }
 
   // 2. Si el contenido del borrador es idéntico al de disco (normalizando CRLF a LF)
-  if (isContentEquivalent(diskContent, draft.content)) {
+  if (isContentEquivalent(diskContent, effectiveDraft.content)) {
     clearDraft(fileName);
     return {
       action: "use_disk",
@@ -165,17 +177,42 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
     };
   }
 
-  // 3. El contenido difiere. Evaluar marcas temporales.
-  // Si no se puede obtener diskMtime o el borrador es más reciente o concurrente (con 1s de margen de tolerancia)
-  const isDiskNewer = diskMtime !== null && diskMtime > draft.updatedAt + 1000;
-
-  if (!isDiskNewer) {
-    // El borrador es más reciente: cargar el borrador en el editor y mantenerlo en localStorage
-    return {
-      action: "use_draft",
-      contentToLoad: draft.content,
-      draftCleared: false,
-    };
+  // 3. Respaldo con revisión: obsoleto (crash tras guardado canónico) o canónico avanzado.
+  if (hasDiskDraft && diskDraft) {
+    // Borrador ya guardado canónicamente y luego interrumpido antes de limpiar.
+    if (diskDraft.revision <= diskDraft.lastSavedRevision) {
+      clearDraft(fileName);
+      return {
+        action: "use_disk",
+        contentToLoad: diskContent,
+        draftCleared: true,
+      };
+    }
+    // El canónico cambió respecto de la base del borrador: nunca auto-aplicar.
+    // Ir a rescate por copia verificada (paso 5).
+    if (diskDraft.baseHash !== contentHash(diskContent)) {
+      // Los contenidos difieren y la base no coincide: rescate directo.
+    } else {
+      // Revisión viva sobre la misma base: usar borrador.
+      return {
+        action: "use_draft",
+        contentToLoad: effectiveDraft.content,
+        draftCleared: false,
+      };
+    }
+  } else if (effectiveDraft) {
+    // Legacy sin respaldo en disco: heurística updatedAt (sin cambios).
+    // Si no se puede obtener diskMtime o el borrador es más reciente o concurrente
+    // (con 1s de margen de tolerancia), el borrador es más reciente.
+    const isDiskNewer = diskMtime !== null && diskMtime > effectiveDraft.updatedAt + 1000;
+    if (!isDiskNewer) {
+      return {
+        action: "use_draft",
+        contentToLoad: effectiveDraft.content,
+        draftCleared: false,
+      };
+    }
+    // De lo contrario (disco posterior), caer al rescate por copia.
   }
 
   // 4. El disco es posterior y los contenidos difieren:
@@ -183,7 +220,7 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
   try {
     const recoveryFileName = await writeUniqueRecoveryFile(
       fileName,
-      draft.content,
+      effectiveDraft.content,
       saveFile,
       fileExists,
       dateTag
@@ -191,7 +228,7 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
 
     // Verificación de lectura obligatoria
     const readBack = await readFile(recoveryFileName);
-    if (!isContentEquivalent(readBack, draft.content)) {
+    if (!isContentEquivalent(readBack, effectiveDraft.content)) {
       throw new Error(
         `Fallo de verificación de integridad al escribir copia de rescate '${recoveryFileName}'`
       );
@@ -212,7 +249,7 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
     onConflictError?.(error);
     return {
       action: "conflict_failed",
-      contentToLoad: draft.content,
+      contentToLoad: effectiveDraft.content,
       draftCleared: false,
     };
   }

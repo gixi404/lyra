@@ -139,6 +139,13 @@ pnpm run tauri dev      # desarrollo con hot-reload
 
 ---
 
+## Riesgos Conocidos y Observabilidad (Auditoría de Logs)
+
+- **Bajo — Procedencia**: Un fallo en `record_local_write` (`save_note_atomic`, `create_local_note`, `import_paths`) no impide guardar la nota física en disco, pero tampoco se comunica al usuario en release (retorna `Ok` sin toast ni error visual). La reconciliación de autorización queda postergada al escaneo en los siguientes ciclos de Google Drive.
+- **Medio — Explorador**: `list_notes` (`list_note_files_with_stats_at`) omite de forma silenciosa subdirectorios o entradas de disco inaccesibles mediante `continue`, devolviendo una lista parcial en `Ok(listing)` sin advertir al frontend de las omisiones.
+
+---
+
 ## Post-Task: Auto-Doc Sync
 
 After completing any task with significant changes (architecture, conventions, commands, dependencies, API, schema, auth, env vars), load the `docs-autosync` skill and follow its instructions to sync project documentation.

@@ -1113,10 +1113,12 @@ async fn revoke_logout_state_with_url(state: Option<StoredAuthState>, endpoint: 
         .unwrap_or(&state.tokens.access_token);
     let client = reqwest::Client::builder().timeout(Duration::from_secs(6)).build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    if let Err(error) = revoke_token_remote_with_url(endpoint, token, &client).await {
-        let safe_error = super::sync::sanitize_error_message(&error);
+    if let Err(_error) = revoke_token_remote_with_url(endpoint, token, &client).await {
         #[cfg(debug_assertions)]
-        log::warn!("[GDrive] Remote revocation failed: {safe_error}");
+        {
+            let safe_error = super::sync::sanitize_error_message(&_error);
+            log::warn!("[GDrive] Remote revocation failed: {safe_error}");
+        }
         return false;
     }
     true

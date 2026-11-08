@@ -1,4 +1,5 @@
 import type { EditorSyncCoordinator } from "./editorSyncCoordinator";
+import { flushDraftAsync } from "./draftStore.ts";
 
 const sessions = new Map<EditorSyncCoordinator, number>();
 let membershipRevision = 0;
@@ -32,8 +33,11 @@ export function moveDetachedSaveFailure(oldName: string, newName: string): void 
   if (failedDetachedFiles.delete(oldName)) failedDetachedFiles.add(newName);
 }
 
-export function flushEditorDrafts(): void {
-  for (const coordinator of sessions.keys()) coordinator.flushDraft();
+export async function flushEditorDrafts(): Promise<void> {
+  for (const coordinator of sessions.keys()) {
+    coordinator.flushDraft();
+    await flushDraftAsync(coordinator.getFileName());
+  }
 }
 
 export async function flushActiveEditors(): Promise<boolean> {
@@ -41,6 +45,7 @@ export async function flushActiveEditors(): Promise<boolean> {
   for (const coordinator of sessions.keys()) {
     if (coordinator.getIsDirty()) {
       const saved = await coordinator.flushAutosave();
+      await flushDraftAsync(coordinator.getFileName());
       if (!saved) {
         allSaved = false;
       }
@@ -76,7 +81,11 @@ export async function prepareEditorsForRelaunch(timeoutMs = 10_000): Promise<boo
     if (remaining <= 0) return false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const persisted = await Promise.race([
-      Promise.all(snapshot.map(({ coordinator }) => coordinator.flushAutosave())),
+      Promise.all(snapshot.map(async ({ coordinator }) => {
+        const saved = await coordinator.flushAutosave();
+        await flushDraftAsync(coordinator.getFileName());
+        return saved;
+      })),
       new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     if (!persisted || persisted.some(saved => !saved)) return false;

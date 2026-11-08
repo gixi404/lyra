@@ -1,4 +1,5 @@
 import { getUpdateInstallInProgress } from "./editorPersistence.ts";
+import { flushDraftAsync } from "./draftStore.ts";
 
 export interface EditorSyncCoordinatorOptions {
   fileName: string;
@@ -7,7 +8,12 @@ export interface EditorSyncCoordinatorOptions {
   readFileContent: (name: string) => Promise<string>;
   writeDraft?: (name: string, content: string) => void;
   clearDraft?: (name: string) => void;
-  onSaveSuccess?: (fileName: string, previousContent: string, currentContent: string) => void;
+  onSaveSuccess?: (
+    fileName: string,
+    previousContent: string,
+    currentContent: string,
+    savedRevision: number,
+  ) => void;
   onSaveError?: (fileName: string, content: string, error: unknown) => void;
   onContentReloaded?: (newContent: string) => void;
   onConflictCreated?: (conflictFileName: string, userEdits: string) => void;
@@ -266,7 +272,7 @@ export class EditorSyncCoordinator {
             }
           }
           if (this.options.onSaveSuccess) {
-            this.options.onSaveSuccess(targetFileName, previousSnapshot, snapshotToPersist);
+            this.options.onSaveSuccess(targetFileName, previousSnapshot, snapshotToPersist, currentEditRev);
           }
           if (this.options.scheduleCloudSync) {
             this.options.scheduleCloudSync();
@@ -437,6 +443,16 @@ export class EditorSyncCoordinator {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    return this.saveQueue.then(() => this.isDirty ? this.persistLatestToDisk() : true);
+    const name = this.fileName;
+    return this.saveQueue.then(async () => {
+      const saved = this.isDirty ? await this.persistLatestToDisk() : true;
+      try {
+        const draftOk = await flushDraftAsync(name);
+        if (!draftOk) return false;
+      } catch {
+        return false;
+      }
+      return saved;
+    });
   }
 }

@@ -1,10 +1,19 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use crate::gdrive;
 
 pub const MAX_IMPORT_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20 MB
+
+fn read_bounded<R: Read>(
+    reader: R,
+    bytes: &mut Vec<u8>,
+    _expected_len: u64,
+) -> std::io::Result<()> {
+    reader.take(MAX_IMPORT_FILE_SIZE + 1).read_to_end(bytes)?;
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ImportedFile {
@@ -115,12 +124,23 @@ pub fn read_and_validate_external_file(source_path: &Path) -> Result<(String, Ve
     }
 
     // 5. Lectura en modo solo lectura del archivo externo (el archivo fuente nunca se modifica)
+    // Lectura acotada a MAX+1 para cerrar el TOCTOU entre stat y read (M8):
+    // si el archivo crece entre metadata y read_to_end, se detecta sin allocatear
+    // memoria ilimitada.
     let mut file = fs::File::open(source_path)
         .map_err(|e| format!("No se pudo abrir '{path_str}' para lectura: {e}"))?;
 
-    let mut bytes = Vec::with_capacity(size as usize);
-    file.read_to_end(&mut bytes)
+    let mut bytes = Vec::with_capacity(size.min(MAX_IMPORT_FILE_SIZE) as usize);
+    read_bounded(std::io::Read::by_ref(&mut file), &mut bytes, size)
         .map_err(|e| format!("Error de lectura en '{path_str}': {e}"))?;
+
+    if bytes.len() as u64 > MAX_IMPORT_FILE_SIZE {
+        let size_mb = (MAX_IMPORT_FILE_SIZE + 1) as f64 / (1024.0 * 1024.0);
+        return Err(format!(
+            "El archivo supera el límite de seguridad de 20 MB ({:.2} MB). Para proteger el rendimiento, no puede importarse.",
+            size_mb
+        ));
+    }
 
     // 6. Detección de binarios mediante búsqueda de bytes nulos (null bytes \0)
     if bytes.contains(&0) {
@@ -158,27 +178,17 @@ pub fn write_unique_imported_file(
     let safe_stem = sanitize_import_stem(&stem);
     let safe_ext = ext.to_ascii_lowercase();
 
-    // 1. Intento con el nombre original limpio
+    // 1. Intento con el nombre original limpio (publicación exclusiva, M7)
     let initial_name = format!("{safe_stem}{safe_ext}");
     if gdrive::sync::is_safe_filename(&initial_name) {
         let initial_path = base_dir.join(&initial_name);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&initial_path)
-        {
-            Ok(mut file) => {
-                if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-                    let _ = fs::remove_file(&initial_path);
-                    return Err(format!("Error escribiendo copia de '{initial_name}': {e}"));
-                }
-                return Ok(initial_name);
-            }
+        match gdrive::sync::write_file_atomic_exclusive(&initial_path, bytes) {
+            Ok(_) => return Ok(initial_name),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // Proceder a buscar sufijo único incremental
             }
             Err(e) => {
-                return Err(format!("Error al crear nota importada '{initial_name}': {e}"));
+                return Err(format!("Error escribiendo copia de '{initial_name}': {e}"));
             }
         }
     }
@@ -190,20 +200,10 @@ pub fn write_unique_imported_file(
             continue;
         }
         let candidate_path = base_dir.join(&candidate_name);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate_path)
-        {
-            Ok(mut file) => {
-                if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-                    let _ = fs::remove_file(&candidate_path);
-                    return Err(format!("Error escribiendo copia de '{candidate_name}': {e}"));
-                }
-                return Ok(candidate_name);
-            }
+        match gdrive::sync::write_file_atomic_exclusive(&candidate_path, bytes) {
+            Ok(_) => return Ok(candidate_name),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("Error creando archivo candidato '{candidate_name}': {e}")),
+            Err(e) => return Err(format!("Error escribiendo copia de '{candidate_name}': {e}")),
         }
     }
 
@@ -312,14 +312,14 @@ pub async fn import_paths(
                     Ok(created_name) => {
                         let size = bytes.len() as u64;
                         // Registrar procedencia de la nueva nota importada
-                        if let Err(e) = gdrive::provenance::record_local_write(
+                        if let Err(_e) = gdrive::provenance::record_local_write(
                             lyra_dir,
                             &created_name,
                             active_account,
                             true,
                         ) {
                             #[cfg(debug_assertions)]
-                            eprintln!("[Importer] Nota importada localmente, aviso en procedencia: {e}");
+                            eprintln!("[Importer] Nota importada localmente, aviso en procedencia: {_e}");
                         }
 
                         result.imported.push(ImportedFile {
@@ -523,6 +523,76 @@ mod tests {
 
         let err = read_and_validate_external_file(&large_file).unwrap_err();
         assert!(err.contains("20 MB"), "Debe indicar que supera el límite de 20 MB: {err}");
+    }
+
+    #[test]
+    fn test_m8_bounded_read_rejects_after_stat_growth() {
+        // Archivo que pasa de 19 MiB (stat OK) a >20 MiB durante el read:
+        // la lectura acotada a MAX+1 debe rechazar sin allocatear de más.
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("crece.log");
+        fs::write(&src, vec![b'A'; (19 * 1024 * 1024) as usize]).unwrap();
+        let path_clone = src.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            use std::io::Write;
+            let mut f = fs::OpenOptions::new().append(true).open(path_clone).unwrap();
+            f.write_all(&vec![b'B'; (2 * 1024 * 1024) as usize]).unwrap();
+            f.sync_all().unwrap();
+        });
+        let result = std::panic::catch_unwind(|| read_and_validate_external_file(&src));
+        writer.join().unwrap();
+        let err = read_and_validate_external_file(&src).unwrap_err();
+        assert!(err.contains("20 MB"), "Debe rechazar tras crecimiento: {err}");
+        if let Ok(Ok((_, bytes))) = result {
+            assert!(bytes.len() as u64 <= MAX_IMPORT_FILE_SIZE);
+        }
+    }
+
+    #[test]
+    fn test_m8_take_bound_is_deterministic_without_timers() {
+        // Lector controlado: simula crecimiento entre stat y read sin
+        // temporizadores ni hilos. El buffer declara 19 MiB en stat pero el
+        // cursor devuelve MAX+100 bytes; Take(MAX+1) debe acotar.
+        struct GrowingReader {
+            remaining: usize,
+        }
+        impl std::io::Read for GrowingReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.remaining == 0 {
+                    return Ok(0);
+                }
+                let n = self.remaining.min(buf.len());
+                buf[..n].fill(b'A');
+                self.remaining -= n;
+                Ok(n)
+            }
+        }
+        let mut bytes = Vec::with_capacity(MAX_IMPORT_FILE_SIZE as usize);
+        let mut reader = GrowingReader { remaining: (MAX_IMPORT_FILE_SIZE + 100) as usize };
+        // Misma operación que read_and_validate_external_file (Take).
+        std::io::Read::by_ref(&mut reader)
+            .take(MAX_IMPORT_FILE_SIZE + 1)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes.len() as u64, MAX_IMPORT_FILE_SIZE + 1, "Take must slice at MAX+1");
+        assert!(bytes.len() as u64 > MAX_IMPORT_FILE_SIZE, "post-check must reject");
+    }
+
+    #[test]
+    fn test_m8_exact_20mb_accepted_and_20mb_plus_one_rejected() {
+        let dir = tempdir().unwrap();
+        // Exactamente MAX: bytes 'A' repetidos, texto plano válido.
+        let exact = dir.path().join("exacto.log");
+        fs::write(&exact, vec![b'A'; MAX_IMPORT_FILE_SIZE as usize]).unwrap();
+        let (_, bytes) = read_and_validate_external_file(&exact).unwrap();
+        assert_eq!(bytes.len() as u64, MAX_IMPORT_FILE_SIZE);
+
+        // MAX+1: debe rechazarse sin allocatear de más.
+        let over = dir.path().join("exceso.log");
+        fs::write(&over, vec![b'A'; (MAX_IMPORT_FILE_SIZE + 1) as usize]).unwrap();
+        let err = read_and_validate_external_file(&over).unwrap_err();
+        assert!(err.contains("20 MB"), "Debe rechazar MAX+1: {err}");
     }
 
     #[test]

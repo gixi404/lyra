@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { File } from "../utils/types";
 import { getAnimationDuration } from "../utils/motion.ts";
 import { flushEditorDrafts } from "../utils/editorPersistence.ts";
+import { getDraftProtection } from "../utils/draftStore.ts";
+import { useToastStore } from "./toastStore.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface FileItemStats {
@@ -190,7 +192,18 @@ export const fileStore = create<FileStoreState>(set => ({
   selectedFile: { name: "", content: "" },
   selectionGeneration: 0,
   setSelectedFile: (file: File) => {
-    flushEditorDrafts();
+    void flushEditorDrafts();
+    const protection = getDraftProtection();
+    if (protection === "pending" || protection === "unprotected") {
+      try {
+        useToastStore.getState().addToast(
+          "error",
+          "Cambios sin protección confirmada al cambiar de nota.",
+        );
+      } catch (err) {
+        logger.warn("Could not show unprotected-changes toast:", err);
+      }
+    }
     set(state => ({
       selectedFile: file,
       selectionGeneration: state.selectionGeneration + 1,

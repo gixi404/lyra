@@ -185,10 +185,11 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
 
         let rand_num: u16 = rand::random();
         let sync_id = format!("sync-{}-{:04x}", chrono::Utc::now().format("%H%M%S"), rand_num);
-        let now_str = chrono::Utc::now().to_rfc3339();
-
         #[cfg(debug_assertions)]
-        eprintln!("[GDrive Sync #{sync_id}] ({now_str}) Solicitud gdrive_sync_now recibida en backend.");
+        {
+            let now_str = chrono::Utc::now().to_rfc3339();
+            eprintln!("[GDrive Sync #{sync_id}] ({now_str}) Solicitud gdrive_sync_now recibida en backend.");
+        }
         let _ = app.emit("gdrive:sync_started", SyncStartPayload {
             sync_id: &sync_id, reason, request_id: request_id.as_deref(),
         });
@@ -233,9 +234,9 @@ async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut
                 let sanitized = sync::sanitize_error_message(&e);
                 #[cfg(debug_assertions)]
                 eprintln!("[GDrive Sync #{sync_id}] ERROR en run_sync: {sanitized}");
-                if let Err(save_error) = update_manifest_last_error(&sync_manifest_path, Some(sanitized.clone())).await {
+                if let Err(_save_error) = update_manifest_last_error(&sync_manifest_path, Some(sanitized.clone())).await {
                     #[cfg(debug_assertions)]
-                    eprintln!("[GDrive Sync #{sync_id}] Could not persist sync error: {save_error}");
+                    eprintln!("[GDrive Sync #{sync_id}] Could not persist sync error: {_save_error}");
                 }
 
                 let _ = app.emit("gdrive:sync_error", SyncErrorPayload { sync_id: &sync_id, message: &sanitized });
@@ -337,12 +338,12 @@ pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String) -> Res
     if let Some((account, pending, manifest_path)) = remote_deletion {
         if let Ok(client) = client::DriveClient::new_with_app_for_account(&app, &account.account_key, account.epoch) {
             let did = pending.drive_id.clone().ok_or("Missing remote deletion ID")?;
-            if let Err(e) = execute_remote_deletion(
+            if let Err(_e) = execute_remote_deletion(
                 &lyra_dir, &manifest_path, &file_name, &pending, &account.account_key,
                 || client.trash_file("", &did),
             ).await {
                 #[cfg(debug_assertions)]
-                eprintln!("[gdrive_delete_file] La eliminación remota de '{file_name}' queda pendiente: {e}");
+                eprintln!("[gdrive_delete_file] La eliminación remota de '{file_name}' queda pendiente: {_e}");
             }
         }
     }

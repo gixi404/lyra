@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 mod default_app;
+mod drafts;
 mod gdrive;
 mod importer;
 mod native_updater;
@@ -90,9 +91,9 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
     while let Some((current_dir, rel_prefix)) = queue.pop_front() {
         let entries = match std::fs::read_dir(&current_dir) {
             Ok(e) => e,
-            Err(err) => {
+            Err(_err) => {
                 #[cfg(debug_assertions)]
-                eprintln!("[list_notes] Skipping unreadable directory '{}': {err}", current_dir.display());
+                eprintln!("[list_notes] Skipping unreadable directory '{}': {_err}", current_dir.display());
                 continue;
             }
         };
@@ -101,9 +102,9 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
         for entry in entries {
             match entry {
                 Ok(e) => dir_entries.push(e),
-                Err(err) => {
+                Err(_err) => {
                     #[cfg(debug_assertions)]
-                    eprintln!("[list_notes] Skipping unreadable entry in '{}': {err}", current_dir.display());
+                    eprintln!("[list_notes] Skipping unreadable entry in '{}': {_err}", current_dir.display());
                 }
             }
         }
@@ -837,14 +838,54 @@ async fn save_note_atomic(
             .map(|d| d.as_millis() as i64)
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-        if let Err(e) = gdrive::provenance::record_local_write(&lyra_dir, &file_name, None, false) {
+        if let Err(_e) = gdrive::provenance::record_local_write(&lyra_dir, &file_name, None, false) {
             #[cfg(debug_assertions)]
-            eprintln!("[save_note_atomic] Note saved locally without updated cloud authorization: {e}");
+            eprintln!("[save_note_atomic] Note saved locally without updated cloud authorization: {_e}");
         }
         Ok::<i64, String>(mtime)
     })?;
 
     Ok(mtime)
+}
+
+#[tauri::command]
+fn save_draft_file(
+    app: tauri::AppHandle,
+    draft_id: String,
+    payload_json: String,
+) -> Result<(), String> {
+    let doc_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+    drafts::save_draft_file(&lyra_dir, &draft_id, &payload_json)
+}
+
+#[tauri::command]
+fn read_draft_file(
+    app: tauri::AppHandle,
+    draft_id: String,
+) -> Result<Option<String>, String> {
+    let doc_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+    drafts::read_draft_file(&lyra_dir, &draft_id)
+}
+
+#[tauri::command]
+fn delete_draft_file(
+    app: tauri::AppHandle,
+    draft_id: String,
+) -> Result<(), String> {
+    let doc_dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
+    let lyra_dir = doc_dir.join("lyra");
+    drafts::delete_draft_file(&lyra_dir, &draft_id)
 }
 
 #[tauri::command]
@@ -1008,6 +1049,9 @@ fn main() {
             get_platform_os,
             show_main_window,
             save_note_atomic,
+            save_draft_file,
+            read_draft_file,
+            delete_draft_file,
             list_note_files_with_stats,
             create_note,
             import_external_files,
