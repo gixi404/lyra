@@ -1,8 +1,8 @@
 import { twMerge } from "tailwind-merge";
-import { configStore } from "../store/configStore";
-import translations from "../utils/dictionary";
-import { themes } from "../utils/helpers";
-import type { Component } from "../utils/types";
+import { configStore } from "../store/configStore.ts";
+import translations from "../utils/dictionary.ts";
+import { themes } from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
 
 function NoFiles(): Component {
   const { paperIsOpen } = configStore();

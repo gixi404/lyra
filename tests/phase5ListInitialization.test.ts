@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { startListInitialization, startLocalFirstListInitialization } from "../src/utils/listInitialization.ts";
+import { shouldPreserveExplorerDataOnInit, startListInitialization, startLocalFirstListInitialization } from "../src/utils/listInitialization.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -98,4 +98,23 @@ test("a cancelled list session cannot apply a stale welcome refresh", async () =
   await prepare.promise;
   await Promise.resolve();
   assert.deepEqual(applied, [["Old.md"]]);
+});
+
+test("returning to an initialized explorer preserves existing data instead of forcing a loading state", () => {
+  assert.equal(
+    shouldPreserveExplorerDataOnInit({ isInitialized: true, files: ["nota.txt"], folders: [] }),
+    true,
+  );
+  assert.equal(
+    shouldPreserveExplorerDataOnInit({ isInitialized: true, files: [], folders: ["Trabajo"] }),
+    true,
+  );
+  assert.equal(
+    shouldPreserveExplorerDataOnInit({ isInitialized: false, files: ["nota.txt"], folders: [] }),
+    false,
+  );
+  assert.equal(
+    shouldPreserveExplorerDataOnInit({ isInitialized: true, files: [], folders: [] }),
+    false,
+  );
 });

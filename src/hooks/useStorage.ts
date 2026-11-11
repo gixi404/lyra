@@ -1,9 +1,9 @@
-import { configStore } from "../store/configStore";
+import { configStore } from "../store/configStore.ts";
 import {
   PERSISTENT_KEYS,
   savePersistentPreferencesNow,
   scheduleSavePersistentPreferences,
-} from "../utils/persistentPreferences";
+} from "../utils/persistentPreferences.ts";
 
 const storageInstance: Storage = {
   getItem: (key: string, defaultValue = ""): string => {

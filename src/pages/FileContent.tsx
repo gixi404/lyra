@@ -1,21 +1,22 @@
-import MainContainer from "../components/MainContainer";
-import useFile from "../hooks/useFile";
-import { fileStore } from "../store/fileStore";
+import MainContainer from "../components/MainContainer.tsx";
+import useFile from "../hooks/useFile.ts";
+import { fileStore } from "../store/fileStore.ts";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { INTRO_ES, PAGES } from "../utils/consts";
-import { isWelcomeFileName } from "../utils/welcome";
-import { getCompatibleStorageKeys, getDate, navigation, notification } from "../utils/helpers";
-import type { Component, File } from "../utils/types";
-import { useSyncStore, registerPreSyncHandler, type SyncResultPayload } from "../store/syncStore";
+import { INTRO_ES, PAGES } from "../utils/consts.ts";
+import { isWelcomeFileName } from "../utils/welcome.ts";
+import { getCompatibleStorageKeys, getDate, navigation, notification } from "../utils/helpers.ts";
+import type { Component, File } from "../utils/types.ts";
+import { useSyncStore, registerPreSyncHandler, type SyncResultPayload } from "../store/syncStore.ts";
 import { listen } from "@tauri-apps/api/event";
 import {
   EditorSyncCoordinator,
   normalizeText,
-} from "../utils/editorSyncCoordinator";
-import { reconcileDraftState } from "../utils/draftRecovery";
+} from "../utils/editorSyncCoordinator.ts";
+import { reconcileDraftState } from "../utils/draftRecovery.ts";
 import {
   clearDraft as clearDraftStore,
   flushDraftSync,
+  flushDraftAsync,
   getDraftProtection as getPersistedDraftProtection,
   markDraftSaved,
   readDraftDisk,
@@ -25,15 +26,16 @@ import {
   writeDraft as writeDraftStore,
   type DraftProtection,
 } from "../utils/draftStore.ts";
-import { noteLabel } from "../utils/noteName";
+import { noteLabel } from "../utils/noteName.ts";
 import {
   clearDetachedSaveFailure,
   getUpdateInstallInProgress,
   markDetachedSaveFailure,
   registerEditorSession,
   subscribeUpdateInstall,
-} from "../utils/editorPersistence";
+} from "../utils/editorPersistence.ts";
 import { logger } from "../utils/logger.ts";
+import { canAttachDraft, takeDraftIdentityConflict } from "../utils/noteIdentity.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 const TinyEditor = lazy(() => import("../components/TinyEditor"));
@@ -41,6 +43,7 @@ const TinyEditor = lazy(() => import("../components/TinyEditor"));
 interface DraftPayload {
   content: string;
   updatedAt: number;
+  logicalIdentity?: string;
 }
 
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -74,6 +77,7 @@ function readDraft(fileName: string): DraftPayload | null {
   try {
     const parsed: DraftPayload = JSON.parse(rawDraft);
     if (typeof parsed.content !== "string" || typeof parsed.updatedAt !== "number") return null;
+    if (!canAttachDraft(fileName, parsed.logicalIdentity)) return null;
 
     if (
       parsed.content.includes("<p>") &&
@@ -95,6 +99,17 @@ function readDraft(fileName: string): DraftPayload | null {
 function writeDraft(fileName: string, draftContent: string): void {
   if (!fileName) return;
   writeDraftStore(fileName, draftContent);
+}
+
+function reportSaveFailure(name: string, error: unknown): void {
+  void (async () => {
+    const protectedInStorage = getPersistedDraftProtection() === "protected_ls" || await flushDraftAsync(name);
+    if (protectedInStorage) {
+      notification("error", `No se pudo guardar ${noteLabel(name)} (${String(error)}). Tus cambios permanecen en un borrador recuperable.`);
+    } else {
+      notification("error", `No se pudo guardar ni respaldar ${noteLabel(name)}. Conserva esta ventana abierta y copia el texto antes de continuar.`);
+    }
+  })();
 }
 
 function clearDraft(fileName: string): void {
@@ -160,9 +175,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
         clearDetachedSaveFailure(name);
         markDraftSaved(name, current, savedRevision);
       },
-      onSaveError: (name, _content, _err) => {
-        notification("error", `No se pudo guardar ${noteLabel(name)}. Tus cambios se conservaron en un borrador local`);
-      },
+      onSaveError: (name, _content, error) => reportSaveFailure(name, error),
       onContentReloaded: (newContent) => {
         if (mountedRef.current) setContent(newContent);
       },
@@ -206,9 +219,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
         clearDetachedSaveFailure(name);
         markDraftSaved(name, current, savedRevision);
       },
-      onSaveError: (name, _content, _err) => {
-        notification("error", `No se pudo guardar ${noteLabel(name)}. Tus cambios se conservaron en un borrador local`);
-      },
+      onSaveError: (name, _content, error) => reportSaveFailure(name, error),
       onContentReloaded: (newContent) => {
         if (mountedRef.current) setContent(newContent);
       },
@@ -363,6 +374,9 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       if (isCancelled) return;
       const diskDraft = await readDraftDisk(selectedFile.name);
       if (isCancelled) return;
+      if (takeDraftIdentityConflict(selectedFile.name)) {
+        notification("error", `Un borrador de ${noteLabel(selectedFile.name)} tiene una identidad no verificada. Se conservó para recuperación manual y no se aplicó a este archivo.`);
+      }
 
       const result = await reconcileDraftState({
         fileName: selectedFile.name,

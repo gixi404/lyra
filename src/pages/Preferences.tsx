@@ -16,37 +16,37 @@ import {
   SunMoon,
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
-import MainContainer from "../components/MainContainer";
-import DefaultAppModal from "../components/DefaultAppModal";
-import usePreferences from "../hooks/usePreferences";
-import useScrollSpeed from "../hooks/useScrollSpeed";
-import useStorage from "../hooks/useStorage";
-import { MAIN_FOLDER, PAGES, THEMES } from "../utils/consts";
-import translations from "../utils/dictionary";
-import { navigation, scrollToNovedades, themes } from "../utils/helpers";
+import MainContainer from "../components/MainContainer.tsx";
+import DefaultAppModal from "../components/DefaultAppModal.tsx";
+import usePreferences from "../hooks/usePreferences.ts";
+import useScrollSpeed from "../hooks/useScrollSpeed.ts";
+import useStorage from "../hooks/useStorage.ts";
+import { MAIN_FOLDER, PAGES, THEMES } from "../utils/consts.ts";
+import translations from "../utils/dictionary.ts";
+import { navigation, scrollToNovedades, themes } from "../utils/helpers.ts";
 import {
   configureDefaultApp,
   getEffectiveOs,
   checkDefaultAppStatus,
   type DefaultAppAssociationStatus,
-} from "../utils/defaultApp";
-import { useToastStore } from "../store/toastStore";
+} from "../utils/defaultApp.ts";
+import { useToastStore } from "../store/toastStore.ts";
 import {
   checkAndApplyUpdate,
   getIsCheckingUpdate,
   getPendingRestartVersion,
   restartInstalledUpdate,
-} from "../utils/updater";
-import type { Component } from "../utils/types";
+} from "../utils/updater.ts";
+import type { Component } from "../utils/types.ts";
 import packageJson from "../../package.json";
-import { configStore } from "../store/configStore";
+import { configStore } from "../store/configStore.ts";
 import {
   formatScrollSpeed,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
   SCROLL_SPEED_STEP,
   normalizeScrollSpeed,
-} from "../utils/scrollSpeed";
+} from "../utils/scrollSpeed.ts";
 import { logger } from "../utils/logger.ts";
 
 const d = translations(),

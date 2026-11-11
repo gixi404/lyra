@@ -1,17 +1,17 @@
 import { RouterProvider } from "react-router-dom";
 import { StrictMode, Suspense } from "react";
-import Toast from "./components/Toast";
-import PendingAuthorizationDialog from "./components/PendingAuthorizationDialog";
+import Toast from "./components/Toast.tsx";
+import PendingAuthorizationDialog from "./components/PendingAuthorizationDialog.tsx";
 import "./styles.css";
 import { type Container, createRoot } from "react-dom/client";
-import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater";
-import { initPersistentPreferences } from "./utils/persistentPreferences";
-import { initializeArchiveState } from "./utils/archiveState";
-import { initRecoveryNotifier } from "./utils/recoveryNotifier";
-import { useSyncStore } from "./store/syncStore";
-import { configStore } from "./store/configStore";
-import { router } from "./router";
-import { initExternalFileListener } from "./utils/fileImporter";
+import { checkAndApplyUpdate, notifyIfJustUpdated } from "./utils/updater.ts";
+import { initPersistentPreferences } from "./utils/persistentPreferences.ts";
+import { initializeArchiveState } from "./utils/archiveState.ts";
+import { initRecoveryNotifier } from "./utils/recoveryNotifier.ts";
+import { useSyncStore } from "./store/syncStore.ts";
+import { configStore } from "./store/configStore.ts";
+import { router } from "./router.tsx";
+import { initExternalFileListener } from "./utils/fileImporter.ts";
 import { logger } from "./utils/logger.ts";
 
 const root = document.getElementById("root") as Container;

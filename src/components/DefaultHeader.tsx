@@ -1,11 +1,11 @@
-import useStorage from "../hooks/useStorage";
+import useStorage from "../hooks/useStorage.ts";
 import { ArrowLeftIcon, Sun, Moon, Settings } from "lucide-react";
-import { navigation, pathIs, themes } from "../utils/helpers";
-import { PAGES, THEMES } from "../utils/consts";
-import { configStore } from "../store/configStore";
-import type { Component } from "../utils/types";
+import { navigation, pathIs, themes } from "../utils/helpers.ts";
+import { PAGES, THEMES } from "../utils/consts.ts";
+import { configStore } from "../store/configStore.ts";
+import type { Component } from "../utils/types.ts";
 import { memo, type MouseEvent } from "react";
-import { getScrollPos, setListScroll } from "../utils/listScroll";
+import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
 
 let activeThemeAnim: Animation | null = null;
 

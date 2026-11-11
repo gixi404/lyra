@@ -11,8 +11,13 @@ export async function showAppWindow(): Promise<void> {
   } catch {
     try {
       const appWindow = getCurrentWebviewWindow();
+      const minimized = await invoke<boolean>("is_start_minimized").catch(() => false);
       await appWindow.show();
-      await appWindow.setFocus();
+      if (minimized) {
+        await appWindow.minimize();
+      } else {
+        await appWindow.setFocus();
+      }
     } catch {
       // Outside Tauri / Web dev
     }

@@ -34,6 +34,9 @@ export const PERSISTENT_KEYS = [
   "last-modified",
   "paragraph-focus",
   "sortOption",
+  "folderOrder",
+  "fileOrder",
+  "folderExpanded",
   "paper",
   "language",
   "lyra_initialized",
@@ -55,6 +58,9 @@ export interface PreferencesData {
   "last-modified"?: string | boolean;
   "paragraph-focus"?: string | boolean;
   sortOption?: string;
+  folderOrder?: string;
+  fileOrder?: string;
+  folderExpanded?: string;
   paper?: string[];
   language?: string;
   lyra_initialized?: string | boolean;

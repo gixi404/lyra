@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { File } from "../utils/types";
+import type { File } from "../utils/types.ts";
 import { getAnimationDuration } from "../utils/motion.ts";
 import { flushEditorDrafts } from "../utils/editorPersistence.ts";
 import { getDraftProtection } from "../utils/draftStore.ts";
@@ -21,6 +21,16 @@ let pendingExits: PendingExit[] = [];
 
 export interface FileStoreState {
   files: string[];
+  folders: string[];
+  setFolders: (folders: string[]) => void;
+  folderListingWarnings: string[];
+  setFolderListingWarnings: (warnings: string[]) => void;
+  archivedFolders: string[];
+  setArchivedFolders: (folders: string[]) => void;
+  folderArchiveError: string | null;
+  setFolderArchiveError: (error: string | null) => void;
+  folderArchiveLoaded: boolean;
+  setFolderArchiveLoaded: (loaded: boolean) => void;
   retainedExits: { name: string; view: "active" | "paper"; index: number }[];
   renderedOrder: { active: string[]; paper: string[] };
   deletingFiles: string[];
@@ -57,6 +67,16 @@ export interface FileStoreState {
 
 export const fileStore = create<FileStoreState>(set => ({
   files: [],
+  folders: [],
+  setFolders: folders => set({ folders }),
+  folderListingWarnings: [],
+  setFolderListingWarnings: folderListingWarnings => set({ folderListingWarnings }),
+  archivedFolders: [],
+  setArchivedFolders: archivedFolders => set({ archivedFolders, folderArchiveError: null, folderArchiveLoaded: true }),
+  folderArchiveError: null,
+  setFolderArchiveError: folderArchiveError => set({ folderArchiveError, folderArchiveLoaded: true }),
+  folderArchiveLoaded: false,
+  setFolderArchiveLoaded: folderArchiveLoaded => set({ folderArchiveLoaded }),
   retainedExits: [],
   renderedOrder: { active: [], paper: [] },
   deletingFiles: [],

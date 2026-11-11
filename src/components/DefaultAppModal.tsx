@@ -2,9 +2,9 @@ import { useEffect, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { animated, useTransition } from "@react-spring/web";
 import { AppWindow, Info, X } from "lucide-react";
-import { themes } from "../utils/helpers";
-import { getDefaultAppInstructions } from "../utils/defaultApp";
-import type { Component } from "../utils/types";
+import { themes } from "../utils/helpers.ts";
+import { getDefaultAppInstructions } from "../utils/defaultApp.ts";
+import type { Component } from "../utils/types.ts";
 import { twMerge } from "tailwind-merge";
 
 interface DefaultAppModalProps {

@@ -1,12 +1,13 @@
-import translations from "../utils/dictionary";
-import useFile from "../hooks/useFile";
-import usePreferences from "../hooks/usePreferences";
-import Modal from "./Modal";
-import ModalSort from "./ModalSort";
-import { configStore } from "../store/configStore";
-import { fileStore } from "../store/fileStore";
-import { PAGES } from "../utils/consts";
-import { searchStore } from "../store/searchStore";
+import translations from "../utils/dictionary.ts";
+import useFile from "../hooks/useFile.ts";
+import usePreferences from "../hooks/usePreferences.ts";
+import ModalSort from "./ModalSort.tsx";
+import CreateNoteDialog from "./CreateNoteDialog.tsx";
+import { invoke } from "@tauri-apps/api/core";
+import { configStore } from "../store/configStore.ts";
+import { fileStore } from "../store/fileStore.ts";
+import { PAGES } from "../utils/consts.ts";
+import { searchStore } from "../store/searchStore.ts";
 import { twMerge } from "tailwind-merge";
 import {
   Plus as AddIcon,
@@ -18,15 +19,15 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   getEditableFileName,
   nameIsValid,
+  validateFileName,
   navigation,
   normalize,
   notification,
-  sanitizeFileName,
   themes,
-} from "../utils/helpers";
-import { getScrollPos, setListScroll } from "../utils/listScroll";
-import { noteLabel } from "../utils/noteName";
-import type { Component, File } from "../utils/types";
+} from "../utils/helpers.ts";
+import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
+import { noteLabel } from "../utils/noteName.ts";
+import type { Component, File } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
 
 interface ArchiveIconProps {
@@ -80,6 +81,7 @@ function Form(): Component {
       }))
     ),
     [isModalOpen, setIsModalOpen] = useState<boolean>(false),
+    [initialFolder, setInitialFolder] = useState(""),
     [isSortModalOpen, setIsSortModalOpen] = useState<boolean>(false),
     { search, setSearch } = searchStore(
       useShallow(state => ({
@@ -89,10 +91,11 @@ function Form(): Component {
         toggleOrder: state.toggleOrder,
       }))
     ),
-    { setSelectedFile, files } = fileStore(
+    { setSelectedFile, files, folders } = fileStore(
       useShallow(state => ({
         setSelectedFile: state.setSelectedFile,
         files: state.files,
+        folders: state.folders,
       }))
     ),
     paperFiles = useMemo(() => myPaper(files), [files, myPaper]),
@@ -102,6 +105,15 @@ function Form(): Component {
       const nextDisplayName: string = resolveDisplayName(fileName);
       return files.some((name: string) => name === nextDisplayName);
     };
+
+  useEffect(() => {
+    const openInFolder = (event: Event) => {
+      setInitialFolder((event as CustomEvent<string>).detail ?? "");
+      setIsModalOpen(true);
+    };
+    window.addEventListener("lyra:create-note-in-folder", openInFolder);
+    return () => window.removeEventListener("lyra:create-note-in-folder", openInFolder);
+  }, []);
 
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent): void => {
@@ -187,16 +199,17 @@ function Form(): Component {
     }
   }
 
-  function handleCreateConfirm(value?: string): void {
+  function handleCreateConfirm(value?: string, folder = ""): void {
     if (!value) return;
-    const sanitizedName: string = sanitizeFileName(value);
+    const nextName = value;
 
-    if (!nameIsValid(sanitizedName)) {
+    if (!nameIsValid(nextName)) {
       return;
     }
 
-    if (isRepeated(sanitizedName)) {
-      notification("error", `${noteLabel(sanitizedName)} ya existe`);
+    const relativeName = folder ? `${folder}/${nextName}` : nextName;
+    if (isRepeated(relativeName)) {
+      notification("error", `${noteLabel(nextName)} ya existe`);
       return;
     }
 
@@ -204,14 +217,23 @@ function Form(): Component {
     if (paperIsOpen) {
       setPaperIsOpen(false);
     }
-    const titleWithoutExtension = getEditableFileName(sanitizedName);
+    const titleWithoutExtension = getEditableFileName(nextName);
     const initialContent = `# ${titleWithoutExtension}\n\n`;
     const file: File = {
-      name: sanitizedName,
+      name: relativeName,
       content: initialContent,
       initialCaretPos: initialContent.length,
     };
     void fileManagement(file);
+  }
+
+  async function createFolder(parent: string, name: string): Promise<string> {
+    const validation = validateFileName(name);
+    if (!validation.ok) throw new Error(validation.reason ?? "Nombre de carpeta inválido");
+    const path = parent ? `${parent}/${name}` : name;
+    await invoke("create_folder", { relativePath: path });
+    fileStore.getState().setFolders([...fileStore.getState().folders, path]);
+    return path;
   }
 
   function handleSubmit(e: FormEvent): void {
@@ -309,7 +331,7 @@ function Form(): Component {
             {/* Botón celeste (+) */}
             <button
               type="button"
-              onClick={() => setIsModalOpen(true)}
+              onClick={() => { setInitialFolder(""); setIsModalOpen(true); }}
               title="Crear nuevo archivo"
               className="w-10 h-10 rounded-xl bg-accent hover:bg-accent-hover text-ink font-semibold flex items-center justify-center transition-all duration-150 active:scale-95 ml-1 cursor-pointer shadow-sm"
             >
@@ -324,15 +346,13 @@ function Form(): Component {
         onClose={() => setIsSortModalOpen(false)}
       />
 
-      <Modal
+      <CreateNoteDialog
         isOpen={isModalOpen}
+        folders={folders}
+        initialFolder={initialFolder}
         onClose={() => setIsModalOpen(false)}
-        onConfirm={handleCreateConfirm}
-        title={d.EnterTheFileName}
-        hasInput
-        inputPlaceholder="¿Cómo se llama la obra maestra?"
-        confirmText={d.Add}
-        cancelText={d.Cancel}
+        onCreate={handleCreateConfirm}
+        onCreateFolder={createFolder}
       />
     </>
   );

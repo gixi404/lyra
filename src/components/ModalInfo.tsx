@@ -1,21 +1,19 @@
-import { useEffect, useState, type MouseEvent } from "react";
-import { createPortal } from "react-dom";
-import { animated, useTransition } from "@react-spring/web";
+import { useEffect, useState } from "react";
 import {
   Info,
   FileText,
   Calendar,
   HardDrive,
   Type,
-  X,
   Clock,
   AlignLeft,
   Hash,
 } from "lucide-react";
-import useFile, { type FileStats } from "../hooks/useFile";
-import { themes } from "../utils/helpers";
-import type { Component } from "../utils/types";
+import useFile, { type FileStats } from "../hooks/useFile.ts";
+import { themes } from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
 import { logger } from "../utils/logger.ts";
+import InfoModal, { InfoRow } from "./InfoModal.tsx";
 
 interface ModalInfoProps {
   isOpen: boolean;
@@ -23,18 +21,11 @@ interface ModalInfoProps {
   fileName: string;
 }
 
-function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | null {
+function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component {
   const { isDay } = themes();
   const { getFileStats } = useFile();
   const [stats, setStats] = useState<FileStats | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-
-  const transitions = useTransition(isOpen, {
-    from: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
-    enter: { opacity: 1, transform: "scale(1) translateY(0px)" },
-    leave: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
-    config: { duration: 150 },
-  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -58,298 +49,61 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component | n
     };
   }, [isOpen, fileName, getFileStats]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const preventScroll = (e: WheelEvent | TouchEvent): void => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest(".modal-scrollable")) return;
-      e.preventDefault();
-    };
-    window.addEventListener("wheel", preventScroll, { passive: false });
-    window.addEventListener("touchmove", preventScroll, { passive: false });
-    return () => {
-      window.removeEventListener("wheel", preventScroll);
-      window.removeEventListener("touchmove", preventScroll);
-    };
-  }, [isOpen]);
-
-  const handleBackdropClick = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onClose();
-  };
-
-  const handleBackdropEvent = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const targetElement = document.getElementById("modal-root") || document.body;
   const displayName = fileName.replace(/\.(txt|md)$/i, "");
 
   return (
-    <>
-      {transitions(
-        (styles, item) =>
-          item &&
-          createPortal(
-            <animated.div
-              style={{ opacity: styles.opacity }}
-              className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs"
-              onMouseDown={handleBackdropEvent}
-              onMouseUp={handleBackdropEvent}
-              onClick={handleBackdropClick}
-            >
-              <animated.div
-                style={{ transform: styles.transform }}
-                className={`modal-scrollable w-[380px] max-w-[92vw] h-[450px] max-h-[90vh] p-6 rounded-2xl shadow-2xl border flex flex-col justify-start select-none ${
-                  isDay
-                    ? "bg-white border-neutral-200 text-neutral-900"
-                    : "bg-zinc-900 border-zinc-800 text-zinc-100"
+    <InfoModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Información del archivo"
+      icon={Info}
+      name={displayName}
+    >
+      {loading ? (
+        <div
+          className={`flex flex-col items-center justify-center gap-y-2.5 py-8 text-center text-xs ${
+            isDay ? "text-neutral-400" : "text-zinc-500"
+          }`}
+        >
+          <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
+          <span>Cargando información...</span>
+        </div>
+      ) : stats ? (
+        <div className="flex flex-col gap-y-2 text-xs">
+          <InfoRow
+            icon={FileText}
+            label="Extensión"
+            value={
+              <span
+                className={`font-mono font-medium uppercase px-2 py-0.5 rounded ${
+                  isDay ? "bg-neutral-100 text-neutral-800" : "bg-zinc-800 text-zinc-200"
                 }`}
-                onMouseDown={e => e.stopPropagation()}
-                onMouseUp={e => e.stopPropagation()}
-                onClick={e => e.stopPropagation()}
               >
-                {/* Cabecera con título e icono X arriba a la derecha */}
-                <div
-                  className={`flex items-center justify-between pb-3 border-b shrink-0 ${
-                    isDay ? "border-neutral-200" : "border-zinc-800"
-                  }`}
-                >
-                  <div className="flex items-center gap-x-2.5">
-                    <Info className={`w-5 h-5 ${isDay ? "text-accent-text" : "text-sky-400"}`} />
-                    <h3 className="text-base font-semibold tracking-tight">
-                      Información del archivo
-                    </h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    aria-label="Cerrar"
-                    className={`p-1 rounded-lg transition-all duration-150 active:scale-95 cursor-pointer ${
-                      isDay
-                        ? "text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
-                        : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-                    }`}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
+                {stats.extension}
+              </span>
+            }
+          />
 
-                <p className="text-sm font-medium truncate mt-3 mb-2 opacity-80 shrink-0" title={displayName}>
-                  {displayName}
-                </p>
+          <InfoRow icon={HardDrive} label="Peso" value={stats.sizeFormatted} />
 
-                <div className="flex-1 flex flex-col justify-center overflow-hidden">
-                  {loading ? (
-                    <div
-                      className={`flex flex-col items-center justify-center gap-y-2.5 py-8 text-center text-xs ${
-                        isDay ? "text-neutral-400" : "text-zinc-500"
-                      }`}
-                    >
-                      <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
-                      <span>Cargando información...</span>
-                    </div>
-                  ) : stats ? (
-                    <div className="flex flex-col gap-y-2 text-xs">
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <FileText size={14} />
-                          <span>Extensión</span>
-                        </span>
-                        <span
-                          className={`font-mono font-medium uppercase px-2 py-0.5 rounded ${
-                            isDay
-                              ? "bg-neutral-100 text-neutral-800"
-                              : "bg-zinc-800 text-zinc-200"
-                          }`}
-                        >
-                          {stats.extension}
-                        </span>
-                      </div>
+          <InfoRow icon={Clock} label="Tiempo de lectura" value={stats.readingTime} />
 
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <HardDrive size={14} />
-                          <span>Peso</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.sizeFormatted}
-                        </span>
-                      </div>
+          <InfoRow icon={Type} label="Cantidad de palabras" value={stats.wordCount} />
 
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <Clock size={14} />
-                          <span>Tiempo de lectura</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.readingTime}
-                        </span>
-                      </div>
+          <InfoRow icon={Hash} label="Cantidad de caracteres" value={stats.charCount} />
 
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <Type size={14} />
-                          <span>Cantidad de palabras</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.wordCount}
-                        </span>
-                      </div>
+          <InfoRow icon={AlignLeft} label="Cantidad de párrafos" value={stats.paragraphCount} />
 
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <Hash size={14} />
-                          <span>Cantidad de caracteres</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.charCount}
-                        </span>
-                      </div>
+          <InfoRow icon={Calendar} label="Última edición" value={stats.modifiedAt} />
 
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <AlignLeft size={14} />
-                          <span>Cantidad de párrafos</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.paragraphCount}
-                        </span>
-                      </div>
-
-                      <div
-                        className={`flex items-center justify-between py-1 border-b ${
-                          isDay ? "border-neutral-100" : "border-zinc-800/60"
-                        }`}
-                      >
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <Calendar size={14} />
-                          <span>Última edición</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.modifiedAt}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between py-1">
-                        <span
-                          className={`flex items-center gap-x-2 ${
-                            isDay ? "text-neutral-600" : "text-zinc-400"
-                          }`}
-                        >
-                          <Calendar size={14} />
-                          <span>Fecha de creación</span>
-                        </span>
-                        <span
-                          className={`font-medium ${
-                            isDay ? "text-neutral-900" : "text-zinc-100"
-                          }`}
-                        >
-                          {stats.createdAt}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="py-4 text-center text-xs text-rose-500">
-                      No se pudo obtener la información.
-                    </div>
-                  )}
-                </div>
-              </animated.div>
-            </animated.div>,
-            targetElement
-          )
+          <InfoRow icon={Calendar} label="Fecha de creación" value={stats.createdAt} last />
+        </div>
+      ) : (
+        <div className="py-4 text-center text-xs text-rose-500">
+          No se pudo obtener la información.
+        </div>
       )}
-    </>
+    </InfoModal>
   );
 }
 

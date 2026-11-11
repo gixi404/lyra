@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { animated, useTransition } from "@react-spring/web";
-import { themes } from "../utils/helpers";
-import translations from "../utils/dictionary";
-import type { Component } from "../utils/types";
+import { themes } from "../utils/helpers.ts";
+import translations from "../utils/dictionary.ts";
+import type { Component } from "../utils/types.ts";
 
 interface ModalProps {
   isOpen: boolean;
@@ -169,12 +169,12 @@ function Modal({
                     />
                   )}
 
-                  <div className="flex items-center justify-end gap-3 mt-6">
+                  <div className="flex items-center gap-3 mt-6">
                     <button
                       type="button"
                       onClick={onClose}
                       disabled={busy}
-                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-colors select-none ${
+                      className={`flex-1 px-4 py-2 text-sm font-medium rounded-xl transition-colors select-none ${
                         busy
                           ? "opacity-40 cursor-not-allowed text-neutral-400"
                           : isDay
@@ -187,7 +187,7 @@ function Modal({
                     <button
                       type="submit"
                       disabled={busy}
-                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-all select-none ${
+                      className={`flex-1 px-4 py-2 text-sm font-medium rounded-xl transition-all select-none ${
                         busy
                           ? `${variant === "danger" ? "bg-danger text-ink" : isDay
                             ? "bg-accent text-ink" : "bg-sky-500 text-zinc-950"} opacity-40 cursor-not-allowed shadow-none`

@@ -1,14 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { readTextFile } from "@tauri-apps/plugin-fs";
-import { join } from "@tauri-apps/api/path";
 import { fileStore } from "../store/fileStore.ts";
 import { useToastStore, type ToastAction, type ToastType } from "../store/toastStore.ts";
 import { noteLabel } from "./noteName.ts";
-import { BASE_DIRECTORY, MAIN_FOLDER, PAGES } from "./consts.ts";
+import { PAGES } from "./consts.ts";
 import { navigateTo } from "./navigation.ts";
 import { flushActiveEditors } from "./editorPersistence.ts";
 import { logger } from "./logger.ts";
+import { rememberNoteIdentity } from "./noteIdentity.ts";
 
 function notification(
   type: ToastType,
@@ -127,17 +126,13 @@ export async function readImportedNoteContent(fileName: string): Promise<Importe
     return { ok: false, error: "Lectura no disponible fuera de Tauri" };
   }
   try {
-    const pathFile = await join(MAIN_FOLDER, fileName);
-    const content = await readTextFile(pathFile, BASE_DIRECTORY);
+    const opened = await invoke<{ identity: string; content: string; firstSeen: boolean; pathReused: boolean }>("open_note_identity", { fileName });
+    rememberNoteIdentity(fileName, opened.identity, opened.firstSeen, opened.pathReused);
+    const content = opened.content;
     return { ok: true, content };
-  } catch {
-    try {
-      const content = await readTextFile(`${MAIN_FOLDER}/${fileName}`, BASE_DIRECTORY);
-      return { ok: true, content };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: msg };
-    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
   }
 }
 

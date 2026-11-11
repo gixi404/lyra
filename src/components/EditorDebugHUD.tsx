@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { editorDebug, type LogEntry } from "../utils/editorDebug";
+import { editorDebug, type LogEntry } from "../utils/editorDebug.ts";
 import { Bug, ChevronDown, Copy, Download, Trash2 } from "lucide-react";
 
 interface EditorDebugHUDProps {

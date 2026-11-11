@@ -1,7 +1,7 @@
 import { FileUp } from "lucide-react";
-import { themes } from "../utils/helpers";
+import { themes } from "../utils/helpers.ts";
 import { twMerge } from "tailwind-merge";
-import type { Component } from "../utils/types";
+import type { Component } from "../utils/types.ts";
 
 interface DropOverlayProps {
   visible: boolean;

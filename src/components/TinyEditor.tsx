@@ -1,15 +1,15 @@
 import { useRef, useEffect, useCallback, useState, useMemo, memo } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import { twMerge } from "tailwind-merge";
-import usePreferences from "../hooks/usePreferences";
-import useStorage from "../hooks/useStorage";
-import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal";
+import usePreferences from "../hooks/usePreferences.ts";
+import useStorage from "../hooks/useStorage.ts";
+import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal.tsx";
 // Descomentar para activar el HUD de debug en pantalla:
-// import EditorDebugHUD from "./EditorDebugHUD";
-import { editorDebug } from "../utils/editorDebug";
-import { navigation, themes } from "../utils/helpers";
-import { PAGES } from "../utils/consts";
-import type { Component } from "../utils/types";
+// import EditorDebugHUD from "./EditorDebugHUD.tsx";
+import { editorDebug } from "../utils/editorDebug.ts";
+import { navigation, themes } from "../utils/helpers.ts";
+import { PAGES } from "../utils/consts.ts";
+import type { Component } from "../utils/types.ts";
 
 interface TinyEditorProps {
   content: string;

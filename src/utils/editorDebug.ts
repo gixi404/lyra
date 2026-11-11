@@ -1,6 +1,6 @@
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { BASE_DIRECTORY, MAIN_FOLDER } from "./consts";
-import { logger } from "./logger";
+import { BASE_DIRECTORY, MAIN_FOLDER } from "./consts.ts";
+import { logger } from "./logger.ts";
 
 export interface LogEntry {
   timestamp: number;

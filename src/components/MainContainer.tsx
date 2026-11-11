@@ -33,15 +33,15 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
 import { twJoin, twMerge } from "tailwind-merge";
-import usePreferences from "../hooks/usePreferences";
-import { PAGES } from "../utils/consts";
-import { pathIs, themes } from "../utils/helpers";
-import type { Component } from "../utils/types";
-import Header from "./Header";
-import DropOverlay from "./DropOverlay";
-import { triggerWindowReady } from "../utils/window";
-import { handleExternalFileImport } from "../utils/fileImporter";
-import { logger } from "../utils/logger";
+import usePreferences from "../hooks/usePreferences.ts";
+import { PAGES } from "../utils/consts.ts";
+import { pathIs, themes } from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
+import Header from "./Header.tsx";
+import DropOverlay from "./DropOverlay.tsx";
+import { triggerWindowReady } from "../utils/window.ts";
+import { handleExternalFileImport } from "../utils/fileImporter.ts";
+import { logger } from "../utils/logger.ts";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {

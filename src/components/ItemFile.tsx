@@ -1,23 +1,21 @@
-import MenuFile from "./MenuFile";
-import MenuPaperFile from "./MenuPaperFile";
-import useFile from "../hooks/useFile";
-import { configStore } from "../store/configStore";
-import { fileStore } from "../store/fileStore";
-import { navigation, notification, themes } from "../utils/helpers";
-import { PAGES } from "../utils/consts";
+import MenuFile from "./MenuFile.tsx";
+import MenuPaperFile from "./MenuPaperFile.tsx";
+import useFile from "../hooks/useFile.ts";
+import { configStore } from "../store/configStore.ts";
+import { fileStore } from "../store/fileStore.ts";
+import { navigation, notification, themes } from "../utils/helpers.ts";
+import { PAGES } from "../utils/consts.ts";
 import { twMerge } from "tailwind-merge";
-import type { Component, File } from "../utils/types";
-import { getScrollPos, setListScroll } from "../utils/listScroll";
-import { getFileDirectory, noteLabel, noteTitle } from "../utils/noteName";
+import type { Component, File } from "../utils/types.ts";
+import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
+import { noteLabel, noteTitle } from "../utils/noteName.ts";
 
-function ItemFile({ fileName, isExiting = false }: Props): Component {
+function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, onDragEnd, archivedByFolder = false }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
     { readFile } = useFile(),
     setSelectedFile = fileStore(state => state.setSelectedFile);
-
-  const directory = getFileDirectory(fileName);
 
   function getListLabel(name: string): string {
     return noteTitle(name);
@@ -40,10 +38,14 @@ function ItemFile({ fileName, isExiting = false }: Props): Component {
   return (
     <li
       data-note-name={fileName}
+      draggable={!paperIsOpen && Boolean(onDragStart)}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      style={folderDepth ? { paddingLeft: folderDepth * 20 } : undefined}
       onClick={isExiting ? undefined : openFile}
       className={twMerge(
         "group relative flex items-center justify-between w-full px-1 border-b cursor-pointer select-none",
-        "transition-all duration-200 ease-out motion-reduce:transition-none",
+        "transition-[opacity,transform,max-height,padding,border-color,background-color] duration-200 ease-out motion-reduce:transition-none",
         isExiting
           ? "opacity-0 -translate-y-1.5 scale-[0.98] max-h-0 py-0 border-transparent overflow-hidden pointer-events-none"
           : "opacity-100 transform-none max-h-16 py-3.5",
@@ -57,21 +59,11 @@ function ItemFile({ fileName, isExiting = false }: Props): Component {
         title={fileName}
       >
         <span className="truncate">{getListLabel(fileName)}</span>
-        {directory && (
-          <span
-            className={twMerge(
-              "text-xs ml-2 font-normal truncate shrink-0 tracking-tight select-none opacity-60",
-              isDay ? "text-neutral-500" : "text-zinc-400"
-            )}
-          >
-            {directory}
-          </span>
-        )}
       </span>
 
       <div className="flex items-center gap-x-2 shrink-0">
         {!paperIsOpen && <MenuFile fileName={fileName} />}
-        {paperIsOpen && <MenuPaperFile fileName={fileName} />}
+        {paperIsOpen && !archivedByFolder && <MenuPaperFile fileName={fileName} />}
       </div>
     </li>
   );
@@ -82,4 +74,8 @@ export default ItemFile;
 interface Props {
   fileName: string;
   isExiting?: boolean;
+  folderDepth?: number;
+  onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void;
+  onDragEnd?: () => void;
+  archivedByFolder?: boolean;
 }

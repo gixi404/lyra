@@ -1,8 +1,8 @@
-import useStorage from "./useStorage";
-import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers";
-import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts";
-import { configStore } from "../store/configStore";
-import { DEFAULT_SCROLL_SPEED, normalizeScrollSpeed } from "../utils/scrollSpeed";
+import useStorage from "./useStorage.ts";
+import { getCompatibleStorageKeys, normalizeStoredFileNames } from "../utils/helpers.ts";
+import { TEXT_ALIGNS, TEXT_SIZES, THEMES } from "../utils/consts.ts";
+import { configStore } from "../store/configStore.ts";
+import { DEFAULT_SCROLL_SPEED, normalizeScrollSpeed } from "../utils/scrollSpeed.ts";
 
 function usePreferences(): Preferences {
   configStore(state => state.prefTick);

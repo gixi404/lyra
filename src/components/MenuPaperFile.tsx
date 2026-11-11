@@ -1,28 +1,26 @@
-import { ArrowUpLeft as RecoveryIcon, Trash as RemoveIcon, MoreVertical, Info, FileDown } from "lucide-react";
-import { type SyntheticEvent, useEffect, useRef, useState } from "react";
-import { animated, useTransition } from "@react-spring/web";
-import { twMerge } from "tailwind-merge";
-import { downloadDir } from "@tauri-apps/api/path";
+import { ArrowUpLeft as RecoveryIcon, Trash as RemoveIcon, Info, FileDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import useFile from "../hooks/useFile";
-import useStorage from "../hooks/useStorage";
-import { fileStore } from "../store/fileStore";
-import translations from "../utils/dictionary";
-import { notification, themes } from "../utils/helpers";
-import { isWelcomeFileName, setWelcomeManuallyRestored } from "../utils/welcome";
-import { setArchiveState } from "../utils/archiveState";
-import { useSyncStore } from "../store/syncStore";
-import type { Component } from "../utils/types";
+import { downloadDir } from "@tauri-apps/api/path";
+import useFile from "../hooks/useFile.ts";
+import useStorage from "../hooks/useStorage.ts";
+import { fileStore } from "../store/fileStore.ts";
+import translations from "../utils/dictionary.ts";
+import { notification } from "../utils/helpers.ts";
+import { isWelcomeFileName, setWelcomeManuallyRestored } from "../utils/welcome.ts";
+import { setArchiveState } from "../utils/archiveState.ts";
+import { useSyncStore } from "../store/syncStore.ts";
+import type { Component } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
-import Modal from "./Modal";
-import ModalInfo from "./ModalInfo";
-import { runExclusiveDeletion } from "../utils/noteDeletion";
-import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName";
+import Modal from "./Modal.tsx";
+import ModalInfo from "./ModalInfo.tsx";
+import ContextMenu, { MenuItem, MenuSeparator } from "./ContextMenu.tsx";
+import { runExclusiveDeletion } from "../utils/noteDeletion.ts";
+import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName.ts";
 import { logger } from "../utils/logger.ts";
 
 function MenuPaperFile({ fileName }: Props): Component {
   const d = translations(),
-    { isDay } = themes(),
     { getItem } = useStorage(),
     { deleteFile, readFile } = useFile(),
     { editedFile, removeFileFromList } = fileStore(
@@ -31,8 +29,6 @@ function MenuPaperFile({ fileName }: Props): Component {
         removeFileFromList: state.removeFileFromList,
       }))
     ),
-    [menuOpen, setMenuOpen] = useState<boolean>(false),
-    [openUpwards, setOpenUpwards] = useState<boolean>(false),
     [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
     [isRestoreOpen, setIsRestoreOpen] = useState<boolean>(false),
     [isRestoring, setIsRestoring] = useState<boolean>(false),
@@ -41,20 +37,12 @@ function MenuPaperFile({ fileName }: Props): Component {
     isDeleting = fileStore(state => state.deletingFiles.includes(fileName)),
     isEmptyingArchived = fileStore(state => state.isEmptyingArchived),
     deletionBusy = isDeleting || isEmptyingArchived,
-    mountedRef = useRef(false),
-    menuRef = useRef<HTMLDivElement>(null);
+    mountedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-
-  const menuTransitions = useTransition(menuOpen, {
-    from: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
-    enter: { opacity: 1, transform: "scale(1) translateY(0px)" },
-    leave: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
-    config: { duration: 150 },
-  });
 
   function sanitizePdfText(text: string): string {
     return text
@@ -119,41 +107,6 @@ function MenuPaperFile({ fileName }: Props): Component {
     }
   }
 
-  useEffect(() => {
-    if (!menuOpen) return;
-
-    const handleClickOutside = (e: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
-
-    const updatePosition = (): void => {
-      if (!menuRef.current) return;
-      const rect = menuRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-      setOpenUpwards(spaceBelow < 200 && spaceAbove > spaceBelow);
-    };
-
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("mousedown", handleClickOutside);
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("mousedown", handleClickOutside);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [menuOpen]);
-
   async function handleRestoreConfirm(): Promise<void> {
     if (restoringRef.current) return;
     restoringRef.current = true;
@@ -217,145 +170,40 @@ function MenuPaperFile({ fileName }: Props): Component {
   }
 
   return (
-    <div className="relative flex items-center" ref={menuRef}>
-      <button
-        type="button"
-        onClick={(e: SyntheticEvent) => {
-          e.stopPropagation();
-          if (!menuOpen && menuRef.current) {
-            const rect = menuRef.current.getBoundingClientRect();
-            const spaceBelow = window.innerHeight - rect.bottom;
-            const spaceAbove = rect.top;
-            setOpenUpwards(spaceBelow < 200 && spaceAbove > spaceBelow);
-          }
-          setMenuOpen(prev => !prev);
-        }}
-        className={twMerge(
-          "p-1 rounded-md transition-all duration-150 active:scale-95 cursor-pointer flex items-center justify-center",
-          isDay
-            ? "text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/50"
-            : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80"
-        )}
-        aria-label="Opciones"
-        title="Opciones"
-      >
-        <MoreVertical size={16} />
-      </button>
+    <div className="relative flex items-center">
+      <ContextMenu label="Opciones" title="Opciones" reveal="hover">
+        <MenuItem
+          icon={FileDown}
+          label="Exportar"
+          onSelect={() => void handleExportPDF()}
+        />
 
-      {menuTransitions(
-        (styles, item) =>
-          item && (
-            <animated.div
-              style={{
-                opacity: styles.opacity,
-                transform: styles.transform,
-                transformOrigin: openUpwards ? "bottom right" : "top right",
-                backgroundColor: isDay ? "#ffffff" : "#18181b",
-              }}
-              onClick={(e: SyntheticEvent) => e.stopPropagation()}
-              className={twMerge(
-                "absolute right-0 w-44 rounded-xl border py-1 z-50 flex flex-col text-xs font-medium",
-                openUpwards ? "bottom-full mb-1" : "top-full mt-1",
-                isDay
-                  ? "border-neutral-200 text-neutral-700 shadow-xl shadow-neutral-400/30"
-                  : "border-zinc-700 text-zinc-200 shadow-2xl shadow-black/80"
-              )}
-            >
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              setIsInfoOpen(true);
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-neutral-100 hover:text-accent-text"
-                : "hover:bg-zinc-800 hover:text-sky-400"
-            )}
-          >
-            <Info size={14} />
-            <span>Información</span>
-          </button>
+        <MenuSeparator />
 
-          <div
-            className={twMerge(
-              "my-1 border-t",
-              isDay ? "border-neutral-100" : "border-zinc-800/80"
-            )}
-          />
+        <MenuItem
+          icon={RecoveryIcon}
+          label={d.Recover ?? "Restaurar"}
+          tone="success"
+          onSelect={() => setIsRestoreOpen(true)}
+        />
 
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              void handleExportPDF();
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-neutral-100 hover:text-accent-text"
-                : "hover:bg-zinc-800 hover:text-sky-400"
-            )}
-          >
-            <FileDown size={14} />
-            <span>Exportar</span>
-          </button>
+        <MenuSeparator />
 
-          <div
-            className={twMerge(
-              "my-1 border-t",
-              isDay ? "border-neutral-100" : "border-zinc-800/80"
-            )}
-          />
+        <MenuItem
+          icon={RemoveIcon}
+          label={d.Delete ?? "Eliminar"}
+          tone="danger"
+          onSelect={() => setIsDeleteOpen(true)}
+        />
 
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              setIsRestoreOpen(true);
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-emerald-50 hover:text-emerald-600"
-                : "hover:bg-emerald-500/20 hover:text-emerald-400"
-            )}
-          >
-            <RecoveryIcon size={15} />
-            <span>{d.Recover ?? "Restaurar"}</span>
-          </button>
+        <MenuSeparator />
 
-          <div
-            className={twMerge(
-              "my-1 border-t",
-              isDay ? "border-neutral-100" : "border-zinc-800/80"
-            )}
-          />
-
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              setIsDeleteOpen(true);
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-danger-subtle hover:text-danger-text"
-                : "hover:bg-rose-500/20 hover:text-rose-400"
-            )}
-          >
-            <RemoveIcon size={14} />
-            <span>{d.Delete ?? "Eliminar"}</span>
-          </button>
-        </animated.div>
-      )
-  )}
+        <MenuItem
+          icon={Info}
+          label="Información"
+          onSelect={() => setIsInfoOpen(true)}
+        />
+      </ContextMenu>
 
       <ModalInfo
         isOpen={isInfoOpen}

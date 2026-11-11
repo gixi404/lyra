@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { logger } from "./logger.ts";
+import { canAttachDraft, getOpenedNoteIdentity } from "./noteIdentity.ts";
 
 /** M9 — Respaldo persistente de borradores con cola por nota y estado observable. */
 
@@ -13,6 +14,7 @@ export interface DraftDiskPayload {
   lastSavedRevision: number;
   lastSavedHash: string;
   updatedAt: number;
+  logicalIdentity?: string;
 }
 
 export type DraftProtection =
@@ -139,6 +141,10 @@ export async function readDraftDisk(noteName: string): Promise<DraftDiskPayload 
       logger.warn(`[draftStore] Borrador en disco corrupto para ${noteName}; se conserva sin uso.`);
       return null;
     }
+    if (!canAttachDraft(noteName, parsed.logicalIdentity)) {
+      logger.warn(`[draftStore] Draft identity is ambiguous for ${noteName}; its bytes were retained.`);
+      return null;
+    }
     return parsed;
   } catch {
     logger.warn(`[draftStore] Borrador en disco corrupto (JSON) para ${noteName}; se conserva sin uso.`);
@@ -194,7 +200,7 @@ export function flushDraftSync(noteName: string, content: string): boolean {
   try {
     window.localStorage.setItem(
       draftKey(noteName),
-      JSON.stringify({ content, updatedAt: Date.now() }),
+      JSON.stringify({ content, updatedAt: Date.now(), logicalIdentity: getOpenedNoteIdentity(noteName) }),
     );
     setProtection("protected_ls");
     return true;
@@ -229,6 +235,7 @@ async function writeDraftDisk(noteName: string, content: string): Promise<void> 
       lastSavedRevision: clearedRevision.get(draftId) ?? 0,
       lastSavedHash: baseHash,
       updatedAt: Date.now(),
+      logicalIdentity: getOpenedNoteIdentity(noteName),
     };
     if (revision <= (clearedRevision.get(draftId) ?? 0)) {
       // Escritura tardía tras clear: descartar (Riesgo B).
@@ -260,7 +267,7 @@ export function writeDraft(noteName: string, draftContent: string): void {
     try {
       window.localStorage.setItem(
         draftKey(noteName),
-        JSON.stringify({ content: draftContent, updatedAt: Date.now() }),
+        JSON.stringify({ content: draftContent, updatedAt: Date.now(), logicalIdentity: getOpenedNoteIdentity(noteName) }),
       );
       setProtection("protected_ls");
       return;
@@ -402,13 +409,14 @@ export function clearDraft(noteName: string): void {
 }
 
 /** Lectura síncrona legacy (LS) para el render inicial. No toca disco. */
-export function readDraftLS(noteName: string): { content: string; updatedAt: number } | null {
+export function readDraftLS(noteName: string): { content: string; updatedAt: number; logicalIdentity?: string } | null {
   if (!noteName) return null;
   try {
     const raw = window.localStorage.getItem(draftKey(noteName));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { content?: unknown; updatedAt?: unknown };
+    const parsed = JSON.parse(raw) as { content?: unknown; updatedAt?: unknown; logicalIdentity?: unknown };
     if (typeof parsed.content !== "string" || typeof parsed.updatedAt !== "number") return null;
+    if (!canAttachDraft(noteName, typeof parsed.logicalIdentity === "string" ? parsed.logicalIdentity : undefined)) return null;
     return { content: parsed.content, updatedAt: parsed.updatedAt };
   } catch {
     return null;

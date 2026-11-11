@@ -1,9 +1,9 @@
 import { animated, useSpring } from "@react-spring/web";
 import { ArrowLeftIcon, EyeOffIcon } from "lucide-react";
-import { configStore } from "../store/configStore";
-import { navigation, pathIs, themes } from "../utils/helpers";
-import { PAGES } from "../utils/consts";
-import type { Component } from "../utils/types";
+import { configStore } from "../store/configStore.ts";
+import { navigation, pathIs, themes } from "../utils/helpers.ts";
+import { PAGES } from "../utils/consts.ts";
+import type { Component } from "../utils/types.ts";
 
 function HiddenHeader(): Component {
   const { isDay } = themes(),

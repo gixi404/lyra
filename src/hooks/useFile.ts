@@ -1,18 +1,19 @@
 import { useCallback } from "react";
-import useStorage from "./useStorage";
-import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, PAGES } from "../utils/consts";
-import { fileStore, type FileItemStats } from "../store/fileStore";
-import { clearDetachedSaveFailure, moveDetachedSaveFailure } from "../utils/editorPersistence";
+import useStorage from "./useStorage.ts";
+import { BASE_DIRECTORY, INTRO_ES, MAIN_FOLDER, PAGES } from "../utils/consts.ts";
+import { fileStore, type FileItemStats } from "../store/fileStore.ts";
+import { clearDetachedSaveFailure, moveDetachedSaveFailure } from "../utils/editorPersistence.ts";
 import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import {
   getCompatibleStorageKeys,
+  notification,
   navigation,
   normalizeStoredFileNames,
   resolveDisplayFileName,
-} from "../utils/helpers";
-import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome";
-import { ensureNoteExtension, getFileBaseName, getFileDirectory, hasSupportedNoteExtension } from "../utils/noteName";
+} from "../utils/helpers.ts";
+import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome.ts";
+import { ensureNoteExtension, getFileBaseName, getFileDirectory, hasSupportedNoteExtension } from "../utils/noteName.ts";
 import {
   DirEntry,
   exists,
@@ -23,6 +24,8 @@ import {
 } from "@tauri-apps/plugin-fs";
 import { clearDraft as clearDraftStore, migrateDraftDisk } from "../utils/draftStore.ts";
 import { logger } from "../utils/logger.ts";
+import { getOpenedNoteIdentity, rememberNoteIdentity, remapOpenedNoteIdentities } from "../utils/noteIdentity.ts";
+import { runPathOperation } from "../utils/pathOperationLock.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 
@@ -47,6 +50,10 @@ function useFile(): Files {
   }, []);
 
   async function renameFile(oldName: string, newName: string): Promise<string> {
+    return runPathOperation(() => renameFileLocked(oldName, newName));
+  }
+
+  async function renameFileLocked(oldName: string, newName: string): Promise<string> {
     if (!oldName || !newName) throw new Error("Both old and new names are required");
     const oldDir = getFileDirectory(oldName);
     const resolvedBase = resolveDisplayName(getFileBaseName(newName), getFileBaseName(oldName));
@@ -61,6 +68,7 @@ function useFile(): Files {
       }
     }
     await invoke("gdrive_note_renamed", { oldName, newName: nextDisplayName });
+    await invoke("remap_note_identity", { oldName, newName: nextDisplayName });
 
     moveCompatibleValue(oldName, nextDisplayName, "", DRAFT_STORAGE_PREFIX);
     moveCompatibleValue(oldName, nextDisplayName, "-modified");
@@ -81,6 +89,8 @@ function useFile(): Files {
     } catch (err) {
       logger.warn("Could not migrate disk draft on rename:", err);
     }
+
+    remapOpenedNoteIdentities([{ oldPath: oldName, newPath: nextDisplayName }]);
 
     editedFile();
     return nextDisplayName;
@@ -109,6 +119,9 @@ function useFile(): Files {
       Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
       await invoke("create_note", { fileName: displayName, content });
+      const opened = await invoke<{ identity: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: displayName });
+      rememberNoteIdentity(displayName, opened.identity, opened.firstSeen, opened.pathReused);
+      if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
     } else {
       const { pathFile } = await getFilePath(displayName);
       await writeTextFile(pathFile, content, { createNew: true, baseDir: BASE_DIRECTORY.baseDir });
@@ -145,12 +158,13 @@ function useFile(): Files {
     return files.sort((a, b) => a.localeCompare(b));
   }, []);
 
-  const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats> }> => {
+  const getFilesWithStats = useCallback(async (): Promise<{ files: string[]; stats: Record<string, FileItemStats>; folders: string[]; warnings?: string[] }> => {
     const isTauri = typeof window !== "undefined" &&
       Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
-      return invoke<{ files: string[]; stats: Record<string, FileItemStats> }>("list_note_files_with_stats");
+      return invoke<{ files: string[]; stats: Record<string, FileItemStats>; folders: string[]; warnings: string[] }>("list_note_files_with_stats");
     }
+    const folders: string[] = [];
     const readSubdir = async (
       folder: string,
       prefix = ""
@@ -171,6 +185,7 @@ function useFile(): Files {
           } catch {}
           res.push({ rel, mtime, birthtime });
         } else if (f.isDirectory) {
+          folders.push(rel);
           try {
             const sub = await readSubdir(`${folder}/${f.name}`, rel);
             res.push(...sub);
@@ -187,7 +202,7 @@ function useFile(): Files {
       stats[item.rel] = { mtime: item.mtime, birthtime: item.birthtime };
     }
 
-    return { files: validNames, stats };
+    return { files: validNames, stats, folders: folders.sort((a, b) => a.localeCompare(b)) };
   }, [getFilePath]);
 
   const fileExists = useCallback(async (name: string): Promise<boolean> => {
@@ -205,7 +220,9 @@ function useFile(): Files {
       // En entorno de producción de Tauri, se invoca save_note_atomic directamente sin capturar ni enmascarar errores.
       // Si falla (I/O, disco lleno, ruta insegura o symlink), el error debe propagarse directamente a
       // EditorSyncCoordinator para retener el borrador en localStorage y disparar onSaveError sin degradar a escrituras no atómicas.
-      await invoke("save_note_atomic", { fileName: name, content: text });
+      const expectedIdentity = getOpenedNoteIdentity(name);
+      if (!expectedIdentity) throw new Error("Note identity is unavailable; reopen the note. Your draft remains recoverable.");
+      await invoke("save_note_atomic", { fileName: name, content: text, expectedIdentity });
       return;
     }
 
@@ -224,6 +241,20 @@ function useFile(): Files {
   }, [goTo, writeFile]);
 
   const readFile = useCallback(async (name: string): Promise<string> => {
+    const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+    if (isTauri) {
+      const opened = await invoke<{ identity: string; content: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: name });
+      rememberNoteIdentity(name, opened.identity, opened.firstSeen, opened.pathReused);
+      if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
+      if (isWelcomeFileName(name) &&
+        (opened.content.includes("<p>") || (opened.content.includes("&oacute;") && opened.content.includes("&ntilde;")))) {
+        try {
+          await invoke("save_note_atomic", { fileName: name, content: INTRO_ES, expectedIdentity: opened.identity });
+        } catch (err) { logger.warn("Could not update legacy welcome file:", err); }
+        return INTRO_ES;
+      }
+      return opened.content;
+    }
     const { pathFile } = await getFilePath(name);
     let content: string = await readTextFile(pathFile, BASE_DIRECTORY);
     if (
@@ -396,7 +427,7 @@ interface Files {
   deleteFile: (name: string) => Promise<void>;
   createFile: (name: string, content?: string) => Promise<string>;
   getFiles: () => Promise<string[]>;
-  getFilesWithStats: () => Promise<{ files: string[]; stats: Record<string, FileItemStats> }>;
+  getFilesWithStats: () => Promise<{ files: string[]; stats: Record<string, FileItemStats>; folders: string[]; warnings?: string[] }>;
   fileExists: (name: string) => Promise<boolean>;
   saveFileContent: (name: string, content: string) => Promise<void>;
   getFilePath: (fileName: string) => Promise<{ pathFile: string }>;

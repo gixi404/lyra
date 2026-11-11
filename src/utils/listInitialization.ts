@@ -37,3 +37,11 @@ export function startLocalFirstListInitialization<T>(
   })();
   return () => { active = false; };
 }
+
+export function shouldPreserveExplorerDataOnInit(state: {
+  isInitialized: boolean;
+  files: readonly string[];
+  folders: readonly string[];
+}): boolean {
+  return state.isInitialized && (state.files.length > 0 || state.folders.length > 0);
+}

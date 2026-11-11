@@ -1,20 +1,21 @@
-import ItemFile from "./ItemFile";
-import Modal from "./Modal";
-import NoFiles from "./NoFiles";
-import NoMatches from "./NoMatches";
-import useFile from "../hooks/useFile";
-import usePreferences from "../hooks/usePreferences";
-import { configStore } from "../store/configStore";
-import { len, normalize, notification, themes } from "../utils/helpers";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import ItemFile from "./ItemFile.tsx";
+import FolderExplorer from "./FolderExplorer.tsx";
+import Modal from "./Modal.tsx";
+import NoFiles from "./NoFiles.tsx";
+import NoMatches from "./NoMatches.tsx";
+import useFile from "../hooks/useFile.ts";
+import usePreferences from "../hooks/usePreferences.ts";
+import { configStore } from "../store/configStore.ts";
+import { len, normalize, notification, themes } from "../utils/helpers.ts";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { searchStore, type SortOptionId } from "../store/searchStore";
-import { fileStore } from "../store/fileStore";
-import type { Component } from "../utils/types";
+import { searchStore, type SortOptionId } from "../store/searchStore.ts";
+import { fileStore } from "../store/fileStore.ts";
+import type { Component } from "../utils/types.ts";
 import { AlertCircle } from "lucide-react";
-import { includeRetainedExits } from "../utils/listExit";
-import { deleteArchivedBatch } from "../utils/archiveDeletion";
-import { noteLabel, noteSuccessMessage } from "../utils/noteName";
+import { includeRetainedExits } from "../utils/listExit.ts";
+import { deleteArchivedBatch } from "../utils/archiveDeletion.ts";
+import { noteLabel, noteSuccessMessage } from "../utils/noteName.ts";
 import { logger } from "../utils/logger.ts";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
@@ -38,9 +39,14 @@ const ListFiles = memo(({ arr }: Props): Component => {
         sortOption: (state.sortOption || state.sortOptions?.[0] || "mtime") as SortOptionId,
       }))
     ),
-    { statsMap, isInitialized, retainedExits } = fileStore(
+    { statsMap, folders, folderListingWarnings, archivedFolders, folderArchiveError, folderArchiveLoaded, isInitialized, retainedExits } = fileStore(
       useShallow(state => ({
         statsMap: state.statsMap,
+        folders: state.folders,
+        folderListingWarnings: state.folderListingWarnings,
+        archivedFolders: state.archivedFolders,
+        folderArchiveError: state.folderArchiveError,
+        folderArchiveLoaded: state.folderArchiveLoaded,
         isInitialized: state.isInitialized,
         retainedExits: state.retainedExits,
       }))
@@ -117,10 +123,13 @@ const ListFiles = memo(({ arr }: Props): Component => {
     }
   }
 
-  const isReady = isInitialized;
+  const isReady = isInitialized && folderArchiveLoaded;
+  const inArchivedFolder = useCallback((path: string) => archivedFolders.some(folder => path === folder || path.startsWith(`${folder}/`)), [archivedFolders]);
 
   const files = useMemo(() => {
-    const current = paperIsOpen ? paperFiles : arr.filter(f => !paperSet.has(f));
+    const current = paperIsOpen
+      ? Array.from(new Set([...paperFiles, ...arr.filter(inArchivedFolder)]))
+      : arr.filter(f => !paperSet.has(f) && !inArchivedFolder(f));
 
     const indexedSource = current.map(name => ({
       name,
@@ -134,6 +143,9 @@ const ListFiles = memo(({ arr }: Props): Component => {
     const sorted = filtered.sort((a, b) => {
       let res = 0;
       if (sortOption === "mtime") {
+        res = (statsMap[b]?.mtime || 0) - (statsMap[a]?.mtime || 0);
+      } else if (sortOption === "manual") {
+        // La posición manual por carpeta se aplica en buildFolderTree; aquí solo el fallback determinista.
         res = (statsMap[b]?.mtime || 0) - (statsMap[a]?.mtime || 0);
       } else if (sortOption === "az") {
         res = a.localeCompare(b);
@@ -151,7 +163,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
     });
     const matchingRetained = retainedExits.filter(item => normalize(item.name).includes(normalizedSearch));
     return includeRetainedExits(sorted, matchingRetained, paperIsOpen ? "paper" : "active");
-  }, [arr, normalizedSearch, sortOption, paperFiles, paperIsOpen, paperSet, statsMap, retainedExits]);
+  }, [arr, normalizedSearch, sortOption, paperFiles, paperIsOpen, paperSet, statsMap, retainedExits, inArchivedFolder]);
 
   useEffect(() => {
     fileStore.getState().setRenderedOrder(paperIsOpen ? "paper" : "active", files);
@@ -169,14 +181,26 @@ const ListFiles = memo(({ arr }: Props): Component => {
   }, [paperIsOpen, resetSearch]);
 
   function renderFiles(): Component {
-    if (len(files) === 0) {
+    if (!folderArchiveLoaded && !isInitialized) return <li className="p-3 text-sm opacity-60">Cargando carpetas…</li>;
+    if (folderArchiveError) return <li role="alert" className="p-3 text-red-400">No se pudo leer el estado de carpetas archivadas. {folderArchiveError}</li>;
+    const visibleFolders = paperIsOpen
+      ? folders.filter(path => archivedFolders.some(archived => path === archived || path.startsWith(`${archived}/`) || archived.startsWith(`${path}/`)))
+      : folders.filter(path => !inArchivedFolder(path));
+    if (paperIsOpen && len(files) === 0 && visibleFolders.length === 0) {
       if (len(normalizedSearch) > 0) return <NoMatches />;
       return <NoFiles />;
     }
 
+    if (!paperIsOpen) return <>{folderListingWarnings.length > 0 && <li role="alert" className="list-none p-3 text-amber-400">No se pudieron leer todas las carpetas o entradas. Comprueba los permisos del directorio de Lyra.</li>}<FolderExplorer folders={visibleFolders} files={files}
+      manualOrder={sortOption === "manual"}
+      renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} isExiting={exitingFiles.includes(name)} />} /></>;
+    const archivedFiles = files.filter(inArchivedFolder);
+    const separateFiles = files.filter(name => !inArchivedFolder(name));
     return (
       <>
-        {files.map((n: string) => (
+        <FolderExplorer folders={visibleFolders} files={archivedFiles} showRoot={false} archivedPaths={archivedFolders}
+          renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder isExiting={exitingFiles.includes(name)} />} />
+        {separateFiles.map((n: string) => (
           <ItemFile
             fileName={n}
             key={n}
@@ -192,8 +216,10 @@ const ListFiles = memo(({ arr }: Props): Component => {
     return files.filter(f => !exitingFiles.includes(f)).length;
   }, [files, exitingFiles]);
 
+  const hasExistingExplorerData = isInitialized;
+
   return (
-    <div className={`flex flex-col w-[680px] max-w-full transition-opacity duration-150 ${isReady ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+    <div className={`flex flex-col w-[680px] max-w-full transition-opacity duration-150 ${isReady || hasExistingExplorerData ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
       {/* Cabecera DOCUMENTOS + Contador */}
       <div
         className={`flex items-center justify-between w-[680px] max-w-full px-1 pb-2.5 mb-1 border-b ${
@@ -205,7 +231,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
             key={`title-${paperIsOpen}`}
             className="font-mono text-[11px] font-semibold tracking-widest uppercase animate-list-header"
           >
-            {paperIsOpen ? "ARCHIVADOS" : "DOCUMENTOS"}
+            {paperIsOpen ? "ARCHIVADOS" : "DIRECTORIOS"}
           </span>
           {paperIsOpen && (
             <div className="relative inline-flex items-center">
@@ -248,7 +274,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
           )}
         </div>
         <div className="flex items-center gap-x-3">
-          {paperIsOpen && visibleFilesCount > 0 && (
+          {/* {paperIsOpen && visibleFilesCount > 0 && (
             <button
               type="button"
               onClick={() => setIsEmptyModalOpen(true)}
@@ -266,7 +292,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
             >
               Vaciar
             </button>
-          )}
+          )} */}
           <span
             key={`count-${paperIsOpen}`}
             className="font-mono text-[11px] font-semibold tracking-widest pr-1.5 animate-list-header"

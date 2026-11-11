@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { animated, useTransition } from "@react-spring/web";
 import { ChevronUp, ChevronDown, Replace, ReplaceAll, X, CaseSensitive } from "lucide-react";
 import { twMerge } from "tailwind-merge";
-import { themes } from "../utils/helpers";
-import type { Component } from "../utils/types";
+import { themes } from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
 
 export interface SearchState {
   query: string;

@@ -1,8 +1,8 @@
 import { memo } from "react";
-import DefaultHeader from "./DefaultHeader";
-import HiddenHeader from "./HiddenHeader";
-import { configStore } from "../store/configStore";
-import type { Component } from "../utils/types";
+import DefaultHeader from "./DefaultHeader.tsx";
+import HiddenHeader from "./HiddenHeader.tsx";
+import { configStore } from "../store/configStore.ts";
+import type { Component } from "../utils/types.ts";
 
 function Header(): Component {
   const { showHeader } = configStore();

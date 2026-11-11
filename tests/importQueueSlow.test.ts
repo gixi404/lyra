@@ -54,7 +54,7 @@ test("M2-1b slow first batch: duplicate within completion window is rejected", a
       }
       return { imported: [{ original_path: "/x/slow.txt", file_name: "slow (1).txt", size: 10 }], errors: [] };
     }
-    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("contenido");
+    if (cmd === "open_note_identity") return { identity: "test-id", content: "contenido" };
     if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
@@ -83,7 +83,7 @@ test("A1-b empty file is ok:true and navigates; read error is ok:false without n
   // Empty file: read returns empty bytes.
   const mockEmpty = async (cmd: string) => {
     if (cmd === "import_external_files") return { imported: [{ original_path: "/x/vacio.txt", file_name: "vacio.txt", size: 0 }], errors: [] };
-    if (cmd === "plugin:fs|read_text_file") return new TextEncoder().encode("");
+    if (cmd === "open_note_identity") return { identity: "test-id", content: "" };
     if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };
@@ -105,7 +105,7 @@ test("A1-b empty file is ok:true and navigates; read error is ok:false without n
   navigated = "";
   const mockFail = async (cmd: string) => {
     if (cmd === "import_external_files") return { imported: [{ original_path: "/x/roto.txt", file_name: "roto.txt", size: 10 }], errors: [] };
-    if (cmd === "plugin:fs|read_text_file") throw new Error("EACCES: Permission denied");
+    if (cmd === "open_note_identity") throw new Error("EACCES: Permission denied");
     if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;
   };

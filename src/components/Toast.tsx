@@ -1,6 +1,6 @@
-import { useToastStore } from "../store/toastStore";
+import { useToastStore } from "../store/toastStore.ts";
 import { CheckCircle2, AlertCircle, Info, Loader2, X } from "lucide-react";
-import { themes } from "../utils/helpers";
+import { themes } from "../utils/helpers.ts";
 
 function Toast(): JSX.Element | null {
   const toasts = useToastStore(state => state.toasts);

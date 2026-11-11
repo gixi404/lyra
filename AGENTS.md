@@ -51,6 +51,25 @@ pnpm run tauri dev      # desarrollo con hot-reload
 - Shared UI/app logic is split across `src/components/`, `src/hooks/`, `src/store/`, and `src/utils/`.
 - Existing repo guidance also lives in `CLAUDE.md`; trust package/config files over prose when they disagree.
 
+## Menús contextuales compartidos (archivos y carpetas)
+
+- **Referencia visual**: los menús contextuales y popups de los archivos son la referencia. Los componentes de carpetas se adaptan a ellos; nunca al revés. No debe existir una segunda implementación visual de la misma clase de componente.
+- **Componentes compartidos**:
+  - `src/components/ContextMenu.tsx`: menú contextual flotante (disparador de tres puntos + panel). Exporta `MenuItem` y `MenuSeparator`.
+  - `src/components/InfoModal.tsx`: marco de las ventanas de información (archivos y carpetas) con `InfoRow` para las filas de datos.
+  - `src/components/MoveItemDialog.tsx`: diálogo de movimiento para archivos y carpetas (`kind: "file" | "folder"`).
+  - `src/utils/menuStyles.ts`: clases compartidas de panel, opción, separador y disparador.
+  - `src/utils/menuPosition.ts`: posicionamiento puro del panel (volteado arriba/abajo y ajuste a los bordes del viewport).
+- **Renderizado por portal**: el panel se monta con `createPortal` sobre `document.body` y posicionamiento `fixed`. Es obligatorio: dentro de las carpetas desplegadas el `overflow: hidden` de `Collapsible` y los contextos de apilamiento creados por `transform` recortan y ocultan el menú si se renderiza en línea.
+- **Seguimiento del ancla**: mientras el menú está abierto sigue la posición del disparador (bucle `requestAnimationFrame` que **se detiene solo** tras dos mediciones consecutivas sin movimiento, más listeners de `scroll`/`resize` y un `ResizeObserver` sobre los ancestros), de modo que se mantiene pegado al desplazar la lista y durante las animaciones de expansión y contracción de carpetas. El bucle se cancela al cerrar o desmontar el menú y una posición idéntica no provoca re-renderizados.
+- **Visibilidad del disparador de tres puntos**:
+  - Archivos (`MenuFile`, `MenuPaperFile`): oculto por defecto (`opacity-0`), visible con `group-hover`, `group-focus-within` y `focus-visible`. No modifica el flujo ni las dimensiones de la fila.
+  - Carpetas (`FolderMenu`): siempre visible, con el mismo estilo de disparador.
+- **Acciones**: los menús de carpeta reutilizan `Modal` (crear, renombrar, archivar, recuperar) e `InfoModal` (información). Archivar una carpeta exige confirmación previa con `variant="danger"` y un texto adaptado; la opción «Archivar» usa el mismo hover rojo que los archivos.
+- **Orden e iconos de las acciones**: todas las acciones llevan icono (incluida «Mover a…») y **«Información» es siempre la última**, precedida de separador, en los tres menús (archivos, archivos archivados y carpetas).
+- **Temas**: los popups compartidos (`Modal`, `InfoModal`, `MoveItemDialog`, `CreateNoteDialog`, `FolderPicker`) adaptan colores a `isDay`; el tema oscuro conserva su aspecto original y el tema claro deja de usar superficies oscuras.
+- **Reglas de negocio intactas**: la carpeta virtual «Lyra» sigue protegida (no se renombra, mueve ni archiva) y las carpetas estructurales de la vista de archivados solo ofrecen información.
+
 ## Editor Debugging & Diagnostics System
 
 - **Módulo logger**: `src/utils/editorDebug.ts` implementa `editorDebug`, un logger de alta resolución (`performance.now()`) para eventos (`EVENT`), cambios de selección (`STATE`), renders (`RENDER`) y transiciones (`TRANSITION`).
@@ -145,6 +164,13 @@ pnpm run tauri dev      # desarrollo con hot-reload
 - **Medio — Explorador**: `list_notes` (`list_note_files_with_stats_at`) omite de forma silenciosa subdirectorios o entradas de disco inaccesibles mediante `continue`, devolviendo una lista parcial en `Ok(listing)` sin advertir al frontend de las omisiones.
 
 ---
+
+## Arranque minimizado para pruebas automatizadas
+
+- La variable de entorno `LYRA_START_MINIMIZED=1` hace que la ventana principal de Lyra arranque **minimizada y sin robar foco** (se muestra minimizada en la barra de tareas). Cualquier valor distinto de `""`/`"0"` activa el modo.
+- Alcanza a los caminos de revelado inicial (`show_main_window` y el fallback de `main.rs`). Las aperturas explícitas por el usuario (segundo lanzamiento vía single-instance, «Abrir con» / doble clic de archivo) siempre traen la ventana al frente.
+- Cuando lances la app para pruebas (`pnpm tauri dev`, binario de prueba, etc.), usa `LYRA_START_MINIMIZED=1 pnpm run tauri dev` para no interrumpir al usuario con popups en pantalla.
+- Implementado en `src-tauri/src/main.rs` (`start_minimized` / `reveal_main_window`, comando `is_start_minimized`) y en `src/utils/window.ts` (fallback del frontend).
 
 ## Post-Task: Auto-Doc Sync
 

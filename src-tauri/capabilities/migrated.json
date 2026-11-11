@@ -21,7 +21,10 @@
       "allow": [
         "$DOCUMENT/lyra",
         "$DOCUMENT/lyra/*",
-        "$DOCUMENT/lyra/**"
+        "$DOCUMENT/lyra/**",
+        "$DOCUMENT/lyra/.*",
+        "$DOCUMENT/lyra/.*/*",
+        "$DOCUMENT/lyra/.preferences.json"
       ]
     },
     "core:window:allow-set-maximizable",

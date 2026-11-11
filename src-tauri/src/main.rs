@@ -7,8 +7,10 @@ use tauri::Manager;
 
 mod default_app;
 mod drafts;
+mod folders;
 mod gdrive;
 mod importer;
+mod local_identity;
 mod native_updater;
 
 #[derive(Default, Clone)]
@@ -64,6 +66,8 @@ struct NoteStats {
 struct NoteListing {
     files: Vec<String>,
     stats: std::collections::HashMap<String, NoteStats>,
+    folders: Vec<String>,
+    warnings: Vec<String>,
 }
 
 fn timestamp_ms(value: Option<std::time::SystemTime>) -> u128 {
@@ -72,7 +76,7 @@ fn timestamp_ms(value: Option<std::time::SystemTime>) -> u128 {
 }
 
 fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
-    let mut listing = NoteListing { files: Vec::new(), stats: std::collections::HashMap::new() };
+    let mut listing = NoteListing { files: Vec::new(), stats: std::collections::HashMap::new(), folders: Vec::new(), warnings: Vec::new() };
 
     if !dir.exists() {
         return Err(format!("Could not list notes: directory '{}' does not exist", dir.display()));
@@ -92,6 +96,7 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
         let entries = match std::fs::read_dir(&current_dir) {
             Ok(e) => e,
             Err(_err) => {
+                listing.warnings.push(format!("Cannot read directory: {}", current_dir.display()));
                 #[cfg(debug_assertions)]
                 eprintln!("[list_notes] Skipping unreadable directory '{}': {_err}", current_dir.display());
                 continue;
@@ -103,6 +108,7 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
             match entry {
                 Ok(e) => dir_entries.push(e),
                 Err(_err) => {
+                    listing.warnings.push(format!("Cannot read an entry in: {}", current_dir.display()));
                     #[cfg(debug_assertions)]
                     eprintln!("[list_notes] Skipping unreadable entry in '{}': {_err}", current_dir.display());
                 }
@@ -136,6 +142,7 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
                         } else {
                             format!("{rel_prefix}/{file_name}")
                         };
+                        listing.folders.push(next_prefix.clone());
                         queue.push_back((entry_path, next_prefix));
                     }
                 }
@@ -165,25 +172,12 @@ fn list_note_files_with_stats_at(dir: &Path) -> Result<NoteListing, String> {
 
                 listing.stats.insert(rel_path.clone(), stats);
                 listing.files.push(rel_path);
-            } else if file_type.is_symlink() {
-                if let Ok(target_canonical) = entry_path.canonicalize() {
-                    if target_canonical.starts_with(&root_canonical)
-                        && target_canonical.is_dir()
-                        && visited_dirs.insert(target_canonical)
-                    {
-                        let next_prefix = if rel_prefix.is_empty() {
-                            file_name
-                        } else {
-                            format!("{rel_prefix}/{file_name}")
-                        };
-                        queue.push_back((entry_path, next_prefix));
-                    }
-                }
             }
         }
     }
 
     listing.files.sort();
+    listing.folders.sort();
     Ok(listing)
 }
 
@@ -197,6 +191,11 @@ async fn list_note_files_with_stats(app: tauri::AppHandle) -> Result<NoteListing
     let actual = dir.canonicalize().map_err(|e| format!("Could not inspect notes folder: {e}"))?;
     if !actual.starts_with(&allowed) {
         return Err("Notes folder is outside Documents".to_string());
+    }
+    {
+        let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+        local_identity::recover_save(&dir)?;
+        folders::recover_move_at(&dir)?;
     }
     tokio::task::spawn_blocking(move || list_note_files_with_stats_at(&dir)).await
         .map_err(|e| format!("Could not finish note listing: {e}"))?
@@ -323,6 +322,21 @@ mod tests {
     fn list_notes_reports_missing_directory() {
         let dir = std::env::temp_dir().join(format!("lyra_missing_{}", rand::random::<u64>()));
         assert!(list_note_files_with_stats_at(&dir).is_err());
+    }
+
+    #[test]
+    fn autosave_refuses_missing_old_path_after_move() {
+        let dir = std::env::temp_dir().join(format!("lyra_moved_save_{}", rand::random::<u64>()));
+        fs::create_dir(&dir).unwrap();
+        let old = dir.join("old.md");
+        let moved = dir.join("moved.md");
+        fs::write(&old, "preserved").unwrap();
+        let (identity, _) = local_identity::open_note(&dir, "old.md").unwrap();
+        fs::rename(&old, &moved).unwrap();
+        assert!(local_identity::save_note(&dir, "old.md", &identity, b"pending").is_err());
+        assert_eq!(fs::read_to_string(&moved).unwrap(), "preserved");
+        assert!(!old.exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -646,6 +660,10 @@ mod tests {
 
         // Ejecutar listado y verificar
         let listing = list_note_files_with_stats_at(&base).unwrap();
+        assert!(listing.folders.contains(&"carpeta_vacia".to_string()));
+        assert!(listing.folders.contains(&"carpeta_vacia/otra_vacia".to_string()));
+        assert!(listing.folders.contains(&"trabajo/clientes".to_string()));
+        assert!(!listing.folders.iter().any(|path| path.starts_with('.')));
 
         // Verificar que los 6 archivos esperados están presentes:
         // 1. nota_raiz.txt
@@ -696,13 +714,39 @@ mod tests {
     }
 }
 
+/// Modo de arranque minimizado (p. ej. pruebas automatizadas): la ventana se
+/// muestra pero queda minimizada y sin robar el foco. Se activa con la variable
+/// de entorno LYRA_START_MINIMIZED (cualquier valor distinto de ""/"0").
+fn start_minimized() -> bool {
+    std::env::var("LYRA_START_MINIMIZED")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
+}
+
+/// Muestra la ventana principal. En modo minimizado (y sin force_foreground)
+/// la deja minimizada y sin foco; en caso contrario la trae al frente.
+fn reveal_main_window(window: &tauri::WebviewWindow, force_foreground: bool) {
+    if !force_foreground && start_minimized() {
+        let _ = window.show();
+        let _ = window.minimize();
+        return;
+    }
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
 #[tauri::command]
 fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        reveal_main_window(&window, false);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn is_start_minimized() -> bool {
+    start_minimized()
 }
 
 #[tauri::command]
@@ -777,8 +821,9 @@ async fn create_note(
 ) -> Result<(), String> {
     let doc_dir = app.path().document_dir().map_err(|e| format!("Cannot resolve Documents: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)?;
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    folders::ensure_active_parent_at(&lyra_dir, &file_name)?;
+    gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)?;
     let account = gdrive::auth::verify_current_account(&app).ok();
     gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
         gdrive::provenance::create_local_note(
@@ -812,31 +857,22 @@ async fn save_note_atomic(
     app: tauri::AppHandle,
     file_name: String,
     content: String,
+    expected_identity: String,
 ) -> Result<i64, String> {
     let doc_dir = app
         .path()
         .document_dir()
         .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    let target_path = gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)
-        .map_err(|e| format!("Ruta o nombre de archivo inválido: {e}"))?;
-
     // Coordinación exclusiva por archivo para mitigar condiciones de carrera TOCTOU
     // con descargas o reemplazos concurrentes del motor de Google Drive.
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
     let mtime = gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
+        local_identity::verify_note(&lyra_dir, &file_name, &expected_identity)?;
         // If the file was replaced externally, its old permissions are retired
         // before writing any new Lyra content into it.
         gdrive::provenance::invalidate_changed_note(&lyra_dir, &file_name)?;
-        gdrive::sync::write_file_atomic(&target_path, content.as_bytes())
-            .map_err(|e| format!("Error en guardado atómico de '{file_name}': {e}"))?;
-
-        let mtime = std::fs::metadata(&target_path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+        let mtime = local_identity::save_note(&lyra_dir, &file_name, &expected_identity, content.as_bytes())?;
 
         if let Err(_e) = gdrive::provenance::record_local_write(&lyra_dir, &file_name, None, false) {
             #[cfg(debug_assertions)]
@@ -846,6 +882,39 @@ async fn save_note_atomic(
     })?;
 
     Ok(mtime)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenedNote { identity: String, content: String, first_seen: bool, path_reused: bool, save_unavailable: Option<String> }
+
+#[tauri::command]
+async fn open_note_identity(app: tauri::AppHandle, file_name: String) -> Result<OpenedNote, String> {
+    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    let _ = folders::recover_move_at(&lyra_dir);
+    if let Err(error) = local_identity::recover_save(&lyra_dir) {
+        let content = local_identity::read_unverified(&lyra_dir, &file_name)?;
+        return Ok(OpenedNote { identity: String::new(), content, first_seen: true, path_reused: true, save_unavailable: Some(error) });
+    }
+    let status = local_identity::registration_status(&lyra_dir, &file_name);
+    match local_identity::open_note(&lyra_dir, &file_name) {
+        Ok((identity, content)) => {
+            let (first_seen, path_reused) = status.unwrap_or((false, false));
+            Ok(OpenedNote { identity, content, first_seen, path_reused, save_unavailable: None })
+        }
+        Err(error) => {
+            let content = local_identity::read_unverified(&lyra_dir, &file_name)?;
+            Ok(OpenedNote { identity: String::new(), content, first_seen: true, path_reused: true, save_unavailable: Some(error) })
+        }
+    }
+}
+
+#[tauri::command]
+async fn remap_note_identity(app: tauri::AppHandle, old_name: String, new_name: String) -> Result<(), String> {
+    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    local_identity::remap_notes(&lyra_dir, &[(old_name, new_name)])
 }
 
 #[tauri::command]
@@ -968,9 +1037,7 @@ fn main() {
         .manage(pending_files)
         .plugin(tauri_plugin_single_instance::init(move |app, args, cwd| {
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
+                reveal_main_window(&window, true);
             }
 
             let mut incoming = Vec::new();
@@ -1033,8 +1100,7 @@ fn main() {
                 let _ = app_handle.run_on_main_thread(move || {
                     if let Some(window) = handle.get_webview_window("main") {
                         if !window.is_visible().unwrap_or(true) {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            reveal_main_window(&window, false);
                         }
                     }
                 });
@@ -1048,12 +1114,25 @@ fn main() {
             get_default_app_status,
             get_platform_os,
             show_main_window,
+            is_start_minimized,
             save_note_atomic,
+            open_note_identity,
+            remap_note_identity,
             save_draft_file,
             read_draft_file,
             delete_draft_file,
             list_note_files_with_stats,
             create_note,
+            folders::create_folder,
+            folders::folder_info,
+            folders::list_archived_folders,
+            folders::set_folder_archived,
+            folders::move_folder_local,
+            folders::move_note_local,
+            folders::recover_folder_move,
+            folders::local_move_status,
+            folders::pending_local_move,
+            folders::acknowledge_local_move,
             import_external_files,
             get_pending_open_files,
             get_installation_info,
@@ -1101,9 +1180,7 @@ fn main() {
                 use tauri::Emitter;
                 let _ = app_handle.emit("lyra://open-files", incoming);
                 if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
+                    reveal_main_window(&window, true);
                 }
             }
         }

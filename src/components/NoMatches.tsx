@@ -1,7 +1,7 @@
 import { twMerge } from "tailwind-merge";
-import translations from "../utils/dictionary";
-import { themes } from "../utils/helpers";
-import type { Component } from "../utils/types";
+import translations from "../utils/dictionary.ts";
+import { themes } from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
 
 function NoMatches(): Component {
   const d = translations();

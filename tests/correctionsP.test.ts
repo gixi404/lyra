@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import { draftIdFor, contentHash, __resetDraftStoreForTests } from "../src/utils/draftStore.ts";
 import { reconcileDraftState } from "../src/utils/draftRecovery.ts";
 import { EditorSyncCoordinator } from "../src/utils/editorSyncCoordinator.ts";
+import { rememberNoteIdentity } from "../src/utils/noteIdentity.ts";
 
 function setupDesktop(disk: Map<string, string>, opts?: { delayInvoke?: Promise<void> }) {
+  rememberNoteIdentity("a.txt", "fixture-a");
+  rememberNoteIdentity("viejo.txt", "fixture-old");
+  rememberNoteIdentity("nuevo.txt", "fixture-old");
   const lsStore = new Map<string, string>();
   (globalThis as unknown as { window: unknown }).window = {
     localStorage: {

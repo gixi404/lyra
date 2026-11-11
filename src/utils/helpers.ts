@@ -1,16 +1,16 @@
-import { type ToastAction, type ToastType, useToastStore } from "../store/toastStore";
-import translations from "./dictionary";
-import usePreferences from "../hooks/usePreferences";
-import { configStore } from "../store/configStore";
-import { scheduleSavePersistentPreferences } from "./persistentPreferences";
+import { type ToastAction, type ToastType, useToastStore } from "../store/toastStore.ts";
+import translations from "./dictionary.ts";
+import usePreferences from "../hooks/usePreferences.ts";
+import { configStore } from "../store/configStore.ts";
+import { scheduleSavePersistentPreferences } from "./persistentPreferences.ts";
 import { exists, mkdir } from "@tauri-apps/plugin-fs";
 import { type NavigateFunction, useNavigate } from "react-router-dom";
 import {
   BASE_DIRECTORY,
   MAIN_FOLDER,
   THEMES,
-} from "./consts";
-import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome";
+} from "./consts.ts";
+import { ensureWelcomeFileState, isWelcomeFileName } from "./welcome.ts";
 import {
   ensureNoteExtension,
   getFileBaseName,
@@ -20,8 +20,8 @@ import {
   isReservedWindowsFileName,
   normalizeStoredFileNames,
   resolveStoredFileName,
-} from "./noteName";
-import { pathIs, scrollToNovedades } from "./navigation";
+} from "./noteName.ts";
+import { pathIs, scrollToNovedades } from "./navigation.ts";
 import { logger } from "./logger.ts";
 
 const DEFAULT_FILE_EXTENSION = ".txt";
@@ -47,40 +47,41 @@ function notification(
 
 
 
-function nameIsValid(name: string): boolean {
-  const d = translations();
-
+// Validación estricta y no destructiva de nombres de archivo. La misma política se
+// aplica en Rust (is_safe_relative_path), que es la autoridad final. Cualquier carácter
+// que no pueda representarse con seguridad en Linux/Windows/macOS se RECHAZA con una
+// explicación, nunca se sustituye ni se elimina en silencio.
+const FORBIDDEN_FILE_NAME_CHARS = ["\\", "/", ":", "*", "?", "\"", "<", ">", "|"];
+export interface FileNameValidation { ok: boolean; reason?: string }
+function validateFileName(name: string): FileNameValidation {
   if (!name || name.trim().length === 0) {
-    notification("error", d.InvalidName);
-    return false;
+    return { ok: false, reason: "El nombre no puede estar vacío." };
   }
-
-  const regex: RegExp = /[\\/:*?"<>|]/,
-    hasControlChars: boolean = [...name].some(c => c.charCodeAt(0) <= 31),
-    nameLong: boolean = len(name) > 60,
-    invalidSymbols: boolean = regex.test(name) || hasControlChars,
-    invalidStartEnd: boolean = /^[ .]|[ .]$/.test(name);
-
-  if (nameLong) {
-    notification("error", d.VeryLongName);
-    return false;
+  if (name !== name.trim()) {
+    return { ok: false, reason: "El nombre no puede empezar ni terminar con espacios." };
   }
-
-  if (invalidSymbols || invalidStartEnd) {
-    notification("error", d.NoSpecialCharacters);
-    return false;
+  if ([...name].some(c => c.charCodeAt(0) <= 31)) {
+    return { ok: false, reason: "El nombre contiene caracteres de control no permitidos." };
   }
-
+  const forbidden = FORBIDDEN_FILE_NAME_CHARS.filter(c => name.includes(c));
+  if (forbidden.length > 0) {
+    return { ok: false, reason: `Carácter(es) no permitido(s): ${forbidden.join(" ")}. No se pueden usar / \\ : * ? " < > | en ningún sistema operativo compatible.` };
+  }
+  if (/^[ .]|[ .]$/.test(name)) {
+    return { ok: false, reason: "El nombre no puede empezar ni terminar con puntos o espacios." };
+  }
+  if (len(name) > 60) {
+    return { ok: false, reason: "El nombre es demasiado largo (máximo 60 caracteres)." };
+  }
   if (isReservedWindowsFileName(name)) {
-    notification("error", d.NoSpecialCharacters);
-    return false;
+    return { ok: false, reason: `"${name.split(".")[0].toUpperCase()}" es un nombre reservado de Windows y no es válido como archivo.` };
   }
-
-  return true;
+  return { ok: true };
 }
-
-function sanitizeFileName(name: string): string {
-  return name.replace(/\?/g, "@");
+function nameIsValid(name: string): boolean {
+  const result = validateFileName(name);
+  if (!result.ok) notification("error", result.reason ?? "El nombre no es válido");
+  return result.ok;
 }
 
 function getEditableFileName(fileName: string): string {
@@ -240,7 +241,7 @@ export {
   getCompatibleStorageKeys,
   getLegacyFileName,
   hasSupportedNoteExtension,
-  sanitizeFileName,
+  validateFileName,
   scrollToNovedades,
   useThemes,
   useThemes as themes,

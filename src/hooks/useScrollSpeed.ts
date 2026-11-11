@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import usePreferences from "./usePreferences";
-import { applyScrollSpeedWheel, DEFAULT_SCROLL_SPEED, type ScrollSpeedState } from "../utils/scrollSpeed";
+import usePreferences from "./usePreferences.ts";
+import { applyScrollSpeedWheel, DEFAULT_SCROLL_SPEED, type ScrollSpeedState } from "../utils/scrollSpeed.ts";
 
 /**
  * Hook para aplicar velocidad de desplazamiento configurada a un contenedor específico.

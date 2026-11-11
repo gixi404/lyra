@@ -1,4 +1,4 @@
-import type { EditorSyncCoordinator } from "./editorSyncCoordinator";
+import type { EditorSyncCoordinator } from "./editorSyncCoordinator.ts";
 import { flushDraftAsync } from "./draftStore.ts";
 
 const sessions = new Map<EditorSyncCoordinator, number>();

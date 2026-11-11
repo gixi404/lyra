@@ -1,20 +1,20 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { notification } from "../utils/helpers";
-import { autoArchiveWelcomeOnSync } from "../utils/welcome";
-import { refreshArchiveState } from "../utils/archiveState";
+import { notification } from "../utils/helpers.ts";
+import { autoArchiveWelcomeOnSync } from "../utils/welcome.ts";
+import { refreshArchiveState } from "../utils/archiveState.ts";
 import {
   accountLabel,
   hasManageableLocalNotes,
   nextPendingRequest,
   shouldRefreshPending,
   type PendingAuthorizationRequest,
-} from "../utils/pendingAuthorization";
-import { fileStore } from "./fileStore";
-import { acceptsSyncCompletion, isVisibleSyncReason, shouldAcceptSyncStart, shouldShowSyncStart, type SyncReason } from "../utils/syncEventPolicy";
-import { useToastStore } from "./toastStore";
-import { noteLabel } from "../utils/noteName";
+} from "../utils/pendingAuthorization.ts";
+import { fileStore } from "./fileStore.ts";
+import { acceptsSyncCompletion, isVisibleSyncReason, shouldAcceptSyncStart, shouldShowSyncStart, type SyncReason } from "../utils/syncEventPolicy.ts";
+import { useToastStore } from "./toastStore.ts";
+import { noteLabel } from "../utils/noteName.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface SyncStatusPayload {

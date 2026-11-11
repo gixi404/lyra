@@ -1,26 +1,24 @@
-import { Edit2 as EditIcon, Archive as TrashIcon, MoreVertical, Info, FileDown } from "lucide-react";
-import { type SyntheticEvent, useEffect, useRef, useState } from "react";
-import { animated, useTransition } from "@react-spring/web";
-import { twMerge } from "tailwind-merge";
-import { downloadDir } from "@tauri-apps/api/path";
+import { Edit2 as EditIcon, Archive as TrashIcon, Info, FileDown, Move as MoveIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import useFile from "../hooks/useFile";
-import { setArchiveState } from "../utils/archiveState";
-import { useSyncStore } from "../store/syncStore";
-import { fileStore } from "../store/fileStore";
-import translations from "../utils/dictionary";
+import { downloadDir } from "@tauri-apps/api/path";
+import useFile from "../hooks/useFile.ts";
+import { setArchiveState } from "../utils/archiveState.ts";
+import { useSyncStore } from "../store/syncStore.ts";
+import { fileStore } from "../store/fileStore.ts";
+import translations from "../utils/dictionary.ts";
 import {
   getEditableFileName,
   nameIsValid,
   notification,
-  sanitizeFileName,
-  themes,
-} from "../utils/helpers";
-import type { Component } from "../utils/types";
+} from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
-import Modal from "./Modal";
-import ModalInfo from "./ModalInfo";
-import { getFileBaseName, getFileDirectory, noteLabel, noteTitle } from "../utils/noteName";
+import Modal from "./Modal.tsx";
+import ModalInfo from "./ModalInfo.tsx";
+import MoveItemDialog from "./MoveItemDialog.tsx";
+import ContextMenu, { MenuItem, MenuSeparator } from "./ContextMenu.tsx";
+import { getFileBaseName, getFileDirectory, noteLabel, noteTitle } from "../utils/noteName.ts";
 import { logger } from "../utils/logger.ts";
 
 function MenuFile({ fileName }: Props): Component {
@@ -30,28 +28,18 @@ function MenuFile({ fileName }: Props): Component {
     ),
     files: string[] = filesArr,
     { renameFile, resolveDisplayName, readFile } = useFile(),
-    { isDay } = themes(),
-    [menuOpen, setMenuOpen] = useState<boolean>(false),
-    [openUpwards, setOpenUpwards] = useState<boolean>(false),
     [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
+    [isMoveOpen, setIsMoveOpen] = useState<boolean>(false),
     [isEditOpen, setIsEditOpen] = useState<boolean>(false),
     [isTrashOpen, setIsTrashOpen] = useState<boolean>(false),
     [isArchiving, setIsArchiving] = useState<boolean>(false),
     archivingRef = useRef(false),
-    mountedRef = useRef(false),
-    menuRef = useRef<HTMLDivElement>(null);
+    mountedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-
-  const menuTransitions = useTransition(menuOpen, {
-    from: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
-    enter: { opacity: 1, transform: "scale(1) translateY(0px)" },
-    leave: { opacity: 0, transform: `scale(0.96) translateY(${openUpwards ? "-4px" : "4px"})` },
-    config: { duration: 150 },
-  });
 
   function sanitizePdfText(text: string): string {
     return text
@@ -116,48 +104,13 @@ function MenuFile({ fileName }: Props): Component {
     }
   }
 
-  useEffect(() => {
-    if (!menuOpen) return;
-
-    const handleClickOutside = (e: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
-
-    const updatePosition = (): void => {
-      if (!menuRef.current) return;
-      const rect = menuRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-      setOpenUpwards(spaceBelow < 200 && spaceAbove > spaceBelow);
-    };
-
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("mousedown", handleClickOutside);
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("mousedown", handleClickOutside);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [menuOpen]);
-
   function handleEditConfirm(value?: string): void {
     if (!value) return notification("error", d.InvalidName);
-    const sanitizedBase: string = sanitizeFileName(getEditableFileName(value));
-    if (!nameIsValid(sanitizedBase)) return;
+    const baseValue = getEditableFileName(value);
+    if (!nameIsValid(baseValue)) return;
 
     const currentBaseName = getFileBaseName(fileName);
-    const nextBaseWithExt: string = resolveDisplayName(sanitizedBase, currentBaseName);
+    const nextBaseWithExt: string = resolveDisplayName(baseValue, currentBaseName);
     const dir = getFileDirectory(fileName);
     const nextDisplayName: string = dir ? `${dir}/${nextBaseWithExt}` : nextBaseWithExt;
 
@@ -209,146 +162,54 @@ function MenuFile({ fileName }: Props): Component {
   }
 
   return (
-    <div className="relative flex items-center" ref={menuRef}>
-      <button
-        type="button"
-        onClick={(e: SyntheticEvent) => {
-          e.stopPropagation();
-          if (!menuOpen && menuRef.current) {
-            const rect = menuRef.current.getBoundingClientRect();
-            const spaceBelow = window.innerHeight - rect.bottom;
-            const spaceAbove = rect.top;
-            setOpenUpwards(spaceBelow < 200 && spaceAbove > spaceBelow);
-          }
-          setMenuOpen(prev => !prev);
-        }}
-        className={twMerge(
-          "p-1 rounded-md transition-all duration-150 active:scale-95 cursor-pointer flex items-center justify-center",
-          isDay
-            ? "text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/50"
-            : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80"
-        )}
-        aria-label="Opciones"
-        title="Opciones"
-      >
-        <MoreVertical size={16} />
-      </button>
+    <div className="relative flex items-center">
+      <ContextMenu label="Opciones" title="Opciones" reveal="hover">
+        <MenuItem
+          icon={FileDown}
+          label="Exportar"
+          onSelect={() => void handleExportPDF()}
+        />
 
-      {menuTransitions(
-        (styles, item) =>
-          item && (
-            <animated.div
-              style={{
-                opacity: styles.opacity,
-                transform: styles.transform,
-                transformOrigin: openUpwards ? "bottom right" : "top right",
-                backgroundColor: isDay ? "#ffffff" : "#18181b",
-              }}
-              onClick={(e: SyntheticEvent) => e.stopPropagation()}
-              className={twMerge(
-                "absolute right-0 w-44 rounded-xl border py-1 z-50 flex flex-col text-xs font-medium",
-                openUpwards ? "bottom-full mb-1" : "top-full mt-1",
-                isDay
-                  ? "border-neutral-200 text-neutral-700 shadow-xl shadow-neutral-400/30"
-                  : "border-zinc-700 text-zinc-200 shadow-2xl shadow-black/80"
-              )}
-            >
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              setIsInfoOpen(true);
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-neutral-100 hover:text-accent-text"
-                : "hover:bg-zinc-800 hover:text-sky-400"
-            )}
-          >
-            <Info size={14} />
-            <span>Información</span>
-          </button>
+        <MenuSeparator />
 
-          <div
-            className={twMerge(
-              "my-1 border-t",
-              isDay ? "border-neutral-100" : "border-zinc-800/80"
-            )}
-          />
+        <MenuItem
+          icon={EditIcon}
+          label={d.EditName ?? "Renombrar"}
+          onSelect={() => setIsEditOpen(true)}
+        />
 
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              void handleExportPDF();
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-neutral-100 hover:text-accent-text"
-                : "hover:bg-zinc-800 hover:text-sky-400"
-            )}
-          >
-            <FileDown size={14} />
-            <span>Exportar</span>
-          </button>
+        <MenuSeparator />
 
-          <div
-            className={twMerge(
-              "my-1 border-t",
-              isDay ? "border-neutral-100" : "border-zinc-800/80"
-            )}
-          />
+        <MenuItem
+          icon={MoveIcon}
+          label="Mover a…"
+          onSelect={() => setIsMoveOpen(true)}
+        />
 
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              setIsEditOpen(true);
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-neutral-100 hover:text-accent-text"
-                : "hover:bg-zinc-800 hover:text-sky-400"
-            )}
-          >
-            <EditIcon size={14} />
-            <span>{d.EditName ?? "Editar"}</span>
-          </button>
+        <MenuSeparator />
 
-          <div
-            className={twMerge(
-              "my-1 border-t",
-              isDay ? "border-neutral-100" : "border-zinc-800/80"
-            )}
-          />
+        <MenuItem
+          icon={TrashIcon}
+          label={d.MoveToTrashLabel ?? "Archivar"}
+          tone="danger"
+          onSelect={() => setIsTrashOpen(true)}
+        />
 
-          <button
-            type="button"
-            onClick={(e: SyntheticEvent) => {
-              e.stopPropagation();
-              setMenuOpen(false);
-              setIsTrashOpen(true);
-            }}
-            className={twMerge(
-              "flex items-center gap-x-2.5 px-3 py-2 text-left transition-colors w-full cursor-pointer",
-              isDay
-                ? "hover:bg-danger-subtle hover:text-danger-text"
-                : "hover:bg-rose-500/20 hover:text-rose-400"
-            )}
-          >
-            <TrashIcon size={14} />
-            <span>{d.MoveToTrashLabel ?? "Archivar"}</span>
-          </button>
-        </animated.div>
-      )
-  )}
+        <MenuSeparator />
 
+        <MenuItem
+          icon={Info}
+          label="Información"
+          onSelect={() => setIsInfoOpen(true)}
+        />
+      </ContextMenu>
+
+      <MoveItemDialog
+        isOpen={isMoveOpen}
+        kind="file"
+        itemName={fileName}
+        onClose={() => setIsMoveOpen(false)}
+      />
       <ModalInfo
         isOpen={isInfoOpen}
         onClose={() => setIsInfoOpen(false)}

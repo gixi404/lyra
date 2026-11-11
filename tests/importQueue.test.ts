@@ -43,9 +43,9 @@ function installImportMock(
       hooks?.onInvoke?.(paths);
       return handler(paths);
     }
-    if (cmd === "plugin:fs|read_text_file") {
+    if (cmd === "open_note_identity") {
       if (hooks?.readFails) throw new Error("EACCES: Permission denied");
-      return new TextEncoder().encode("contenido");
+      return { identity: "test-id", content: "contenido" };
     }
     if (cmd.startsWith("plugin:path|")) return "lyra/nota.txt";
     return null;

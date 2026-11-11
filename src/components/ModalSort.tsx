@@ -3,9 +3,9 @@ import { createPortal } from "react-dom";
 import { animated, useTransition } from "@react-spring/web";
 import { SlidersHorizontal, X, Check } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { searchStore, type SortOptionId } from "../store/searchStore";
-import { themes } from "../utils/helpers";
-import type { Component } from "../utils/types";
+import { searchStore, type SortOptionId } from "../store/searchStore.ts";
+import { themes } from "../utils/helpers.ts";
+import type { Component } from "../utils/types.ts";
 
 interface ModalSortProps {
   isOpen: boolean;
@@ -19,6 +19,7 @@ const SORT_OPTIONS: { id: SortOptionId; label: string }[] = [
   { id: "recent", label: "Más reciente" },
   { id: "oldest", label: "Más antiguo" },
   { id: "random", label: "Aleatorio" },
+  { id: "manual", label: "Manual" },
 ];
 
 function ModalSort({ isOpen, onClose }: ModalSortProps): Component | null {

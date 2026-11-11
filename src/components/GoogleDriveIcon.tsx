@@ -1,4 +1,4 @@
-import type { Component } from "../utils/types";
+import type { Component } from "../utils/types.ts";
 
 interface Props {
   className?: string;

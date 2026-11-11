@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShieldAlert } from "lucide-react";
-import { themes } from "../utils/helpers";
-import { useSyncStore } from "../store/syncStore";
+import { themes } from "../utils/helpers.ts";
+import { useSyncStore } from "../store/syncStore.ts";
 import {
   buildPendingAuthorizationMessages,
   canConfirmAuthorization,
-} from "../utils/pendingAuthorization";
+} from "../utils/pendingAuthorization.ts";
 
 /**
  * Consentimiento explícito para subir notas locales a una cuenta de Google Drive
