@@ -50,8 +50,11 @@ export default function FolderMenu({ path, archived = false, structural = false 
   const [info, setInfo] = useState<FolderInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const isRoot = path === "";
-  const folderName = isRoot ? "Lyra" : displayFolderName(path);
-  const canManage = !isRoot && !archived && !structural;
+  const folderName = displayFolderName(path);
+  const canRename = !archived && !structural;
+  const canPersonalize = !archived && !structural;
+  const canMove = !isRoot && !archived && !structural;
+  const canArchive = !isRoot && !archived && !structural;
   const canCreate = !archived && !structural;
 
   async function createFolder(parent: string, folderNameToCreate: string): Promise<string> {
@@ -88,6 +91,13 @@ export default function FolderMenu({ path, archived = false, structural = false 
     const validation = validateVisibleEntryName(requested, "folder");
     if (!validation.ok) {
       return notification("error", validation.reason ?? d.InvalidName);
+    }
+    // La carpeta raíz virtual ("Lyra", path "") no tiene ruta física renombrable:
+    // solo se actualiza su nombre visible.
+    if (isRoot) {
+      commitVisibleName(path, "folder", requested.trim());
+      setMode(null);
+      return;
     }
     const { physicalPath: target, visibleSegment } = resolveRenamedFolderPhysicalPath(requested, path);
     if (target === path) {
@@ -187,25 +197,34 @@ export default function FolderMenu({ path, archived = false, structural = false 
         <MenuSeparator />
       </>}
 
-      {canManage && <>
+      {canRename && <>
         <MenuItem
           icon={Pencil}
           label="Renombrar"
           onSelect={() => { setMode("rename"); }}
         />
         <MenuSeparator />
+      </>}
+
+      {canPersonalize && <>
         <MenuItem
           icon={Paintbrush}
           label="Personalizar"
           onSelect={() => { setMode("personalize"); }}
         />
         <MenuSeparator />
+      </>}
+
+      {canMove && <>
         <MenuItem
           icon={MoveIcon}
           label="Mover a…"
           onSelect={() => { setMode("move"); }}
         />
         <MenuSeparator />
+      </>}
+
+      {canArchive && <>
         <MenuItem
           icon={Archive}
           label="Archivar"
@@ -235,7 +254,7 @@ export default function FolderMenu({ path, archived = false, structural = false 
       isOpen={mode === "create"}
       onClose={() => { if (!busy) setMode(null); }}
       onConfirm={handleCreateConfirm}
-      title={isRoot ? "Nueva carpeta en Lyra" : `Nueva subcarpeta en ${folderName}`}
+      title={isRoot ? `Nueva carpeta en ${folderName}` : `Nueva subcarpeta en ${folderName}`}
       hasInput
       initialValue=""
       confirmText={d.Create}
@@ -292,9 +311,14 @@ export default function FolderMenu({ path, archived = false, structural = false 
       onClose={() => setMode(null)}
       title={d.FolderInfoTitle}
       icon={Info}
-      name={folderName}
+      name={isRoot ? undefined : folderName}
     >
       <div className="flex flex-col gap-y-2 text-xs">
+        {isRoot && (
+          <p className="mb-1 rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
+            {`El directorio ${folderName} no puede ser eliminado, ya que contiene los archivos sin asignar`}
+          </p>
+        )}
         <InfoRow icon={FileText} label="Archivos directos" value={info.directFiles} />
         <InfoRow icon={FileText} label="Archivos totales" value={info.totalFiles} />
         <InfoRow icon={FileText} label="Subcarpetas directas" value={info.directFolders} />
@@ -305,7 +329,7 @@ export default function FolderMenu({ path, archived = false, structural = false 
       </div>
     </InfoModal>}
 
-    {canManage && mode === "personalize" && (
+    {canPersonalize && mode === "personalize" && (
       <FolderAppearanceDialog
         isOpen={mode === "personalize"}
         folderPath={path}

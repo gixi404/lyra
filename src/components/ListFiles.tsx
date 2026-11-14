@@ -215,6 +215,13 @@ const ListFiles = memo(({ arr }: Props): Component => {
     return files.filter(f => !exitingFiles.includes(f)).length;
   }, [files, exitingFiles]);
 
+  const visibleFoldersCount = useMemo(() => {
+    if (paperIsOpen) {
+      return folders.filter(path => archivedFolders.some(archived => path === archived || path.startsWith(`${archived}/`) || archived.startsWith(`${path}/`))).length;
+    }
+    return folders.filter(path => !inArchivedFolder(path)).length;
+  }, [folders, archivedFolders, paperIsOpen, inArchivedFolder]);
+
   const hasExistingExplorerData = isInitialized;
 
   return (
@@ -225,80 +232,97 @@ const ListFiles = memo(({ arr }: Props): Component => {
           isDay ? "border-neutral-200 text-neutral-600/85" : "border-zinc-800/80 text-zinc-400/85"
         }`}
       >
-        <div className="flex items-center gap-x-1.5">
-          <span
-            key={`title-${paperIsOpen}`}
-            className="font-mono text-[11px] font-semibold tracking-widest uppercase animate-list-header"
-          >
-            {paperIsOpen ? "ARCHIVADOS" : "DIRECTORIOS"}
-          </span>
-          {paperIsOpen && (
-            <div className="relative inline-flex items-center">
-              <button
-                type="button"
-                onMouseEnter={() => setShowTooltip(true)}
-                onMouseLeave={() => setShowTooltip(false)}
-                onFocus={() => setShowTooltip(true)}
-                onBlur={() => setShowTooltip(false)}
-                onKeyDown={e => {
-                  if (e.key === "Escape") setShowTooltip(false);
-                }}
-                className={`p-1 -my-1 rounded-full transition-colors duration-150 cursor-help outline-none focus-visible:ring-1 ${
-                  isDay
-                    ? "text-neutral-400 hover:text-neutral-600 focus-visible:text-neutral-700 focus-visible:ring-neutral-400"
-                    : "text-zinc-500 hover:text-zinc-300 focus-visible:text-zinc-200 focus-visible:ring-zinc-600"
-                }`}
-                aria-label="Información sobre la papelera de Google Drive para archivos archivados"
-                aria-describedby="archived-gdrive-tooltip"
+        {paperIsOpen ? (
+          <>
+            <div className="flex items-center gap-x-1.5">
+              <span
+                key={`title-${paperIsOpen}`}
+                className="font-mono text-[11px] font-semibold tracking-widest uppercase animate-list-header"
               >
-                <AlertCircle className="w-3.5 h-3.5" />
-              </button>
-              {showTooltip && (
-                <div
-                  id="archived-gdrive-tooltip"
-                  role="tooltip"
-                  style={{
-                    backgroundColor: isDay ? "#ffffff" : "#18181b",
+                ARCHIVADOS
+              </span>
+              <div className="relative inline-flex items-center">
+                <button
+                  type="button"
+                  onMouseEnter={() => setShowTooltip(true)}
+                  onMouseLeave={() => setShowTooltip(false)}
+                  onFocus={() => setShowTooltip(true)}
+                  onBlur={() => setShowTooltip(false)}
+                  onKeyDown={e => {
+                    if (e.key === "Escape") setShowTooltip(false);
                   }}
-                  className={`absolute left-0 top-full mt-2 w-72 p-2.5 rounded-xl border text-[11px] leading-relaxed shadow-xl pointer-events-none z-50 animate-in fade-in zoom-in-95 duration-150 font-sans normal-case tracking-normal font-normal select-none ${
+                  className={`p-1 -my-1 rounded-full transition-colors duration-150 cursor-help outline-none focus-visible:ring-1 ${
                     isDay
-                      ? "border-neutral-200 text-neutral-600 shadow-neutral-300/40"
-                      : "border-zinc-700 text-zinc-300 shadow-2xl shadow-black/80"
+                      ? "text-neutral-400 hover:text-neutral-600 focus-visible:text-neutral-700 focus-visible:ring-neutral-400"
+                      : "text-zinc-500 hover:text-zinc-300 focus-visible:text-zinc-200 focus-visible:ring-zinc-600"
                   }`}
+                  aria-label="Información sobre la papelera de Google Drive para archivos archivados"
+                  aria-describedby="archived-gdrive-tooltip"
                 >
-                  Los archivos eliminados de Archivados pueden recuperarse durante un máximo de 30 días desde la papelera de Google Drive, siempre y cuando hayas conectado previamente tu cuenta.
-                </div>
-              )}
+                  <AlertCircle className="w-3.5 h-3.5" />
+                </button>
+                {showTooltip && (
+                  <div
+                    id="archived-gdrive-tooltip"
+                    role="tooltip"
+                    style={{
+                      backgroundColor: isDay ? "#ffffff" : "#18181b",
+                    }}
+                    className={`absolute left-0 top-full mt-2 w-72 p-2.5 rounded-xl border text-[11px] leading-relaxed shadow-xl pointer-events-none z-50 animate-in fade-in zoom-in-95 duration-150 font-sans normal-case tracking-normal font-normal select-none ${
+                      isDay
+                        ? "border-neutral-200 text-neutral-600 shadow-neutral-300/40"
+                        : "border-zinc-700 text-zinc-300 shadow-2xl shadow-black/80"
+                    }`}
+                  >
+                    Los archivos eliminados de Archivados pueden recuperarse durante un máximo de 30 días desde la papelera de Google Drive, siempre y cuando hayas conectado previamente tu cuenta.
+                  </div>
+                )}
+              </div>
             </div>
-          )}
-        </div>
-        <div className="flex items-center gap-x-3">
-          {/* {paperIsOpen && visibleFilesCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsEmptyModalOpen(true)}
-              disabled={deletionBusy}
-              className={`text-[11px] font-mono font-semibold tracking-wider transition-all duration-150 select-none ${
-                deletionBusy
-                  ? isDay
-                    ? "text-danger-text/40 opacity-40 cursor-not-allowed disabled:hover:text-danger-text/40"
-                    : "text-rose-500/40 opacity-40 cursor-not-allowed disabled:hover:text-rose-500/40"
-                  : isDay
-                    ? "text-danger-text/90 enabled:hover:text-danger-text cursor-pointer active:scale-95"
-                    : "text-rose-500/90 enabled:hover:text-rose-500 cursor-pointer active:scale-95"
-              } disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100`}
-              title="Vaciar todos los archivos archivados"
+            <div className="flex items-center gap-x-3">
+              {/* {paperIsOpen && visibleFilesCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsEmptyModalOpen(true)}
+                  disabled={deletionBusy}
+                  className={`text-[11px] font-mono font-semibold tracking-wider transition-all duration-150 select-none ${
+                    deletionBusy
+                      ? isDay
+                        ? "text-danger-text/40 opacity-40 cursor-not-allowed disabled:hover:text-danger-text/40"
+                        : "text-rose-500/40 opacity-40 cursor-not-allowed disabled:hover:text-rose-500/40"
+                      : isDay
+                        ? "text-danger-text/90 enabled:hover:text-danger-text cursor-pointer active:scale-95"
+                        : "text-rose-500/90 enabled:hover:text-rose-500 cursor-pointer active:scale-95"
+                  } disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100`}
+                  title="Vaciar todos los archivos archivados"
+                >
+                  Vaciar
+                </button>
+              )} */}
+              <span
+                key={`count-${paperIsOpen}`}
+                className="font-mono text-[11px] font-semibold tracking-widest pr-1.5 animate-list-header"
+              >
+                {visibleFilesCount}
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <span
+              key={`dirs-${paperIsOpen}`}
+              className="font-mono text-[11px] font-semibold tracking-widest uppercase animate-list-header"
             >
-              Vaciar
-            </button>
-          )} */}
-          <span
-            key={`count-${paperIsOpen}`}
-            className="font-mono text-[11px] font-semibold tracking-widest pr-1.5 animate-list-header"
-          >
-            {visibleFilesCount}
-          </span>
-        </div>
+              DIRECTORIOS {visibleFoldersCount}
+            </span>
+            <span
+              key={`files-${paperIsOpen}`}
+              className="font-mono text-[11px] font-semibold tracking-widest uppercase pr-1.5 animate-list-header"
+            >
+              ARCHIVOS {visibleFilesCount}
+            </span>
+          </>
+        )}
       </div>
 
       <ul

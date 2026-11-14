@@ -319,17 +319,34 @@ test("shared popups: the move dialog is the same component for files and folders
 // Reglas de negocio intactas
 // ---------------------------------------------------------------------------
 
-test("folder menu: the virtual root keeps its protected actions", () => {
+test("folder menu: the virtual root is special (rename/personalize allowed, no move/archive)", () => {
   const code = read("src/components/FolderMenu.tsx");
   assert.ok(code.includes('const isRoot = path === ""'), "the virtual root must be detected");
-  assert.ok(code.includes("const canManage = !isRoot && !archived && !structural"));
   assert.ok(code.includes("const canCreate = !archived && !structural"));
+  assert.ok(code.includes("const canRename = !archived && !structural"), "the virtual root must be renameable");
+  assert.ok(code.includes("const canPersonalize = !archived && !structural"), "the virtual root must be customizable");
+  assert.ok(code.includes("const canMove = !isRoot && !archived && !structural"), "the virtual root must not be movable");
+  assert.ok(code.includes("const canArchive = !isRoot && !archived && !structural"), "the virtual root must not be archivable");
 
-  const manageBlock = code.slice(code.indexOf("{canManage && <>"), code.indexOf("{archived && <>"));
-  assert.ok(manageBlock.includes('label="Renombrar"'), "the rename entry must live in the managed block");
-  assert.ok(manageBlock.includes('label="Archivar"'), "the archive entry must live in the managed block");
+  assert.ok(code.includes('label="Renombrar"'), "the rename entry must exist");
+  assert.ok(code.includes('label="Personalizar"'), "the personalize entry must exist");
+  assert.ok(code.includes('label="Mover a…"'), "the move entry must exist for manageable folders");
+  assert.ok(code.includes('label="Archivar"'), "the archive entry must exist for manageable folders");
 
-  const createBlock = code.slice(code.indexOf("{canCreate && <>"), code.indexOf("{canManage && <>"));
+  // Root rename must be visible-only (no physical move)
+  const renameFn = code.slice(code.indexOf("function handleRenameConfirm"), code.indexOf("async function setArchived"));
+  assert.ok(renameFn.includes("if (isRoot)"), "root rename must be handled as a special case");
+  const rootBranch = renameFn.slice(renameFn.indexOf("if (isRoot)"), renameFn.indexOf("const { physicalPath: target"));
+  assert.ok(rootBranch.includes('commitVisibleName(path, "folder"'), "root rename must update the visible name");
+  assert.ok(rootBranch.includes("return;"), "root rename must return without a physical move");
+  assert.ok(!rootBranch.includes("moveLocalPath"), "root rename must not perform a physical move");
+
+  const infoBlock = code.slice(code.indexOf("{mode === \"info\" && info && <InfoModal"), code.indexOf("{canPersonalize && mode === \"personalize\""));
+  assert.ok(infoBlock.includes("isRoot"), "the info window must mark the root as special");
+  assert.ok(infoBlock.includes("name={isRoot ? undefined : folderName}"), "the root info window must not show the folder name line");
+  assert.ok(infoBlock.includes("El directorio ${folderName} no puede ser eliminado, ya que contiene los archivos sin asignar"), "the root info window must explain why it cannot be deleted");
+
+  const createBlock = code.slice(code.indexOf("{canCreate && <>"), code.indexOf("{canRename && <>"));
   assert.ok(createBlock.includes('label={d.NewNote}'), "the note creation entry must live in the creation block");
   assert.ok(createBlock.includes('label={isRoot ? "Nueva carpeta" : "Nueva subcarpeta"}'), "the folder creation entry must keep root/folder-specific labels");
 });

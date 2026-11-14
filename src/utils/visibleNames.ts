@@ -188,7 +188,7 @@ export function displayNoteName(physicalPath: string): string {
 }
 
 export function displayFolderName(physicalPath: string): string {
-  if (physicalPath === "") return "Lyra";
+  if (physicalPath === "") return getVisibleSegment("", "folder") ?? "Lyra";
   return getDisplaySegment(physicalPath, "folder");
 }
 

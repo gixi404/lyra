@@ -9,7 +9,7 @@ interface InfoModalProps {
   onClose: () => void;
   title: string;
   icon: LucideIcon;
-  name: string;
+  name?: string;
   children: ReactNode;
 }
 
@@ -111,9 +111,11 @@ export default function InfoModal({ isOpen, onClose, title, icon: Icon, name, ch
                 </button>
               </div>
 
-              <p className="text-sm font-medium truncate mt-3 mb-2 opacity-80 shrink-0" title={name}>
-                {name}
-              </p>
+              {name ? (
+                <p className="text-sm font-medium truncate mt-3 mb-2 opacity-80 shrink-0" title={name}>
+                  {name}
+                </p>
+              ) : null}
 
               <div className="flex-1 flex flex-col justify-center overflow-hidden">
                 {children}

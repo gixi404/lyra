@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { ChevronDown, ChevronRight, Folder as FolderIcon } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import useStorage from "../hooks/useStorage.ts";
 import { buildFolderTree, readFolderExpandedState, ROOT_FOLDER_ID, type FolderOrder } from "../utils/folderTree.ts";
 import { flattenVisible, type FlatRow } from "../utils/flattenExplorer.ts";
@@ -435,10 +435,11 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
       const depth = row.depth;
       const selfKey = isRoot ? ROOT_FOLDER_ID : row.path;
       const selfOpen = effectiveForRender[selfKey] ?? (expanded[selfKey] ?? true);
-      const colorKey = !isRoot ? folderColors[row.path] : undefined;
-      const iconKey = !isRoot ? folderIcons[row.path] : undefined;
+      const colorKey = folderColors[row.path];
+      const iconKey = folderIcons[row.path];
       const folderColor = resolveFolderColor(colorKey, isDay);
-      const RowFolderIcon = !isRoot ? resolveFolderIcon(iconKey) : FolderIcon;
+      const RowFolderIcon = resolveFolderIcon(iconKey);
+      const folderLabel = displayFolderName(row.path);
       const folderContent = (
         <div className="flex items-center">
           <button type="button" onClick={() => toggle(row.path)} aria-expanded={selfOpen}
@@ -448,7 +449,7 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
               {selfOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
             </span>
             <RowFolderIcon size={17} style={folderColor ? { color: folderColor } : undefined} />
-            <span className="truncate" style={folderColor ? { color: folderColor } : undefined}>{isRoot ? "Lyra (carpeta)" : displayFolderName(row.path)}</span>
+            <span className="truncate" style={folderColor ? { color: folderColor } : undefined}>{folderLabel}</span>
           </button>
           <FolderMenu path={row.path} archived={archivedPaths.includes(row.path)} structural={!showRoot && !archivedPaths.includes(row.path)} />
         </div>
@@ -606,16 +607,17 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
     <div className="w-full h-full" style={{ opacity: 0.98 }}>
       {/* Render row content in open/visible state for clone */}
       {draggedRow.kind === "folder" ? (() => {
-        const cKey = !draggedRow.isRoot ? folderColors[draggedRow.path] : undefined;
-        const iKey = !draggedRow.isRoot ? folderIcons[draggedRow.path] : undefined;
+        const cKey = folderColors[draggedRow.path];
+        const iKey = folderIcons[draggedRow.path];
         const c = resolveFolderColor(cKey, isDay);
-        const DIcon = !draggedRow.isRoot ? resolveFolderIcon(iKey) : FolderIcon;
+        const DIcon = resolveFolderIcon(iKey);
+        const label = displayFolderName(draggedRow.path);
         return (
         <div className="flex items-center py-3 text-sm font-medium" style={{ paddingLeft: draggedRow.depth * 20, color: c }}>
           <span className="flex items-center gap-2 min-w-0">
             {(effectiveForRender[draggedRow.path || ROOT_FOLDER_ID] ?? true) ? <ChevronDown size={16} style={c ? { color: c } : undefined} /> : <ChevronRight size={16} style={c ? { color: c } : undefined} />}
             <DIcon size={17} style={c ? { color: c } : undefined} />
-            <span className="truncate" style={c ? { color: c } : undefined}>{draggedRow.isRoot ? "Lyra (carpeta)" : displayFolderName(draggedRow.path)}</span>
+            <span className="truncate" style={c ? { color: c } : undefined}>{label}</span>
           </span>
         </div>
         );
