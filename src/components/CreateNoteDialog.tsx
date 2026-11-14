@@ -109,7 +109,7 @@ export default function CreateNoteDialog({ isOpen, folders, initialFolder = "", 
                 style={{ transform: styles.transform }}
                 role="dialog"
                 aria-modal="true"
-                aria-label="Crear archivo"
+                aria-label={d.NewNote}
                 className={`w-[420px] max-w-[92vw] p-6 rounded-2xl shadow-2xl border select-none ${
                   isDay
                     ? "bg-white border-neutral-200 text-neutral-900"

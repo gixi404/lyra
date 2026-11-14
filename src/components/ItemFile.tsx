@@ -8,9 +8,9 @@ import { PAGES } from "../utils/consts.ts";
 import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types.ts";
 import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
-import { noteLabel, noteTitle } from "../utils/noteName.ts";
+import { displayNoteLabel, displayNoteName } from "../utils/visibleNames.ts";
 
-function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, onDragEnd, archivedByFolder = false }: Props): Component {
+function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, onDragEnd, archivedByFolder = false, individuallyArchived = true }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
@@ -18,7 +18,7 @@ function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, o
     setSelectedFile = fileStore(state => state.setSelectedFile);
 
   function getListLabel(name: string): string {
-    return noteTitle(name);
+    return displayNoteName(name);
   }
 
   async function openFile(): Promise<void> {
@@ -31,7 +31,7 @@ function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, o
       setSelectedFile(newSelectedFile);
       goTo(PAGES.file);
     } catch {
-      notification("error", `No se pudo abrir ${noteLabel(fileName)}`);
+      notification("error", `No se pudo abrir ${displayNoteLabel(fileName)}`);
     }
   }
 
@@ -56,14 +56,14 @@ function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, o
     >
       <span
         className="text-sm sm:text-[15px] truncate pr-4 text-left font-normal flex items-center min-w-0"
-        title={fileName}
+        title={displayNoteName(fileName)}
       >
         <span className="truncate">{getListLabel(fileName)}</span>
       </span>
 
       <div className="flex items-center gap-x-2 shrink-0">
         {!paperIsOpen && <MenuFile fileName={fileName} />}
-        {paperIsOpen && !archivedByFolder && <MenuPaperFile fileName={fileName} />}
+        {paperIsOpen && <MenuPaperFile fileName={fileName} individuallyArchived={individuallyArchived} archivedByFolder={archivedByFolder} />}
       </div>
     </li>
   );
@@ -78,4 +78,5 @@ interface Props {
   onDragStart?: (event: React.DragEvent<HTMLLIElement>) => void;
   onDragEnd?: () => void;
   archivedByFolder?: boolean;
+  individuallyArchived?: boolean;
 }

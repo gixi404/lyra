@@ -149,6 +149,7 @@ test("6. MenuPaperFile: handleRestoreConfirm no emite toast de éxito pero conse
   // handleDeleteConfirm sí debe conservar su notificación de éxito para eliminación
   const deleteCode = code.slice(endIdx);
   assert.ok(
+    deleteCode.includes('notification("success", displayNoteSuccessMessage(name, "deleted"))') ||
     deleteCode.includes('notification("success", noteSuccessMessage(name, "deleted"))'),
     "handleDeleteConfirm debe conservar el toast de éxito para eliminación"
   );

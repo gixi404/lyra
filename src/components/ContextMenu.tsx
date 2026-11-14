@@ -268,22 +268,28 @@ interface MenuItemProps {
   label: string;
   onSelect: () => void;
   tone?: MenuTone;
+  disabled?: boolean;
+  title?: string;
 }
 
 /** Opción de un menú contextual. Comparte estilo con archivos y carpetas. */
-export function MenuItem({ icon: Icon, label, onSelect, tone = "default" }: MenuItemProps) {
+export function MenuItem({ icon: Icon, label, onSelect, tone = "default", disabled = false, title }: MenuItemProps) {
   const { isDay } = themes();
   const closeMenu = useContext(MenuCloseContext);
   return (
     <button
       type="button"
       role="menuitem"
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
+      title={title}
       onClick={(event: SyntheticEvent) => {
         event.stopPropagation();
+        if (disabled) return;
         closeMenu();
         onSelect();
       }}
-      className={menuItemClass(isDay, tone)}
+      className={twMerge(menuItemClass(isDay, tone), disabled && "opacity-40 cursor-not-allowed pointer-events-none")}
     >
       {Icon ? <Icon size={14} /> : null}
       <span>{label}</span>

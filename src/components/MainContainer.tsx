@@ -42,6 +42,7 @@ import DropOverlay from "./DropOverlay.tsx";
 import { triggerWindowReady } from "../utils/window.ts";
 import { handleExternalFileImport } from "../utils/fileImporter.ts";
 import { logger } from "../utils/logger.ts";
+import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 
 async function checkIsFullscreen(): Promise<boolean> {
   try {
@@ -223,13 +224,18 @@ function MainContainer({ children }: PropsWithChildren): Component {
   }, [isFullscreen]);
 
   useEffect(() => {
-    if (pathIs(PAGES.file)) {
+    const isFilePage = pathIs(PAGES.file);
+    scrollDebug("MainContainer.mountPath", { isFilePage, path: typeof window !== "undefined" ? window.location.pathname : null });
+    if (isFilePage) {
       document.documentElement.classList.add("in-editor");
     } else {
       document.documentElement.classList.remove("in-editor");
     }
+    snapshotScrollState("MainContainer.mountPath", { isFilePage });
     return () => {
+      scrollDebug("MainContainer.unmount", { path: typeof window !== "undefined" ? window.location.pathname : null, inEditor: document.documentElement.classList.contains("in-editor") });
       document.documentElement.classList.remove("in-editor");
+      snapshotScrollState("MainContainer.unmount");
     };
   }, []);
 

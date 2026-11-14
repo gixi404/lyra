@@ -1,4 +1,5 @@
-import { getFileBaseName, getFileDirectory } from "./noteName.ts";
+import { getFileDirectory } from "./noteName.ts";
+import { displayFolderName } from "./visibleNames.ts";
 
 export const ROOT_FOLDER_ID = "root:lyra";
 
@@ -17,14 +18,14 @@ export function buildFolderTree(
   order: FolderOrder = {},
   fileOrder?: FolderOrder,
 ): FolderNode {
-  const root: FolderNode = { path: "", name: "Lyra", folders: [], files: [] };
+  const root: FolderNode = { path: "", name: displayFolderName(""), folders: [], files: [] };
   const nodes = new Map<string, FolderNode>([["", root]]);
   for (const path of [...folderPaths].sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b))) {
     if (!path || nodes.has(path)) continue;
     const parentPath = getFileDirectory(path);
     const parent = nodes.get(parentPath);
     if (!parent) continue;
-    const node: FolderNode = { path, name: getFileBaseName(path), folders: [], files: [] };
+    const node: FolderNode = { path, name: displayFolderName(path), folders: [], files: [] };
     nodes.set(path, node);
     parent.folders.push(node);
   }
@@ -96,6 +97,29 @@ export function expandFolderAncestors(current: Record<string, boolean>, path: st
     for (let index = 1; index <= parts.length; index++) next[parts.slice(0, index).join("/")] = true;
   }
   return next;
+}
+
+/**
+ * Expande el padre y sus ancestros para revelar una subcarpeta recién creada.
+ * No modifica el estado de expansión de "Lyra" (raíz) para no desplegarla
+ * innecesariamente al crear carpetas de primer nivel.
+ */
+export function expandParentPath(current: Record<string, boolean>, parentPath: string): Record<string, boolean> {
+  if (!parentPath) return current;
+  const next: Record<string, boolean> = { ...current };
+  const parts = parentPath.split("/");
+  for (let index = 1; index <= parts.length; index++) next[parts.slice(0, index).join("/")] = true;
+  return next;
+}
+
+/**
+ * Expande los ancestros necesarios para revelar una nota recién creada.
+ * - Nota en raíz: despliega "Lyra".
+ * - Nota en carpeta/subcarpeta: despliega esa carpeta y sus ancestros sin forzar Lyra.
+ */
+export function expandAncestorsForNote(current: Record<string, boolean>, folderPath: string): Record<string, boolean> {
+  if (!folderPath) return { ...current, [ROOT_FOLDER_ID]: true };
+  return expandParentPath(current, folderPath);
 }
 
 export function remapPath(path: string, oldPath: string, newPath: string): string {

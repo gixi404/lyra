@@ -5,6 +5,7 @@ import { ChevronDown, Folder, Plus } from "lucide-react";
 import { themes } from "../utils/helpers";
 import { computeMenuPosition, isSameMenuPosition, type MenuPlacement } from "../utils/menuPosition.ts";
 import { folderListDepthPx } from "../utils/folderIndent.ts";
+import { displayFolderName } from "../utils/visibleNames.ts";
 
 const FALLBACK_LIST_HEIGHT = 240;
 
@@ -113,7 +114,7 @@ export default function FolderSelect({ folders, value, onChange, onNewFolder, di
     return () => window.removeEventListener("keydown", handler);
   }, [open]);
 
-  const label = value ? value.split("/").at(-1) ?? value : "Lyra";
+  const label = value === "" ? "Lyra" : displayFolderName(value);
 
   function select(path: string) {
     onChange(path);
@@ -195,7 +196,7 @@ export default function FolderSelect({ folders, value, onChange, onNewFolder, di
                     style={{ paddingLeft: folderListDepthPx(folder) }}
                   >
                     <Folder size={16} />
-                    {folder.split("/").at(-1)}
+                    {displayFolderName(folder)}
                   </button>
                 </li>
               ))}

@@ -118,3 +118,71 @@ test("returning to an initialized explorer preserves existing data instead of fo
     false,
   );
 });
+
+test("listing generation: lectura antigua pendiente descartada tras mutación; lectura posterior aplicada", async () => {
+  let gen = 0;
+  const getGen = () => gen;
+  const stale = deferred<string[]>();
+  const appliedA: unknown[] = [];
+  const cleanupStale = startListInitialization<string[]>(() => stale.promise, v => { appliedA.push(v); }, () => {}, getGen);
+  // mutación local mientras la lectura está pendiente
+  gen++;
+  stale.resolve(["old.md"]);
+  await stale.promise;
+  await Promise.resolve();
+  assert.deepEqual(appliedA, []); // descartada
+  cleanupStale();
+
+  // @ts-expect-error type inference quirk in test env
+  const cleanupFresh = startListInitialization<string[]>(async () => ["new.md"], v => { appliedA.push(v); }, () => {}, getGen);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(appliedA, [["new.md"]]); // lectura iniciada tras mutación aplicada
+  cleanupFresh();
+});
+
+test("listing generation: múltiples mutaciones durante lectura pendiente; init local-first descarta applies obsoletos", async () => {
+  let gen = 0;
+  const getGen = () => gen;
+  const stale = deferred<string[]>();
+  const appliedB: unknown[] = [];
+  startListInitialization<string[]>(() => stale.promise, v => { appliedB.push(v); }, () => {}, getGen);
+  gen++; gen++; // múltiples movimientos/mutaciones
+  stale.resolve(["old.md"]);
+  await stale.promise;
+  await Promise.resolve();
+  assert.deepEqual(appliedB, []);
+
+  // startLocalFirstListInitialization: descarta primer apply si generación cambia durante lectura inicial
+  const initRead = deferred<string[]>();
+  const initAppliedB: unknown[] = [];
+  let reads = 0;
+  const cleanupInit = startLocalFirstListInitialization<string[]>(
+    async () => { reads++; return initRead.promise; },
+    async () => {},
+    v => { initAppliedB.push(v); },
+    () => {},
+    getGen,
+  );
+  gen++; // mutación durante lectura inicial
+  initRead.resolve(["stale-init.md"]);
+  await initRead.promise;
+  await Promise.resolve();
+  assert.deepEqual(initAppliedB, []); // primer apply descartado
+  assert.equal(reads, 1);
+  cleanupInit();
+
+  // inicialización válida tras estabilizarse
+  const cleanupOk = startLocalFirstListInitialization<string[]>(
+    async () => ["ok.md"],
+    async () => {},
+    // @ts-expect-error type inference quirk in test env
+    v => { initAppliedB.push(v); },
+    () => {},
+    getGen,
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(initAppliedB, [["ok.md"]]);
+  cleanupOk();
+});

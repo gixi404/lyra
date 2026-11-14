@@ -85,25 +85,54 @@ test("2. Movimiento fallido: la persistencia inmediata NO se ejecuta y el orden 
   const explorerPath = new URL("../src/components/FolderExplorer.tsx", import.meta.url).pathname;
   const src = fs.readFileSync(explorerPath, "utf-8");
 
-  const moveGuards = [...src.matchAll(/if \(!\(await moveEntry\(/g)].map(m => m.index ?? -1);
   const persists = [...src.matchAll(/persistOrderAfterPhysicalMove\(/g)].map(m => m.index ?? -1);
-  assert.equal(moveGuards.length, 2, "debe haber dos ramas de movimiento físico (inside y cross-directory)");
-  assert.equal(persists.length, 2, "la persistencia inmediata existe solo en esas dos ramas");
-  for (const p of persists) {
-    assert.ok(
-      moveGuards.some(g => g < p),
-      "cada persistencia inmediata está precedida por el guard del movimiento confirmado",
-    );
-  }
+  // 3 puntos: (1) archivo movido a otra carpeta por drop directo, (2) archivo movido a otro contenedor por inserción posicional,
+  // (3) carpeta movida a otro padre (jerárquico). Todos son movimientos físicos confirmados.
+  assert.equal(persists.length, 3, "la persistencia inmediata existe solo en movimientos físicos confirmados (archivos x2 y carpetas x1)");
 
-  // El reordenamiento puro (sin movimiento físico) no persiste en disco, solo localStorage
-  const reorderStart = src.indexOf("// Reordenamiento puro");
-  const crossDirStart = src.indexOf("// Movimiento entre carpetas", reorderStart);
-  assert.ok(reorderStart !== -1 && crossDirStart !== -1);
-  assert.ok(
-    !src.slice(reorderStart, crossDirStart).includes("persistOrderAfterPhysicalMove"),
-    "el reordenamiento puro NO persiste en disco de forma inmediata",
-  );
+  // Reordenamientos puros (mismo contenedor/padre) no persisten en disco de forma inmediata.
+  // Archivo: reorden dentro del mismo contenedor (isSameContainer) aplica orden y retorna sin moveLocalPath/persist.
+  const sameContainerIdx = src.indexOf("if (isSameContainer)");
+  assert.ok(sameContainerIdx !== -1, "debe existir rama de reorden de archivo en mismo contenedor");
+  const sameContainerBlockEnd = src.indexOf("const destinationPath = containerKey", sameContainerIdx);
+  assert.ok(sameContainerBlockEnd > sameContainerIdx, "tras reorden en mismo contenedor debe continuar flujo de movimiento cross-container");
+  const sameContainerBlock = src.slice(sameContainerIdx, sameContainerBlockEnd);
+  assert.ok(!sameContainerBlock.includes("persistOrderAfterPhysicalMove"), "reorden de archivo no persiste inmediatamente");
+  assert.ok(!sameContainerBlock.includes("moveLocalPath"), "reorden de archivo no mueve físicamente");
+  assert.ok(sameContainerBlock.includes("applyFileOrder"), "reorden de archivo aplica orden en memoria");
+
+  // Carpeta: reorden entre hermanos (folder-reorder) no persiste inmediatamente ni mueve físicamente.
+  const folderReorderIdx = src.indexOf('if (target.type === "folder-reorder")');
+  assert.ok(folderReorderIdx !== -1, "debe existir rama de reorden de carpeta entre hermanos");
+  const folderReorderEnd = src.indexOf('if (target.type === "folder-into")', folderReorderIdx);
+  assert.ok(folderReorderEnd > folderReorderIdx);
+  const folderReorderBlock = src.slice(folderReorderIdx, folderReorderEnd);
+  assert.ok(!folderReorderBlock.includes("persistOrderAfterPhysicalMove"), "reorden de carpeta no persiste inmediatamente");
+  assert.ok(!folderReorderBlock.includes("moveEntry"), "reorden de carpeta no mueve físicamente");
+  assert.ok(!folderReorderBlock.includes("moveLocalPath"), "reorden de carpeta no mueve físicamente");
+
+  // Carpeta: mismo padre en folder-into es reorden lógico, no movimiento físico.
+  const sameParentIdx = src.indexOf("if (sourceKey === targetKey)");
+  assert.ok(sameParentIdx !== -1, "debe existir rama de carpeta en mismo padre (reorden lógico)");
+  const sameParentEnd = src.indexOf("if (destinationPath === draggedPath)", sameParentIdx);
+  assert.ok(sameParentEnd > sameParentIdx);
+  const sameParentBlock = src.slice(sameParentIdx, sameParentEnd);
+  assert.ok(!sameParentBlock.includes("persistOrderAfterPhysicalMove"), "reorden lógico de carpeta no persiste inmediatamente");
+  assert.ok(!sameParentBlock.includes("moveEntry"), "reorden lógico de carpeta no mueve físicamente");
+
+  // En movimientos físicos fallidos (antes de completarse) no debe persistirse inmediatamente.
+  assert.ok(src.includes('await moveLocalPath("file"'), "movimiento físico de archivo ejecuta moveLocalPath");
+  const fileCatchBlocks = [...src.matchAll(/await moveLocalPath\("file"[\s\S]*?\} catch \(error\) \{[\s\S]*?\} finally \{/g)].map(m => m[0]);
+  assert.ok(fileCatchBlocks.length >= 1, "debe existir manejo de error en movimiento físico de archivo");
+  for (const block of fileCatchBlocks) {
+    const catchPart = block.slice(block.indexOf("} catch"));
+    assert.ok(!catchPart.includes("persistOrderAfterPhysicalMove"), "fallo de movimiento físico de archivo no persiste inmediatamente");
+  }
+  // Carpeta: si el movimiento falla no se persiste (persist está tras confirmación)
+  const folderMoveIdx = src.indexOf('if (!(await moveEntry("folder"');
+  assert.ok(folderMoveIdx !== -1);
+  const folderPersistIdx = src.indexOf('persistOrderAfterPhysicalMove("folderOrder"', folderMoveIdx);
+  assert.ok(folderPersistIdx > folderMoveIdx, "persistencia de carpeta solo tras movimiento confirmado");
 });
 
 test("3. Escritura debounced pendiente seguida de guardado inmediato: el guardado inmediato gana y cancela el debounce", async () => {

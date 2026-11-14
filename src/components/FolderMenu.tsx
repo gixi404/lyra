@@ -1,16 +1,23 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Archive, Calendar, FilePlus, FileText, FolderPlus, HardDrive, Info, Move as MoveIcon, Pencil, RotateCcw } from "lucide-react";
+import { Archive, Calendar, FilePlus, FileText, FolderPlus, HardDrive, Info, Move as MoveIcon, Paintbrush, Pencil, RotateCcw } from "lucide-react";
 import { fileStore } from "../store/fileStore.ts";
-import { getFileBaseName, getFileDirectory } from "../utils/noteName.ts";
+import useStorage from "../hooks/useStorage.ts";
+import { expandParentPath, readFolderExpandedState } from "../utils/folderTree.ts";
+import { getFileDirectory } from "../utils/noteName.ts";
+import { displayFolderName } from "../utils/visibleNames.ts";
 import { moveLocalPath } from "../utils/pathOperations.ts";
+import { savePersistentPreferencesNow } from "../utils/persistentPreferences.ts";
 import { flushActiveEditors } from "../utils/editorPersistence.ts";
-import { notification } from "../utils/helpers.ts";
+import { navigation, notification } from "../utils/helpers.ts";
+import { commitVisibleName, resolveNewFolderPhysicalPath, resolveRenamedFolderPhysicalPath, validateVisibleEntryName } from "../utils/visibleNameOps.ts";
+import { PAGES } from "../utils/consts.ts";
 import translations from "../utils/dictionary.ts";
 import ContextMenu, { MenuItem, MenuSeparator } from "./ContextMenu.tsx";
 import Modal from "./Modal.tsx";
 import MoveItemDialog from "./MoveItemDialog.tsx";
 import InfoModal, { InfoRow } from "./InfoModal.tsx";
+import FolderAppearanceDialog from "./FolderAppearanceDialog.tsx";
 
 interface FolderInfo {
   name: string;
@@ -24,7 +31,7 @@ interface FolderInfo {
   modifiedAt: number | null;
 }
 
-type DialogMode = "create" | "rename" | "move" | "archive" | "restore" | "info" | null;
+type DialogMode = "create" | "rename" | "move" | "archive" | "restore" | "info" | "personalize" | null;
 
 /**
  * Menú contextual de las carpetas.
@@ -37,29 +44,36 @@ export default function FolderMenu({ path, archived = false, structural = false 
   structural?: boolean;
 }) {
   const d = translations();
+  const { setItem } = useStorage();
+  const { goTo } = navigation();
   const [mode, setMode] = useState<DialogMode>(null);
   const [info, setInfo] = useState<FolderInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const isRoot = path === "";
-  const folderName = isRoot ? "Lyra" : getFileBaseName(path);
+  const folderName = isRoot ? "Lyra" : displayFolderName(path);
   const canManage = !isRoot && !archived && !structural;
   const canCreate = !archived && !structural;
 
   async function createFolder(parent: string, folderNameToCreate: string): Promise<string> {
-    const sanitized = folderNameToCreate.trim();
-    if (!sanitized || sanitized !== folderNameToCreate || folderNameToCreate.includes("/") || folderNameToCreate.includes("\\")) {
-      throw new Error("Nombre de carpeta inválido");
+    const validation = validateVisibleEntryName(folderNameToCreate, "folder");
+    if (!validation.ok) throw new Error(validation.reason ?? d.InvalidName);
+    const { physicalPath, visibleSegment } = resolveNewFolderPhysicalPath(folderNameToCreate, parent);
+    await invoke("create_folder", { relativePath: physicalPath });
+    fileStore.getState().setFolders([...fileStore.getState().folders, physicalPath]);
+    // Confirmar metadatos visibles tras la creación física.
+    commitVisibleName(physicalPath, "folder", visibleSegment);
+    if (parent) {
+      const nextExpanded = expandParentPath(readFolderExpandedState(window.localStorage), parent);
+      setItem("folderExpanded", JSON.stringify(nextExpanded));
     }
-    const relativePath = parent ? `${parent}/${sanitized}` : sanitized;
-    await invoke("create_folder", { relativePath });
-    fileStore.getState().setFolders([...fileStore.getState().folders, relativePath]);
-    return relativePath;
+    return physicalPath;
   }
 
   function handleCreateConfirm(value?: string): void {
     const requested = value ?? "";
-    if (!requested.trim() || requested !== requested.trim() || requested.includes("/") || requested.includes("\\")) {
-      return notification("error", d.InvalidName);
+    const validation = validateVisibleEntryName(requested, "folder");
+    if (!validation.ok) {
+      return notification("error", validation.reason ?? d.InvalidName);
     }
     setBusy(true);
     void createFolder(path, requested)
@@ -69,20 +83,28 @@ export default function FolderMenu({ path, archived = false, structural = false 
   }
 
   function handleRenameConfirm(value?: string): void {
+    if (busy) return;
     const requested = value ?? "";
-    if (!requested.trim() || requested !== requested.trim() || requested.includes("/") || requested.includes("\\")) {
-      return notification("error", d.InvalidName);
+    const validation = validateVisibleEntryName(requested, "folder");
+    if (!validation.ok) {
+      return notification("error", validation.reason ?? d.InvalidName);
     }
-    const parent = getFileDirectory(path);
-    const target = parent ? `${parent}/${requested}` : requested;
+    const { physicalPath: target, visibleSegment } = resolveRenamedFolderPhysicalPath(requested, path);
     if (target === path) {
+      // Nombre físico sin cambios: actualizar solo nombre visible si procede.
+      commitVisibleName(path, "folder", visibleSegment);
       setMode(null);
       return;
     }
-    setMode(null);
+    setBusy(true);
     void moveLocalPath("folder", path, target)
-      .then(warnings => { warnings.forEach(warning => notification("error", warning)); })
-      .catch(error => notification("error", error instanceof Error ? error.message : String(error)));
+      .then(warnings => {
+        warnings.forEach(warning => notification("error", warning));
+        commitVisibleName(target, "folder", visibleSegment);
+        setMode(null);
+      })
+      .catch(error => notification("error", error instanceof Error ? error.message : String(error)))
+      .finally(() => setBusy(false));
   }
 
   async function setArchived(next: boolean): Promise<void> {
@@ -94,10 +116,39 @@ export default function FolderMenu({ path, archived = false, structural = false 
         setMode(null);
         return;
       }
+      const selectedBefore = fileStore.getState().selectedFile.name;
       const paths = await invoke<string[]>("set_folder_archived", { relativePath: path, archived: next });
-      fileStore.getState().setArchivedFolders(paths);
-      const selected = fileStore.getState().selectedFile;
-      if (next && selected.name.startsWith(`${path}/`)) fileStore.getState().setSelectedFile({ name: "", content: "" });
+      // Publicación coherente: actualiza estado y invalida lecturas obsoletas de archivedFolders.
+      fileStore.setState(state => ({
+        archivedFolders: paths,
+        folderArchiveError: null,
+        folderArchiveLoaded: true,
+        listingGeneration: state.listingGeneration + 1,
+      }));
+
+      if (next && selectedBefore && (selectedBefore === path || selectedBefore.startsWith(`${path}/`))) {
+        fileStore.getState().setSelectedFile({ name: "", content: "" });
+        goTo(PAGES.list);
+      }
+
+      if (!next) {
+        const effectivelyActive = !paths.some(archivedPath => path === archivedPath || path.startsWith(`${archivedPath}/`));
+        if (effectivelyActive) {
+          const parentPath = getFileDirectory(path);
+          const currentExpanded = readFolderExpandedState(window.localStorage);
+          const nextExpanded = parentPath ? expandParentPath(currentExpanded, parentPath) : currentExpanded;
+          if (nextExpanded !== currentExpanded) {
+            setItem("folderExpanded", JSON.stringify(nextExpanded));
+            try {
+              await savePersistentPreferencesNow();
+            } catch {
+              // Recuperación lógica ya confirmada; la expansión visual es preferencia no crítica.
+              notification("error", "La carpeta se recuperó, pero no se pudo guardar la expansión del explorador.");
+            }
+          }
+        }
+      }
+
       setMode(null);
     } catch (error) {
       notification("error", error instanceof Error ? error.message : String(error));
@@ -122,7 +173,7 @@ export default function FolderMenu({ path, archived = false, structural = false 
       {canCreate && <>
         <MenuItem
           icon={FilePlus}
-          label="Crear archivo"
+          label={d.NewNote}
           onSelect={() => {
             window.dispatchEvent(new CustomEvent("lyra:create-note-in-folder", { detail: path }));
           }}
@@ -130,7 +181,7 @@ export default function FolderMenu({ path, archived = false, structural = false 
         <MenuSeparator />
         <MenuItem
           icon={FolderPlus}
-          label="Crear subcarpeta"
+          label={isRoot ? "Nueva carpeta" : "Nueva subcarpeta"}
           onSelect={() => { setMode("create"); }}
         />
         <MenuSeparator />
@@ -141,6 +192,12 @@ export default function FolderMenu({ path, archived = false, structural = false 
           icon={Pencil}
           label="Renombrar"
           onSelect={() => { setMode("rename"); }}
+        />
+        <MenuSeparator />
+        <MenuItem
+          icon={Paintbrush}
+          label="Personalizar"
+          onSelect={() => { setMode("personalize"); }}
         />
         <MenuSeparator />
         <MenuItem
@@ -178,7 +235,7 @@ export default function FolderMenu({ path, archived = false, structural = false 
       isOpen={mode === "create"}
       onClose={() => { if (!busy) setMode(null); }}
       onConfirm={handleCreateConfirm}
-      title={`Crear subcarpeta en ${folderName}`}
+      title={isRoot ? "Nueva carpeta en Lyra" : `Nueva subcarpeta en ${folderName}`}
       hasInput
       initialValue=""
       confirmText={d.Create}
@@ -195,6 +252,8 @@ export default function FolderMenu({ path, archived = false, structural = false 
       initialValue={folderName}
       confirmText={d.Change}
       cancelText={d.Cancel}
+      busy={busy}
+      autoSelectInput
     />
 
     <Modal
@@ -233,7 +292,7 @@ export default function FolderMenu({ path, archived = false, structural = false 
       onClose={() => setMode(null)}
       title={d.FolderInfoTitle}
       icon={Info}
-      name={info.name}
+      name={folderName}
     >
       <div className="flex flex-col gap-y-2 text-xs">
         <InfoRow icon={FileText} label="Archivos directos" value={info.directFiles} />
@@ -245,5 +304,13 @@ export default function FolderMenu({ path, archived = false, structural = false 
         <InfoRow icon={Calendar} label="Modificada" value={info.modifiedAt ? new Date(info.modifiedAt).toLocaleString() : "No disponible"} last />
       </div>
     </InfoModal>}
+
+    {canManage && mode === "personalize" && (
+      <FolderAppearanceDialog
+        isOpen={mode === "personalize"}
+        folderPath={path}
+        onClose={() => setMode(null)}
+      />
+    )}
   </div>;
 }

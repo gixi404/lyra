@@ -18,6 +18,7 @@ interface ModalProps {
   cancelText?: string;
   variant?: "primary" | "danger";
   busy?: boolean;
+  autoSelectInput?: boolean;
 }
 
 function Modal({
@@ -33,6 +34,7 @@ function Modal({
   cancelText,
   variant = "primary",
   busy = false,
+  autoSelectInput = false,
 }: ModalProps): Component | null {
   const d = translations();
   const { isDay } = themes();
@@ -52,8 +54,12 @@ function Modal({
       const focusInput = () => {
         if (inputRef.current) {
           inputRef.current.focus();
-          const len = inputRef.current.value.length;
-          inputRef.current.setSelectionRange(len, len);
+          if (autoSelectInput) {
+            inputRef.current.select();
+          } else {
+            const len = inputRef.current.value.length;
+            inputRef.current.setSelectionRange(len, len);
+          }
         }
       };
 
@@ -66,7 +72,7 @@ function Modal({
         clearTimeout(t2);
       };
     }
-  }, [isOpen, initialValue]);
+  }, [isOpen, initialValue, autoSelectInput]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

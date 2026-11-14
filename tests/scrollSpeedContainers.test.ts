@@ -14,26 +14,27 @@ import {
 import { configStore } from "../src/store/configStore.ts";
 
 // ---------------------------------------------------------------------------
-// 19. El listado aplica la velocidad sobre el scroll real de la ventana
+// 19. El listado usa un contenedor de scroll propio e independiente del editor
 // ---------------------------------------------------------------------------
-test("19. El listado aplica la velocidad sobre el scroll real de la ventana (List + Preferencias)", () => {
+test("19. El listado usa un contenedor de scroll propio e independiente del documento/editor (List + Preferencias)", () => {
   const listPath = new URL("../src/pages/List.tsx", import.meta.url).pathname;
   const listCode = fs.readFileSync(listPath, "utf-8");
 
-  // El scroll real del listado es el de la ventana (html overflow-y: scroll),
-  // igual que en Preferencias. El hook debe usarse sin ref al div interno.
-  assert.ok(listCode.includes("useScrollSpeed();"), "List debe invocar useScrollSpeed() sobre window");
-  assert.ok(!listCode.includes("useScrollSpeed(containerRef)"), "List no debe adjuntar la velocidad al div interno no-scrollable");
-
-  // La posición se registra desde la ventana, no desde el div
-  assert.ok(listCode.includes('window.addEventListener("scroll"'), "List debe registrar el scroll de la ventana");
-  assert.ok(listCode.includes("getScrollPos("), "List debe guardar la posición vía getScrollPos");
+  // Scroll estructural: contenedor dedicado (no window) para evitar resets por html.in-editor/transiciones.
+  assert.ok(listCode.includes("containerRef"), "List debe usar un contenedor de scroll dedicado");
+  assert.ok(listCode.includes("useScrollSpeed(containerRef)"), "List debe aplicar velocidad sobre el contenedor dedicado");
+  assert.ok(!listCode.includes("useScrollSpeed();"), "List no debe aplicar velocidad sobre window (contaminado por el editor)");
+  assert.ok(listCode.includes('id="lyra-list-scroll-container"'), "List debe exponer el contenedor de scroll principal");
+  assert.ok(listCode.includes("in-list-scroll"), "List debe aislar el scroll de documento mientras está montado");
+  assert.ok(listCode.includes('el.addEventListener("scroll"') || listCode.includes('.addEventListener("scroll"'), "List debe registrar el scroll del contenedor");
+  assert.ok(!listCode.includes('window.addEventListener("scroll"'), "List no debe depender del scroll de ventana");
+  assert.ok(listCode.includes("el.scrollTop"), "List debe capturar la posición desde el contenedor");
+  assert.ok(listCode.includes("setListScroll("), "List debe persistir la posición");
   assert.ok(listCode.includes("applyListScroll("), "List debe restaurar vía applyListScroll");
-  assert.ok(!listCode.includes("containerRef"), "List no debe conservar ref al contenedor no-scrollable");
 
   const prefsPath = new URL("../src/pages/Preferences.tsx", import.meta.url).pathname;
   const prefsCode = fs.readFileSync(prefsPath, "utf-8");
-  assert.ok(prefsCode.includes("useScrollSpeed();"), "Preferencias usa useScrollSpeed() sobre window");
+  assert.ok(prefsCode.includes("useScrollSpeed();"), "Preferencias conserva useScrollSpeed() sobre window");
 
   // Una única invocación por página: sin listeners duplicados
   const countOccurrences = (code: string, needle: string) =>
@@ -70,19 +71,18 @@ test("20. TinyEditor lee la preferencia viva y re-adjunta su listener independie
 });
 
 // ---------------------------------------------------------------------------
-// 21. listScroll es consciente del modelo real: ventana si el div no es scrollable
+// 21. listScroll: contenedor dedicado cuando aplica, fallback a ventana si no
 // ---------------------------------------------------------------------------
-test("21. listScroll usa la ventana cuando el div del listado no es scrollable", () => {
+test("21. listScroll prioriza el contenedor dedicado del listado y usa ventana como fallback", () => {
   const listScrollPath = new URL("../src/utils/listScroll.ts", import.meta.url).pathname;
   const code = fs.readFileSync(listScrollPath, "utf-8");
 
-  assert.ok(code.includes("isListContainerScrollable"), "listScroll debe distinguir contenedor scrollable de ventana");
+  assert.ok(code.includes("isDedicatedListScroller") || code.includes("in-list-scroll"), "listScroll debe reconocer el contenedor dedicado del listado");
   assert.ok(code.includes("getWindowScrollTop"), "listScroll debe exponer lectura del scroll de ventana");
   assert.ok(code.includes("getWindowMaxScroll"), "listScroll debe exponer máximo del scroll de ventana");
   assert.ok(code.includes("setWindowScrollTop"), "listScroll debe escribir el scroll de ventana");
 
-  // Comportamiento funcional: div no-scrollable (scrollHeight == clientHeight)
-  // pero ventana con contenido. getScrollPos/applyListScroll/getMaxScroll deben operar en ventana.
+  // Contenedor dedicado (modo lista): la posición y escritura van al contenedor, no a la ventana.
   let windowTop = 123;
   const store = new Map<string, string>();
   const mockStorage = {
@@ -92,9 +92,9 @@ test("21. listScroll usa la ventana cuando el div del listado no es scrollable",
     clear: () => store.clear(),
   };
   const fakeContainer = {
-    scrollHeight: 800,
-    clientHeight: 800, // no-scrollable: max = 0
-    scrollTop: 0,
+    scrollHeight: 2000,
+    clientHeight: 800,
+    scrollTop: 250,
   };
   (globalThis as unknown as { window: unknown }).window = {
     localStorage: mockStorage,
@@ -106,32 +106,29 @@ test("21. listScroll usa la ventana cuando el div del listado no es scrollable",
       (globalThis.window as unknown as { scrollY: number }).scrollY = top;
       (globalThis.document as unknown as { documentElement: { scrollTop: number } }).documentElement.scrollTop = top;
     },
-    getComputedStyle: () => ({ overflowY: "visible", overflowX: "visible" }),
+    getComputedStyle: () => ({ overflowY: "auto", overflowX: "hidden" }),
   };
   (globalThis as unknown as { document: unknown }).document = {
     getElementById: (id: string) => (id === "lyra-list-scroll-container" ? fakeContainer : null),
-    documentElement: { scrollHeight: 3000, clientHeight: 800, scrollTop: windowTop },
+    documentElement: { scrollHeight: 3000, clientHeight: 800, scrollTop: windowTop, classList: { contains: (c: string) => c === "in-list-scroll" } },
     body: { scrollHeight: 3000, clientHeight: 800, scrollTop: windowTop },
   };
 
-  // Con div no-scrollable, la posición y el máximo vienen de la ventana,
-  // y la escritura va a la ventana (no al div).
-  assert.strictEqual(getScrollPos(), 123, "getScrollPos debe leer la ventana si el div no es scrollable");
-  assert.strictEqual(getMaxScroll(), 2200, "getMaxScroll debe ser 3000-800=2200 en ventana");
-  const clamped = applyListScroll(500);
-  assert.strictEqual(clamped, 500, "applyListScroll debe aplicar 500 en la ventana");
-  assert.strictEqual(windowTop, 500, "La ventana debe haber recibido el scroll 500");
-  assert.strictEqual(fakeContainer.scrollTop, 0, "El div no-scrollable no debe recibir el scroll");
+  assert.strictEqual(getScrollPos(), 250, "getScrollPos debe leer el contenedor dedicado del listado");
+  assert.strictEqual(getMaxScroll(), 1200, "getMaxScroll debe ser 2000-800=1200 en el contenedor");
+  applyListScroll(500);
+  assert.strictEqual(fakeContainer.scrollTop, 500, "applyListScroll debe desplazar el contenedor dedicado");
+  assert.strictEqual(windowTop, 123, "applyListScroll no debe tocar la ventana cuando el contenedor es el scroller");
 
-  // Verificación por inspección: cuando el contenedor no es scrollable se usa la ventana
-  assert.ok(
-    code.includes("isListContainerScrollable(container)") && code.includes("getWindowScrollTop()"),
-    "getScrollPos debe delegar a la ventana si el contenedor no es scrollable"
-  );
-  assert.ok(
-    code.includes("return getWindowMaxScroll()") || code.includes("return setWindowScrollTop(y)"),
-    "getMaxScroll/applyListScroll deben delegar a la ventana si el contenedor no es scrollable"
-  );
+  // Fallback a ventana cuando no hay contenedor dedicado.
+  (globalThis as unknown as { document: unknown }).document = {
+    getElementById: () => null,
+    documentElement: { scrollHeight: 3000, clientHeight: 800, scrollTop: windowTop, classList: { contains: () => false } },
+    body: { scrollHeight: 3000, clientHeight: 800, scrollTop: windowTop },
+  };
+  assert.strictEqual(getScrollPos(), 123, "sin contenedor dedicado, getScrollPos debe leer la ventana");
+  applyListScroll(400);
+  assert.strictEqual(windowTop, 400, "sin contenedor dedicado, applyListScroll debe desplazar la ventana");
 });
 
 // ---------------------------------------------------------------------------

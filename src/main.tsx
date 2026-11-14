@@ -69,6 +69,7 @@ createRoot(root).render(
   </StrictMode>
 );
 
+
 // Inicializar notificador y drenado de recuperaciones de archivos temporales
 void initRecoveryNotifier();
 

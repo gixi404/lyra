@@ -8,6 +8,7 @@ import { navigateTo } from "./navigation.ts";
 import { flushActiveEditors } from "./editorPersistence.ts";
 import { logger } from "./logger.ts";
 import { rememberNoteIdentity } from "./noteIdentity.ts";
+import { clearVisibleName } from "./visibleNames.ts";
 
 function notification(
   type: ToastType,
@@ -127,6 +128,10 @@ export async function readImportedNoteContent(fileName: string): Promise<Importe
   }
   try {
     const opened = await invoke<{ identity: string; content: string; firstSeen: boolean; pathReused: boolean }>("open_note_identity", { fileName });
+    // Reutilización de ruta física: metadatos de nombre visible previos no son confiables.
+    if (opened.pathReused) {
+      try { clearVisibleName(fileName, "file"); } catch { /* metadatos corruptos: no bloquear lectura */ }
+    }
     rememberNoteIdentity(fileName, opened.identity, opened.firstSeen, opened.pathReused);
     const content = opened.content;
     return { ok: true, content };

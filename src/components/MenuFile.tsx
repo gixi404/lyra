@@ -7,19 +7,17 @@ import { setArchiveState } from "../utils/archiveState.ts";
 import { useSyncStore } from "../store/syncStore.ts";
 import { fileStore } from "../store/fileStore.ts";
 import translations from "../utils/dictionary.ts";
-import {
-  getEditableFileName,
-  nameIsValid,
-  notification,
-} from "../utils/helpers.ts";
+import { notification } from "../utils/helpers.ts";
 import type { Component } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal.tsx";
 import ModalInfo from "./ModalInfo.tsx";
 import MoveItemDialog from "./MoveItemDialog.tsx";
 import ContextMenu, { MenuItem, MenuSeparator } from "./ContextMenu.tsx";
-import { getFileBaseName, getFileDirectory, noteLabel, noteTitle } from "../utils/noteName.ts";
 import { logger } from "../utils/logger.ts";
+import { displayNoteLabel, displayNoteName, editableNoteBaseName } from "../utils/visibleNames.ts";
+import { commitVisibleName, resolveRenamedNotePhysicalPath, validateVisibleEntryName } from "../utils/visibleNameOps.ts";
+import { getFileBaseName } from "../utils/noteName.ts";
 
 function MenuFile({ fileName }: Props): Component {
   const d = translations(),
@@ -27,7 +25,7 @@ function MenuFile({ fileName }: Props): Component {
       useShallow(state => ({ files: state.files, editedFile: state.editedFile }))
     ),
     files: string[] = filesArr,
-    { renameFile, resolveDisplayName, readFile } = useFile(),
+    { renameFile, readFile } = useFile(),
     [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
     [isMoveOpen, setIsMoveOpen] = useState<boolean>(false),
     [isEditOpen, setIsEditOpen] = useState<boolean>(false),
@@ -54,7 +52,7 @@ function MenuFile({ fileName }: Props): Component {
   async function handleExportPDF(): Promise<void> {
     try {
       const content = await readFile(fileName);
-      const title = noteTitle(fileName);
+      const title = displayNoteName(fileName);
       const { jsPDF } = await import("jspdf");
 
       const doc = new jsPDF({
@@ -88,7 +86,7 @@ function MenuFile({ fileName }: Props): Component {
       }
 
       doc.save(`${title}.pdf`);
-      notification("success", `${noteLabel(fileName)} se exportó a PDF`);
+      notification("success", `${displayNoteLabel(fileName)} se exportó a PDF`);
 
       try {
         const downloadsPath = await downloadDir();
@@ -100,33 +98,59 @@ function MenuFile({ fileName }: Props): Component {
       }
     } catch (err) {
       logger.error("Error exporting PDF:", err);
-      notification("error", `No se pudo exportar ${noteLabel(fileName)} a PDF`);
+      notification("error", `No se pudo exportar ${displayNoteLabel(fileName)} a PDF`);
     }
   }
 
   function handleEditConfirm(value?: string): void {
-    if (!value) return notification("error", d.InvalidName);
-    const baseValue = getEditableFileName(value);
-    if (!nameIsValid(baseValue)) return;
+    if (value === undefined || value === null) return notification("error", d.InvalidName);
+    const validation = validateVisibleEntryName(value, "file");
+    if (!validation.ok) return notification("error", validation.reason ?? d.InvalidName);
 
-    const currentBaseName = getFileBaseName(fileName);
-    const nextBaseWithExt: string = resolveDisplayName(baseValue, currentBaseName);
-    const dir = getFileDirectory(fileName);
-    const nextDisplayName: string = dir ? `${dir}/${nextBaseWithExt}` : nextBaseWithExt;
+    const physicalBase = getFileBaseName(fileName);
+    const lower = physicalBase.toLowerCase();
+    const hiddenExt = [".txt", ".md"].find(ext => lower.endsWith(ext));
+    // Para extensiones ocultas el campo muestra el título sin extensión; para técnicas muestra el nombre completo.
+    // Preservar la extensión física del archivo (no cambiar formato accidentalmente).
+    let visibleInput = value;
+    if (hiddenExt) {
+      // si el usuario no incluyó la extensión oculta, añadirla para conservarla
+      if (!visibleInput.toLowerCase().endsWith(hiddenExt)) {
+        visibleInput = `${visibleInput}${physicalBase.slice(-hiddenExt.length)}`;
+      }
+    } else {
+      // extensión técnica: preservar la extensión física original
+      const dot = physicalBase.lastIndexOf(".");
+      const physExt = dot > 0 ? physicalBase.slice(dot) : "";
+      if (physExt && !visibleInput.toLowerCase().endsWith(physExt.toLowerCase())) {
+        // si el usuario cambió/quitó la extensión, forzar la extensión física original
+        const vLower = visibleInput.toLowerCase();
+        const vDot = vLower.lastIndexOf(".");
+        const vStem = vDot > 0 ? visibleInput.slice(0, vDot) : visibleInput;
+        visibleInput = `${vStem}${physExt}`;
+      }
+    }
 
-    if (nextDisplayName === fileName) {
+    const { physicalPath: nextPhysicalPath, visibleSegment } = resolveRenamedNotePhysicalPath(visibleInput, fileName);
+
+    if (nextPhysicalPath === fileName) {
+      // Solo cambia el nombre visible (metadatos), sin operación física.
+      commitVisibleName(fileName, "file", visibleSegment);
       setIsEditOpen(false);
       return;
     }
 
-    if (files.includes(nextDisplayName)) {
-      notification("error", `${noteLabel(nextDisplayName)} ya existe`);
+    if (files.includes(nextPhysicalPath)) {
+      notification("error", `${displayNoteLabel(nextPhysicalPath)} ya existe`);
       return;
     }
 
     setIsEditOpen(false);
-    renameFile(fileName, nextDisplayName)
-      .catch(() => notification("error", `No se pudo renombrar ${noteLabel(fileName)}`));
+    renameFile(fileName, nextPhysicalPath)
+      .then(() => {
+        commitVisibleName(nextPhysicalPath, "file", visibleSegment);
+      })
+      .catch(() => notification("error", `No se pudo renombrar ${displayNoteLabel(fileName)}`));
   }
 
   async function handleTrashConfirm(): Promise<void> {
@@ -154,7 +178,7 @@ function MenuFile({ fileName }: Props): Component {
       logger.error("Error al persistir archivado de nota:", err);
       fileStore.getState().releaseRetainedExit(archivedName);
       if (mountedRef.current) setIsTrashOpen(false);
-      notification("error", `No se pudo archivar ${noteLabel(archivedName)}`);
+      notification("error", `No se pudo archivar ${displayNoteLabel(archivedName)}`);
     } finally {
       archivingRef.current = false;
       if (mountedRef.current) setIsArchiving(false);
@@ -222,7 +246,7 @@ function MenuFile({ fileName }: Props): Component {
         onConfirm={handleEditConfirm}
         title={d.EnterNewName}
         hasInput
-        initialValue={getEditableFileName(getFileBaseName(fileName))}
+        initialValue={editableNoteBaseName(fileName)}
         confirmText={d.Change}
         cancelText={d.Cancel}
       />
@@ -232,7 +256,7 @@ function MenuFile({ fileName }: Props): Component {
         onClose={() => { if (!isArchiving) setIsTrashOpen(false); }}
         onConfirm={handleTrashConfirm}
         title={d.MoveToTrash}
-        description={`"${noteTitle(fileName)}"`}
+        description={`"${displayNoteName(fileName)}"`}
         confirmText={d.Confirm}
         cancelText={d.Cancel}
         variant="danger"

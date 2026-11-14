@@ -9,6 +9,7 @@ import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal.tsx";
 import { editorDebug } from "../utils/editorDebug.ts";
 import { navigation, themes } from "../utils/helpers.ts";
 import { PAGES } from "../utils/consts.ts";
+import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 import type { Component } from "../utils/types.ts";
 
 interface TinyEditorProps {
@@ -758,6 +759,8 @@ function TinyEditor({
           return;
         }
         e.preventDefault();
+        scrollDebug("TinyEditor.escapeToList");
+        snapshotScrollState("TinyEditor.escapeToList");
         goTo(PAGES.list);
         return;
       }

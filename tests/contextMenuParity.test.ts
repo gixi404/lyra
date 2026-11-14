@@ -308,7 +308,10 @@ test("shared popups: the move dialog is the same component for files and folders
   const code = read("src/components/MoveItemDialog.tsx");
   assert.ok(code.includes('kind: "file" | "folder"'), "the dialog must serve both element types");
   assert.ok(code.includes("moveLocalPath(kind"), "the same operation flow must be used");
-  assert.ok(code.includes("Mover ${baseName} a..."), "the folder move dialog must include the folder name in its title");
+  assert.ok(
+    code.includes('Mover ${displayName} a...') || code.includes('Mover ${baseName} a...'),
+    "the folder move dialog must include the folder name in its title"
+  );
   assert.ok(code.includes('"Mover archivo"'), "the file move dialog must keep a move title");
 });
 
@@ -327,5 +330,6 @@ test("folder menu: the virtual root keeps its protected actions", () => {
   assert.ok(manageBlock.includes('label="Archivar"'), "the archive entry must live in the managed block");
 
   const createBlock = code.slice(code.indexOf("{canCreate && <>"), code.indexOf("{canManage && <>"));
-  assert.ok(createBlock.includes('label="Crear archivo"'), "the create entry must live in the creation block");
+  assert.ok(createBlock.includes('label={d.NewNote}'), "the note creation entry must live in the creation block");
+  assert.ok(createBlock.includes('label={isRoot ? "Nueva carpeta" : "Nueva subcarpeta"}'), "the folder creation entry must keep root/folder-specific labels");
 });

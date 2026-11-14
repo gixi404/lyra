@@ -16,10 +16,10 @@ import Modal from "./Modal.tsx";
 import ModalInfo from "./ModalInfo.tsx";
 import ContextMenu, { MenuItem, MenuSeparator } from "./ContextMenu.tsx";
 import { runExclusiveDeletion } from "../utils/noteDeletion.ts";
-import { noteLabel, noteSuccessMessage, noteTitle } from "../utils/noteName.ts";
+import { displayNoteLabel, displayNoteName, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
 import { logger } from "../utils/logger.ts";
 
-function MenuPaperFile({ fileName }: Props): Component {
+function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder = false }: Props): Component {
   const d = translations(),
     { getItem } = useStorage(),
     { deleteFile, readFile } = useFile(),
@@ -38,6 +38,7 @@ function MenuPaperFile({ fileName }: Props): Component {
     isEmptyingArchived = fileStore(state => state.isEmptyingArchived),
     deletionBusy = isDeleting || isEmptyingArchived,
     mountedRef = useRef(false);
+  const canRecoverIndividually = individuallyArchived || !archivedByFolder;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -57,7 +58,7 @@ function MenuPaperFile({ fileName }: Props): Component {
   async function handleExportPDF(): Promise<void> {
     try {
       const content = await readFile(fileName);
-      const title = noteTitle(fileName);
+      const title = displayNoteName(fileName);
       const { jsPDF } = await import("jspdf");
 
       const doc = new jsPDF({
@@ -91,7 +92,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       }
 
       doc.save(`${title}.pdf`);
-      notification("success", `${noteLabel(fileName)} se exportó a PDF`);
+      notification("success", `${displayNoteLabel(fileName)} se exportó a PDF`);
 
       try {
         const downloadsPath = await downloadDir();
@@ -103,7 +104,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       }
     } catch (err) {
       logger.error("Error exporting PDF:", err);
-      notification("error", `No se pudo exportar ${noteLabel(fileName)} a PDF`);
+      notification("error", `No se pudo exportar ${displayNoteLabel(fileName)} a PDF`);
     }
   }
 
@@ -139,7 +140,7 @@ function MenuPaperFile({ fileName }: Props): Component {
         catch (restoreError) { logger.warn("Could not restore welcome preference:", restoreError); }
       }
       if (mountedRef.current) setIsRestoreOpen(false);
-      notification("error", `No se pudo recuperar ${noteLabel(restoringName)}`);
+      notification("error", `No se pudo recuperar ${displayNoteLabel(restoringName)}`);
     } finally {
       restoringRef.current = false;
       if (mountedRef.current) setIsRestoring(false);
@@ -155,7 +156,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       deleteNote: deleteFile,
       confirmed: name => {
         if (mountedRef.current) setIsDeleteOpen(false);
-        notification("success", noteSuccessMessage(name, "deleted"));
+        notification("success", displayNoteSuccessMessage(name, "deleted"));
         fileStore.getState().scheduleExitAnimation(name, () => {
           removeFileFromList(name);
           editedFile();
@@ -164,7 +165,7 @@ function MenuPaperFile({ fileName }: Props): Component {
       failed: error => {
         logger.error("Could not delete note:", error);
         if (mountedRef.current) setIsDeleteOpen(false);
-        notification("error", `No se pudo eliminar ${noteLabel(fileName)}`);
+        notification("error", `No se pudo eliminar ${displayNoteLabel(fileName)}`);
       },
     });
   }
@@ -184,7 +185,12 @@ function MenuPaperFile({ fileName }: Props): Component {
           icon={RecoveryIcon}
           label={d.Recover ?? "Restaurar"}
           tone="success"
-          onSelect={() => setIsRestoreOpen(true)}
+          disabled={!canRecoverIndividually}
+          title={!canRecoverIndividually ? "Recupera primero la carpeta que contiene esta nota" : undefined}
+          onSelect={() => {
+            if (!canRecoverIndividually) return;
+            setIsRestoreOpen(true);
+          }}
         />
 
         <MenuSeparator />
@@ -216,7 +222,7 @@ function MenuPaperFile({ fileName }: Props): Component {
         onClose={() => { if (!isRestoring) setIsRestoreOpen(false); }}
         onConfirm={handleRestoreConfirm}
         title={d.RestoreQuestion}
-        description={`"${noteTitle(fileName)}"`}
+        description={`"${displayNoteName(fileName)}"`}
         confirmText={d.Recover}
         cancelText={d.Cancel}
         busy={isRestoring}
@@ -227,7 +233,7 @@ function MenuPaperFile({ fileName }: Props): Component {
         onClose={() => { if (!deletionBusy) setIsDeleteOpen(false); }}
         onConfirm={handleDeleteConfirm}
         title={d.DeleteQuestion}
-        description={`"${noteTitle(fileName)}"`}
+        description={`"${displayNoteName(fileName)}"`}
         confirmText={d.Delete}
         cancelText={d.Cancel}
         variant="danger"
@@ -241,4 +247,6 @@ export default MenuPaperFile;
 
 interface Props {
   fileName: string;
+  individuallyArchived?: boolean;
+  archivedByFolder?: boolean;
 }

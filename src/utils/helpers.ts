@@ -21,6 +21,7 @@ import {
   normalizeStoredFileNames,
   resolveStoredFileName,
 } from "./noteName.ts";
+import { validateFolderName } from "./folderNameValidation.ts";
 import { pathIs, scrollToNovedades } from "./navigation.ts";
 import { logger } from "./logger.ts";
 
@@ -78,6 +79,9 @@ function validateFileName(name: string): FileNameValidation {
   }
   return { ok: true };
 }
+
+// (validación de carpetas unificada en ./folderNameValidation.ts)
+
 function nameIsValid(name: string): boolean {
   const result = validateFileName(name);
   if (!result.ok) notification("error", result.reason ?? "El nombre no es válido");
@@ -242,6 +246,7 @@ export {
   getLegacyFileName,
   hasSupportedNoteExtension,
   validateFileName,
+  validateFolderName,
   scrollToNovedades,
   useThemes,
   useThemes as themes,

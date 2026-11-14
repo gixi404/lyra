@@ -78,6 +78,15 @@
     overflow: hidden !important;
   }
 
+  /* Lista principal: scroll propio e independiente del scroll de documento/editor */
+  html.in-list-scroll {
+    overflow: hidden !important;
+  }
+
+  body:has(html.in-list-scroll) {
+    overflow: hidden;
+  }
+
   body {
     @apply caret-[#00a8ff] flex flex-col justify-start items-stretch select-none antialiased;
     color: rgb(var(--color-text-primary));

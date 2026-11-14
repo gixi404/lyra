@@ -26,7 +26,7 @@ import {
   writeDraft as writeDraftStore,
   type DraftProtection,
 } from "../utils/draftStore.ts";
-import { noteLabel } from "../utils/noteName.ts";
+import { displayNoteLabel } from "../utils/visibleNames.ts";
 import {
   clearDetachedSaveFailure,
   getUpdateInstallInProgress,
@@ -105,9 +105,9 @@ function reportSaveFailure(name: string, error: unknown): void {
   void (async () => {
     const protectedInStorage = getPersistedDraftProtection() === "protected_ls" || await flushDraftAsync(name);
     if (protectedInStorage) {
-      notification("error", `No se pudo guardar ${noteLabel(name)} (${String(error)}). Tus cambios permanecen en un borrador recuperable.`);
+      notification("error", `No se pudo guardar ${displayNoteLabel(name)} (${String(error)}). Tus cambios permanecen en un borrador recuperable.`);
     } else {
-      notification("error", `No se pudo guardar ni respaldar ${noteLabel(name)}. Conserva esta ventana abierta y copia el texto antes de continuar.`);
+      notification("error", `No se pudo guardar ni respaldar ${displayNoteLabel(name)}. Conserva esta ventana abierta y copia el texto antes de continuar.`);
     }
   })();
 }
@@ -183,19 +183,19 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
         fileStore.getState().editedFile();
         notification(
           "error",
-          `${noteLabel(selectedFile.name)} se actualizó desde Google Drive. Tus cambios se conservaron en ${noteLabel(conflictName)}`,
+          `${displayNoteLabel(selectedFile.name)} se actualizó desde Google Drive. Tus cambios se conservaron en ${displayNoteLabel(conflictName)}`,
           undefined,
           8000
         );
       },
       onRemoteDeleted: (fileName, wasDirty) => {
         if (!wasDirty) {
-          notification("info", `${noteLabel(fileName)} fue eliminado en Google Drive.`);
+          notification("info", `${displayNoteLabel(fileName)} fue eliminado en Google Drive.`);
           goTo(PAGES.list);
         } else {
           notification(
             "info",
-            `${noteLabel(fileName)} se eliminó de Google Drive, pero tus cambios se conservaron en Lyra`
+            `${displayNoteLabel(fileName)} se eliminó de Google Drive, pero tus cambios se conservaron en Lyra`
           );
         }
       },
@@ -227,19 +227,19 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
         fileStore.getState().editedFile();
         notification(
           "error",
-          `${noteLabel(selectedFile.name)} se actualizó desde Google Drive. Tus cambios se conservaron en ${noteLabel(conflictName)}`,
+          `${displayNoteLabel(selectedFile.name)} se actualizó desde Google Drive. Tus cambios se conservaron en ${displayNoteLabel(conflictName)}`,
           undefined,
           8000
         );
       },
       onRemoteDeleted: (fileName, wasDirty) => {
         if (!wasDirty) {
-          notification("info", `${noteLabel(fileName)} fue eliminado en Google Drive.`);
+          notification("info", `${displayNoteLabel(fileName)} fue eliminado en Google Drive.`);
           goTo(PAGES.list);
         } else {
           notification(
             "info",
-            `${noteLabel(fileName)} se eliminó de Google Drive, pero tus cambios se conservaron en Lyra`
+            `${displayNoteLabel(fileName)} se eliminó de Google Drive, pero tus cambios se conservaron en Lyra`
           );
         }
       },
@@ -375,7 +375,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       const diskDraft = await readDraftDisk(selectedFile.name);
       if (isCancelled) return;
       if (takeDraftIdentityConflict(selectedFile.name)) {
-        notification("error", `Un borrador de ${noteLabel(selectedFile.name)} tiene una identidad no verificada. Se conservó para recuperación manual y no se aplicó a este archivo.`);
+        notification("error", `Un borrador de ${displayNoteLabel(selectedFile.name)} tiene una identidad no verificada. Se conservó para recuperación manual y no se aplicó a este archivo.`);
       }
 
       const result = await reconcileDraftState({
@@ -394,7 +394,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
           fileStore.getState().editedFile();
           notification(
             "info",
-            `Se recuperaron tus modificaciones pendientes en ${noteLabel(conflictName)} debido a cambios más recientes en el archivo`,
+            `Se recuperaron tus modificaciones pendientes en ${displayNoteLabel(conflictName)} debido a cambios más recientes en el archivo`,
             undefined,
             9000
           );

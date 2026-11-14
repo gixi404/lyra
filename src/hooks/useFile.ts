@@ -13,7 +13,7 @@ import {
   resolveDisplayFileName,
 } from "../utils/helpers.ts";
 import { handleWelcomeFileDeleted, isWelcomeFileName } from "../utils/welcome.ts";
-import { ensureNoteExtension, getFileBaseName, getFileDirectory, hasSupportedNoteExtension } from "../utils/noteName.ts";
+import { ensureNoteExtension, getFileBaseName, hasSupportedNoteExtension } from "../utils/noteName.ts";
 import {
   DirEntry,
   exists,
@@ -26,6 +26,9 @@ import { clearDraft as clearDraftStore, migrateDraftDisk } from "../utils/draftS
 import { logger } from "../utils/logger.ts";
 import { getOpenedNoteIdentity, rememberNoteIdentity, remapOpenedNoteIdentities } from "../utils/noteIdentity.ts";
 import { runPathOperation } from "../utils/pathOperationLock.ts";
+import { clearVisibleName } from "../utils/visibleNames.ts";
+import { configStore } from "../store/configStore.ts";
+import { scheduleSavePersistentPreferences } from "../utils/persistentPreferences.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 
@@ -55,11 +58,8 @@ function useFile(): Files {
 
   async function renameFileLocked(oldName: string, newName: string): Promise<string> {
     if (!oldName || !newName) throw new Error("Both old and new names are required");
-    const oldDir = getFileDirectory(oldName);
-    const resolvedBase = resolveDisplayName(getFileBaseName(newName), getFileBaseName(oldName));
-    const nextDisplayName: string = newName.includes("/")
-      ? newName
-      : (oldDir ? `${oldDir}/${resolvedBase}` : resolvedBase);
+    // newName is expected to be the target physical path (possibly including directory).
+    const nextDisplayName: string = newName;
 
     if (oldName !== nextDisplayName) {
       const existsAlready = await fileExists(nextDisplayName);
@@ -90,6 +90,24 @@ function useFile(): Files {
       logger.warn("Could not migrate disk draft on rename:", err);
     }
 
+    // Remap visible-name metadata with the physical path change (if any).
+    try {
+      const raw = window.localStorage.getItem("noteVisibleNames");
+      if (raw) {
+        const map = JSON.parse(raw) as Record<string, string>;
+        if (map && typeof map === "object" && Object.prototype.hasOwnProperty.call(map, oldName)) {
+          const visible = map[oldName];
+          delete map[oldName];
+          if (typeof visible === "string" && visible && visible !== getFileBaseName(nextDisplayName)) {
+            map[nextDisplayName] = visible;
+          }
+          window.localStorage.setItem("noteVisibleNames", JSON.stringify(map));
+          configStore.getState().bumpPrefTick();
+          scheduleSavePersistentPreferences();
+        }
+      }
+    } catch { /* metadatos corruptos/ausentes: se ignoran sin bloquear el renombrado */ }
+
     remapOpenedNoteIdentities([{ oldPath: oldName, newPath: nextDisplayName }]);
 
     editedFile();
@@ -110,6 +128,9 @@ function useFile(): Files {
     clearDraftStore(name);
     syncPaperState(name);
     clearDetachedSaveFailure(name);
+    try {
+      clearVisibleName(name, "file");
+    } catch { /* metadatos corruptos/ausentes: no bloquear la eliminación */ }
   }
 
   const createFile = useCallback(async (name: string, content: string = ""): Promise<string> => {
@@ -120,6 +141,11 @@ function useFile(): Files {
     if (isTauri) {
       await invoke("create_note", { fileName: displayName, content });
       const opened = await invoke<{ identity: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: displayName });
+      // No limpiar aquí el nombre visible: en flujos de creación el llamador lo confirma
+      // después (y una reutilización detectada invalida metadatos previos, no el recién asignado).
+      if (opened.pathReused) {
+        try { clearVisibleName(displayName, "file"); } catch { /* metadatos corruptos: no bloquear apertura */ }
+      }
       rememberNoteIdentity(displayName, opened.identity, opened.firstSeen, opened.pathReused);
       if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
     } else {
@@ -244,6 +270,10 @@ function useFile(): Files {
     const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
       const opened = await invoke<{ identity: string; content: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: name });
+      // Si la ruta fue reutilizada por otro elemento, los metadatos visuales previos no son confiables.
+      if (opened.pathReused) {
+        try { clearVisibleName(name, "file"); } catch { /* metadatos corruptos: no bloquear lectura */ }
+      }
       rememberNoteIdentity(name, opened.identity, opened.firstSeen, opened.pathReused);
       if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
       if (isWelcomeFileName(name) &&

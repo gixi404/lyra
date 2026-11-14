@@ -4,6 +4,7 @@ import { configStore } from "../store/configStore.ts";
 import { navigation, pathIs, themes } from "../utils/helpers.ts";
 import { PAGES } from "../utils/consts.ts";
 import type { Component } from "../utils/types.ts";
+import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 
 function HiddenHeader(): Component {
   const { isDay } = themes(),
@@ -36,7 +37,7 @@ function HiddenHeader(): Component {
         </button>
         {pathIs(PAGES.file) && (
           <button
-            onClick={() => goTo(PAGES.list)}
+            onClick={() => { scrollDebug("HiddenHeader.backToList"); snapshotScrollState("HiddenHeader.backToList"); goTo(PAGES.list); }}
             className={`p-1.5 rounded-xl transition-colors shadow-xs border cursor-pointer ${
               isDay
                 ? "bg-white/80 border-neutral-300/80 text-neutral-600 hover:text-neutral-900 hover:bg-white"

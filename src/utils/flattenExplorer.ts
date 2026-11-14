@@ -1,13 +1,20 @@
 import { ROOT_FOLDER_ID, type FolderNode } from "./folderTree.ts";
 
 export interface FlatRow {
-  id: string; // "file:<path>" | "folder:<path>" | "folder:" (raíz Lyra)
+  /** Clave estable para React/DnD (no cambia al renombrar rutas). */
+  id: string;
   kind: "file" | "folder";
   path: string;
   depth: number;
   isRoot: boolean;
   /** false cuando algún ancestro está cerrado (la fila se colapsa a altura 0). */
   open: boolean;
+}
+
+export type RowKeyResolver = (kind: "file" | "folder", path: string) => string;
+
+function defaultRowKey(kind: "file" | "folder", path: string): string {
+  return kind === "folder" ? `folder:${path}` : `file:${path}`;
 }
 
 /**
@@ -26,7 +33,13 @@ export interface FlatRow {
  * Las carpetas de primer nivel se ordenan con `order["$top"]`, igual que hace el
  * render actual del explorador.
  */
-export function flattenVisible(tree: FolderNode, expanded: Record<string, boolean>, showRoot = true, folderOrder: Record<string, string[]> = {}): FlatRow[] {
+export function flattenVisible(
+  tree: FolderNode,
+  expanded: Record<string, boolean>,
+  showRoot = true,
+  folderOrder: Record<string, string[]> = {},
+  keyFor: RowKeyResolver = defaultRowKey,
+): FlatRow[] {
   const topFolders = [...tree.folders].sort((a, b) => {
     const positions = new Map((folderOrder["$top"] ?? []).map((path, index) => [path, index]));
     return (positions.get(a.path) ?? Number.MAX_SAFE_INTEGER) - (positions.get(b.path) ?? Number.MAX_SAFE_INTEGER)
@@ -36,36 +49,36 @@ export function flattenVisible(tree: FolderNode, expanded: Record<string, boolea
   // Cada nivel emite carpetas primero y luego archivos (comportamiento vigente).
   const walk = (node: FolderNode, depth: number, open: boolean) => {
     for (const child of node.folders) {
-      rows.push({ id: `folder:${child.path}`, kind: "folder", path: child.path, depth, isRoot: false, open });
+      rows.push({ id: keyFor("folder", child.path), kind: "folder", path: child.path, depth, isRoot: false, open });
       walk(child, depth + 1, open && (expanded[child.path] ?? true));
     }
     for (const file of node.files) {
-      rows.push({ id: `file:${file}`, kind: "file", path: file, depth, isRoot: false, open });
+      rows.push({ id: keyFor("file", file), kind: "file", path: file, depth, isRoot: false, open });
     }
   };
   if (showRoot) {
     const rootOpen = expanded[ROOT_FOLDER_ID] ?? true;
     // Fila «Lyra» (nunca arrastrable; solo recibe «Mover a la raíz»).
-    rows.push({ id: "folder:", kind: "folder", path: "", depth: 0, isRoot: true, open: true });
+    rows.push({ id: keyFor("folder", ""), kind: "folder", path: "", depth: 0, isRoot: true, open: true });
     for (const file of tree.files) {
-      rows.push({ id: `file:${file}`, kind: "file", path: file, depth: 1, isRoot: false, open: rootOpen });
+      rows.push({ id: keyFor("file", file), kind: "file", path: file, depth: 1, isRoot: false, open: rootOpen });
     }
     // Las carpetas de primer nivel son hermanas de la fila Lyra y siempre visibles;
     // solo los archivos directos de Lyra se colapsan con ella (comportamiento previo).
     for (const folder of topFolders) {
       const open = expanded[folder.path] ?? true;
-      rows.push({ id: `folder:${folder.path}`, kind: "folder", path: folder.path, depth: 0, isRoot: false, open: true });
+      rows.push({ id: keyFor("folder", folder.path), kind: "folder", path: folder.path, depth: 0, isRoot: false, open: true });
       walk(folder, 1, open);
     }
   } else {
     // Archivados: carpetas y archivos planos; carpetas de primer nivel según $top.
     for (const folder of topFolders) {
       const open = expanded[folder.path] ?? true;
-      rows.push({ id: `folder:${folder.path}`, kind: "folder", path: folder.path, depth: 0, isRoot: false, open: true });
+      rows.push({ id: keyFor("folder", folder.path), kind: "folder", path: folder.path, depth: 0, isRoot: false, open: true });
       walk(folder, 1, open);
     }
     for (const file of tree.files) {
-      rows.push({ id: `file:${file}`, kind: "file", path: file, depth: 0, isRoot: false, open: true });
+      rows.push({ id: keyFor("file", file), kind: "file", path: file, depth: 0, isRoot: false, open: true });
     }
   }
   return rows;

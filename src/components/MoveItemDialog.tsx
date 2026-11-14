@@ -1,11 +1,16 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { animated, useTransition } from "@react-spring/web";
-import { getFileBaseName } from "../utils/noteName.ts";
+import { invoke } from "@tauri-apps/api/core";
+import { getFileBaseName, getFileDirectory } from "../utils/noteName.ts";
+import { displayFolderName, displayNoteName } from "../utils/visibleNames.ts";
 import { moveLocalPath } from "../utils/pathOperations.ts";
 import { fileStore } from "../store/fileStore.ts";
+import useStorage from "../hooks/useStorage.ts";
+import { savePersistentPreferencesNow } from "../utils/persistentPreferences.ts";
+import { expandAncestorsForNote, expandParentPath, readFolderExpandedState } from "../utils/folderTree.ts";
 import { notification, themes } from "../utils/helpers.ts";
-import { invoke } from "@tauri-apps/api/core";
+import { commitVisibleName, resolveNewFolderPhysicalPath, validateVisibleEntryName } from "../utils/visibleNameOps.ts";
 import FolderPicker from "./FolderPicker.tsx";
 
 interface MoveItemDialogProps {
@@ -24,12 +29,13 @@ interface MoveItemDialogProps {
  */
 export default function MoveItemDialog({ isOpen, kind, itemName, onClose, excluded = [] }: MoveItemDialogProps) {
   const { isDay } = themes();
+  const { setItem } = useStorage();
   const folders = fileStore(state => state.folders);
   const [destination, setDestination] = useState("");
   const [busy, setBusy] = useState(false);
   const isFolder = kind === "folder";
-  const baseName = getFileBaseName(itemName);
-  const title = isFolder ? `Mover ${baseName} a...` : "Mover archivo";
+  const displayName = isFolder ? displayFolderName(itemName) : displayNoteName(itemName);
+  const title = isFolder ? `Mover ${displayName} a...` : "Mover archivo";
 
   const transitions = useTransition(isOpen, {
     from: { opacity: 0, transform: "scale(0.96) translateY(6px)" },
@@ -40,7 +46,8 @@ export default function MoveItemDialog({ isOpen, kind, itemName, onClose, exclud
 
   useEffect(() => {
     if (!isOpen) return;
-    setDestination("");
+    // Preseleccionar el directorio padre actual (raíz = "").
+    setDestination(getFileDirectory(itemName));
   }, [isOpen, itemName]);
 
   useEffect(() => {
@@ -68,19 +75,57 @@ export default function MoveItemDialog({ isOpen, kind, itemName, onClose, exclud
   }, [isOpen]);
 
   async function createFolder(parent: string, name: string): Promise<string> {
-    const path = parent ? `${parent}/${name}` : name;
-    await invoke("create_folder", { relativePath: path });
-    fileStore.getState().setFolders([...fileStore.getState().folders, path]);
-    return path;
+    const validation = validateVisibleEntryName(name, "folder");
+    if (!validation.ok) throw new Error(validation.reason ?? "El nombre no es válido");
+    const { physicalPath, visibleSegment } = resolveNewFolderPhysicalPath(name, parent);
+    await invoke("create_folder", { relativePath: physicalPath });
+    fileStore.getState().setFolders([...fileStore.getState().folders, physicalPath]);
+    // Confirmar metadatos visibles tras la creación física.
+    commitVisibleName(physicalPath, "folder", visibleSegment);
+    if (parent) {
+      const nextExpanded = expandParentPath(readFolderExpandedState(window.localStorage), parent);
+      setItem("folderExpanded", JSON.stringify(nextExpanded));
+    }
+    return physicalPath;
   }
 
   async function move() {
     if (busy) return;
+    const physicalBase = getFileBaseName(itemName);
+    const target = destination ? `${destination}/${physicalBase}` : physicalBase;
+    // Directorio actual: cerrar sin invocar moveLocalPath ni operaciones físicas.
+    if (target === itemName) {
+      onClose();
+      return;
+    }
     setBusy(true);
     try {
-      const target = destination ? `${destination}/${baseName}` : baseName;
       const warnings = await moveLocalPath(kind, itemName, target);
       warnings.forEach(warning => notification("error", warning));
+      // Leer el estado actualizado tras el remapeo de preferencias del movimiento
+      // (evita sobrescribir con un snapshot anterior). Aplicar expansión solo tras
+      // confirmar el movimiento físico y solo cuando es necesario.
+      const current = readFolderExpandedState(window.localStorage);
+      let next = current;
+      if (kind === "file") {
+        // Nota a raíz: desplegar «Lyra»; nota a carpeta: desplegar destino y ancestros sin forzar Lyra.
+        next = expandAncestorsForNote(current, destination);
+      } else {
+        // Carpeta movida a raíz: no modificar «Lyra»; dentro de otra: desplegar destino y ancestros.
+        // Se conserva el estado propio/descendientes ya remapeado por migratePreferences.
+        if (destination) {
+          next = expandParentPath(current, destination);
+        }
+      }
+      if (next !== current) {
+        setItem("folderExpanded", JSON.stringify(next));
+        try {
+          await savePersistentPreferencesNow();
+        } catch {
+          // El movimiento físico ya finalizó; la expansión visual es preferencia no crítica.
+          notification("error", "El elemento se movió, pero no se pudo guardar la expansión del explorador.");
+        }
+      }
       onClose();
     } catch (error) {
       notification("error", error instanceof Error ? error.message : String(error));

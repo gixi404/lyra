@@ -24,6 +24,34 @@ fn get_pending_open_files(state: tauri::State<'_, PendingOpenFiles>) -> Vec<Stri
     files
 }
 
+// Diagnóstico temporal de scroll (lista principal). Eliminar tras resolver el incidente.
+#[tauri::command]
+fn scroll_debug_clear() -> Result<(), String> {
+    use std::io::Write;
+    let path = "/tmp/lyra-scroll-debug.log";
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| format!("No se pudo limpiar {path}: {e}"))?;
+    writeln!(file, "=== lyra scroll debug start ===").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn scroll_debug_append(line: String) -> Result<(), String> {
+    use std::io::Write;
+    let path = "/tmp/lyra-scroll-debug.log";
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("No se pudo escribir {path}: {e}"))?;
+    writeln!(file, "{line}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn import_external_files(
     app: tauri::AppHandle,
@@ -712,6 +740,146 @@ mod tests {
 
         let _ = fs::remove_dir_all(base);
     }
+
+    fn make_lyra_base(name: &str) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!("lyra_{name}_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn run_create_note(base: &std::path::Path, file_name: &str, content: &str) -> Result<(), String> {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(create_note_in_dir(base, file_name, content, None))
+    }
+
+    fn snapshot_entries(base: &std::path::Path) -> Vec<String> {
+        fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let rel = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+                    out.push(rel.clone());
+                    if path.is_dir() {
+                        walk(&path, base, out);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(base, base, &mut out);
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn create_note_flow_creates_in_root_existing_folder_and_subfolder() {
+        let base = make_lyra_base("create_note_ok");
+        run_create_note(&base, "raiz.txt", "hola").unwrap();
+        assert_eq!(std::fs::read_to_string(base.join("raiz.txt")).unwrap(), "hola");
+
+        std::fs::create_dir(base.join("Carpeta")).unwrap();
+        run_create_note(&base, "Carpeta/dentro.md", "uno").unwrap();
+        assert_eq!(std::fs::read_to_string(base.join("Carpeta/dentro.md")).unwrap(), "uno");
+
+        std::fs::create_dir(base.join("Carpeta/Sub")).unwrap();
+        run_create_note(&base, "Carpeta/Sub/nieta.txt", "dos").unwrap();
+        assert_eq!(std::fs::read_to_string(base.join("Carpeta/Sub/nieta.txt")).unwrap(), "dos");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn create_note_flow_rejects_nonexistent_parent_without_creating_intermediates() {
+        let base = make_lyra_base("create_note_missing");
+        let before = snapshot_entries(&base);
+
+        let err = run_create_note(&base, "NoExiste/nota.txt", "x").unwrap_err();
+        assert!(err.contains("no existe") || err.contains("destino"), "{err}");
+        assert!(!base.join("NoExiste").exists(), "must not create missing parent");
+        assert_eq!(snapshot_entries(&base), before, "no residual dirs/files/records");
+
+        let err = run_create_note(&base, "A/B/C/nota.txt", "x").unwrap_err();
+        assert!(err.contains("no existe") || err.contains("destino"), "{err}");
+        assert!(!base.join("A").exists() && !base.join("A/B").exists() && !base.join("A/B/C").exists());
+        assert_eq!(snapshot_entries(&base), before, "no residual dirs/files/records");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn create_note_flow_rejects_duplicates_without_modifying_original() {
+        let base = make_lyra_base("create_note_dup");
+        std::fs::create_dir(base.join("Carpeta")).unwrap();
+        run_create_note(&base, "Carpeta/nota.txt", "original").unwrap();
+
+        let err = run_create_note(&base, "Carpeta/nota.txt", "nuevo").unwrap_err();
+        assert!(err.to_lowercase().contains("exist") || err.contains("Cannot create note"), "{err}");
+        assert_eq!(std::fs::read_to_string(base.join("Carpeta/nota.txt")).unwrap(), "original");
+
+        // Same name in different folder is allowed
+        std::fs::create_dir(base.join("Otra")).unwrap();
+        run_create_note(&base, "Otra/nota.txt", "distinta").unwrap();
+        assert_eq!(std::fs::read_to_string(base.join("Otra/nota.txt")).unwrap(), "distinta");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn create_note_flow_rejects_archived_destination_without_residuals() {
+        let base = make_lyra_base("create_note_archived");
+        std::fs::create_dir(base.join("Archivada")).unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        std::fs::write(
+            base.join("Archivada/.lyra_folder_id.json"),
+            format!("{{\"version\":1,\"id\":\"{id}\"}}"),
+        )
+        .unwrap();
+        let state = serde_json::json!({
+            "version": 2,
+            "archived": ["Archivada"],
+            "identities": { "Archivada": id }
+        });
+        std::fs::write(base.join(".lyra_folder_state.json"), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        let before = snapshot_entries(&base);
+
+        let err = run_create_note(&base, "Archivada/nota.txt", "x").unwrap_err();
+        assert!(err.contains("Restaura") || err.to_lowercase().contains("archiv"), "{err}");
+        assert!(!base.join("Archivada/nota.txt").exists());
+        let mut after = snapshot_entries(&base);
+        // state/marker files remain as before; no new note/dirs created
+        after.retain(|p| p != "Archivada/nota.txt");
+        assert_eq!(after, before, "no residual note or records created");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_note_flow_rejects_symlinked_parent_paths() {
+        let base = make_lyra_base("create_note_symlink");
+        let outside = std::env::temp_dir().join(format!("lyra_outside_note_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, base.join("link_fuera")).unwrap();
+        let before = snapshot_entries(&base);
+
+        let err = run_create_note(&base, "link_fuera/nota.txt", "x").unwrap_err();
+        assert!(err.contains("enlace") || err.contains("simb") || err.contains("no existe") || err.contains("destino"), "{err}");
+        assert!(!outside.join("nota.txt").exists(), "must not write through symlink");
+        assert_eq!(snapshot_entries(&base), before, "no residual dirs/files/records in workspace");
+
+        // Internal symlink directory should also be rejected
+        std::fs::create_dir(base.join("Real")).unwrap();
+        std::os::unix::fs::symlink(base.join("Real"), base.join("link_dentro")).unwrap();
+        let before2 = snapshot_entries(&base);
+        let err = run_create_note(&base, "link_dentro/nota.txt", "x").unwrap_err();
+        assert!(err.contains("enlace") || err.contains("simb") || err.contains("no existe") || err.contains("destino"), "{err}");
+        assert!(!base.join("Real/nota.txt").exists());
+        assert_eq!(snapshot_entries(&base), before2, "no residual note or records created");
+
+        let _ = std::fs::remove_dir_all(base);
+        let _ = std::fs::remove_dir_all(outside);
+    }
 }
 
 /// Modo de arranque minimizado (p. ej. pruebas automatizadas): la ventana se
@@ -813,6 +981,46 @@ async fn apply_native_update(
 }
 
 
+fn ensure_existing_note_destination(base_dir: &std::path::Path, file_name: &str) -> Result<(), String> {
+    let target = gdrive::sync::resolve_safe_path(base_dir, file_name)?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "Ruta de nota inválida".to_string())?;
+    let metadata = std::fs::symlink_metadata(parent)
+        .map_err(|_| "La carpeta de destino no existe".to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Err("La carpeta de destino no puede ser un enlace simbólico".to_string());
+    }
+    if !metadata.file_type().is_dir() {
+        return Err("La carpeta de destino no existe".to_string());
+    }
+    let canonical_base = base_dir
+        .canonicalize()
+        .map_err(|e| format!("Cannot inspect notes directory: {e}"))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| "La carpeta de destino no existe".to_string())?;
+    if !canonical_parent.starts_with(&canonical_base) {
+        return Err("La ruta de la nota intenta escapar del directorio base".to_string());
+    }
+    Ok(())
+}
+
+async fn create_note_in_dir(
+    lyra_dir: &std::path::Path,
+    file_name: &str,
+    content: &str,
+    account_key: Option<&str>,
+) -> Result<(), String> {
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    ensure_existing_note_destination(lyra_dir, file_name)?;
+    folders::ensure_active_parent_at(lyra_dir, file_name)?;
+    gdrive::sync::ensure_safe_parent_hierarchy(lyra_dir, file_name)?;
+    gdrive::sync::get_file_lock_coordinator().with_file_lock(file_name, || {
+        gdrive::provenance::create_local_note(lyra_dir, file_name, content.as_bytes(), account_key)
+    })
+}
+
 #[tauri::command]
 async fn create_note(
     app: tauri::AppHandle,
@@ -821,16 +1029,14 @@ async fn create_note(
 ) -> Result<(), String> {
     let doc_dir = app.path().document_dir().map_err(|e| format!("Cannot resolve Documents: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
-    folders::ensure_active_parent_at(&lyra_dir, &file_name)?;
-    gdrive::sync::ensure_safe_parent_hierarchy(&lyra_dir, &file_name)?;
     let account = gdrive::auth::verify_current_account(&app).ok();
-    gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
-        gdrive::provenance::create_local_note(
-            &lyra_dir, &file_name, content.as_bytes(),
-            account.as_ref().map(|a| a.account_key.as_str()),
-        )
-    })
+    create_note_in_dir(
+        &lyra_dir,
+        &file_name,
+        &content,
+        account.as_ref().map(|a| a.account_key.as_str()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1140,6 +1346,8 @@ fn main() {
             apply_native_update,
             create_internal_welcome,
             check_and_drain_recovered_notes,
+            scroll_debug_clear,
+            scroll_debug_append,
             gdrive::get_backend_build_info,
             gdrive::gdrive_login,
             gdrive::gdrive_logout,

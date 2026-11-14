@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   buildFolderTree,
   defaultFolderExpandedState,
+  expandAncestorsForNote,
   expandFolderAncestors,
+  expandParentPath,
   insertEntry,
   parseFolderExpandedState,
   readFolderExpandedState,
@@ -190,4 +192,30 @@ test("folder move (entire folder) remaps fileOrder keys and values", () => {
   assert.deepEqual(next["Z/Dest"], ["Z/Dest/n1.md", "Z/Dest/n2.md"]);
   assert.deepEqual(next["Z/Dest/Sub"], ["Z/Dest/Sub/m1.md"]);
   assert.deepEqual(next["B"], ["B/x.md"]);
+});
+
+test("creating a subfolder expands its parent and ancestors without forcing Lyra root", () => {
+  const current = { [ROOT_FOLDER_ID]: false, "A": false, "A/B": false, "X": true };
+  assert.deepEqual(expandParentPath(current, "A/B"), {
+    [ROOT_FOLDER_ID]: false, "A": true, "A/B": true, "X": true,
+  });
+});
+
+test("creating a first-level folder does not change expansion state", () => {
+  const current = { [ROOT_FOLDER_ID]: false, "A": false };
+  assert.deepEqual(expandParentPath(current, ""), current);
+});
+
+test("creating a note in root expands Lyra without changing unrelated folders", () => {
+  const current = { [ROOT_FOLDER_ID]: false, "A": false, "B/C": true };
+  assert.deepEqual(expandAncestorsForNote(current, ""), {
+    [ROOT_FOLDER_ID]: true, "A": false, "B/C": true,
+  });
+});
+
+test("creating a note in a collapsed folder expands that folder and its ancestors without forcing Lyra", () => {
+  const current = { [ROOT_FOLDER_ID]: false, "A": false, "A/B": false, "X": true };
+  assert.deepEqual(expandAncestorsForNote(current, "A/B"), {
+    [ROOT_FOLDER_ID]: false, "A": true, "A/B": true, "X": true,
+  });
 });

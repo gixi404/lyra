@@ -91,13 +91,14 @@ test("4. El nombre nunca se modifica aunque se apruebe o se rechace", () => {
   }
 });
 
-test("4. El flujo de creación no sustituye caracteres ni expande carpetas", () => {
+test("4. El flujo de creación no sustituye caracteres ni expande carpetas al crear archivos", () => {
   const form = read("src/components/Form.tsx");
   assert.equal(form.includes("sanitizeFileName"), false);
-  assert.equal(form.includes("expandFolderAncestors"), false);
-  assert.equal(form.includes('setItem("folderExpanded"'), false, "crear un archivo no debe escribir folderExpanded");
   const menuFile = read("src/components/MenuFile.tsx");
   assert.equal(menuFile.includes("sanitizeFileName"), false);
+  const fileFlow = form.slice(form.indexOf("function handleCreateConfirm"), form.indexOf("async function createFolder"));
+  assert.equal(fileFlow.includes('setItem("folderExpanded"'), false, "crear un archivo no debe escribir folderExpanded");
+  assert.equal(fileFlow.includes("expandParentPath"), false, "crear un archivo no debe expandir carpetas");
 });
 
 test("4. Rust mantiene la política de compatibilidad como autoridad", () => {
@@ -124,12 +125,16 @@ test("5. El selector no aplica sangría de hijo a las carpetas de primer nivel",
   assert.equal(/12 \+ \(folder.split/.test(select), false);
 });
 
-// --- Problema 3: crear un archivo no expande Lyra ------------------------------
+// --- Problema 3: crear un archivo no expande Lyra; crear subcarpetas sí expande el padre ---
 
-test("3. El formulario de creación no expande automáticamente ninguna carpeta", () => {
+test("3. El formulario expande el padre solo al crear subcarpetas, no al crear archivos", () => {
   const form = read("src/components/Form.tsx");
   assert.equal(form.includes("ROOT_FOLDER_ID"), false, "no debe existir expansión forzada de la carpeta virtual Lyra");
-  assert.equal(/expandFolderAncestors|setItem\(.folderExpanded/.test(form), false);
+  const fileFlow = form.slice(form.indexOf("function handleCreateConfirm"), form.indexOf("async function createFolder"));
+  assert.equal(/expandParentPath|setItem\(.folderExpanded/.test(fileFlow), false, "crear un archivo no debe expandir carpetas");
+  const folderFlow = form.slice(form.indexOf("async function createFolder"));
+  assert.equal(folderFlow.includes("expandParentPath"), true, "crear una subcarpeta debe expandir su padre");
+  assert.equal(folderFlow.includes('setItem("folderExpanded"'), true, "crear una subcarpeta debe persistir la expansión");
 });
 
 // --- Problema 2: el alto del padre sigue al contenido --------------------------

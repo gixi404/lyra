@@ -15,7 +15,7 @@ import type { Component } from "../utils/types.ts";
 import { AlertCircle } from "lucide-react";
 import { includeRetainedExits } from "../utils/listExit.ts";
 import { deleteArchivedBatch } from "../utils/archiveDeletion.ts";
-import { noteLabel, noteSuccessMessage } from "../utils/noteName.ts";
+import { displayNoteLabel, displayNoteName, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
 import { logger } from "../utils/logger.ts";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
@@ -101,7 +101,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
           notification("error", `Se eliminaron ${deleted.length} de ${toDelete.length} notas archivadas`);
         } else {
           notification("success", toDelete.length === 1
-            ? noteSuccessMessage(toDelete[0], "deleted")
+            ? displayNoteSuccessMessage(toDelete[0], "deleted")
             : "Archivos eliminados permanentemente");
         }
         fileStore.getState().scheduleExitAnimation(deleted, () => {
@@ -112,7 +112,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
         });
       } else if (failed.length > 0) {
         notification("error", toDelete.length === 1
-          ? `No se pudo eliminar ${noteLabel(toDelete[0])}`
+          ? `No se pudo eliminar ${displayNoteLabel(toDelete[0])}`
           : "No se pudo eliminar ninguna nota archivada");
       }
     } finally {
@@ -131,14 +131,12 @@ const ListFiles = memo(({ arr }: Props): Component => {
       ? Array.from(new Set([...paperFiles, ...arr.filter(inArchivedFolder)]))
       : arr.filter(f => !paperSet.has(f) && !inArchivedFolder(f));
 
-    const indexedSource = current.map(name => ({
-      name,
-      normalizedName: normalize(name),
-    }));
-
-    const filtered = current.filter((_, index) =>
-      indexedSource[index].normalizedName.includes(normalizedSearch)
-    );
+    const filtered = current.filter(name => {
+      if (normalizedSearch.length === 0) return true;
+      const physical = normalize(name);
+      const visible = normalize(displayNoteName(name));
+      return physical.includes(normalizedSearch) || visible.includes(normalizedSearch);
+    });
 
     const sorted = filtered.sort((a, b) => {
       let res = 0;
@@ -199,11 +197,12 @@ const ListFiles = memo(({ arr }: Props): Component => {
     return (
       <>
         <FolderExplorer folders={visibleFolders} files={archivedFiles} showRoot={false} archivedPaths={archivedFolders}
-          renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder isExiting={exitingFiles.includes(name)} />} />
+          renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder individuallyArchived={paperSet.has(name)} isExiting={exitingFiles.includes(name)} />} />
         {separateFiles.map((n: string) => (
           <ItemFile
             fileName={n}
             key={n}
+            individuallyArchived={paperSet.has(n)}
             isExiting={exitingFiles.includes(n)}
           />
         ))}

@@ -37,6 +37,10 @@ export const PERSISTENT_KEYS = [
   "folderOrder",
   "fileOrder",
   "folderExpanded",
+  "folderColors",
+  "folderIcons",
+  "noteVisibleNames",
+  "folderVisibleNames",
   "paper",
   "language",
   "lyra_initialized",
@@ -61,6 +65,10 @@ export interface PreferencesData {
   folderOrder?: string;
   fileOrder?: string;
   folderExpanded?: string;
+  folderColors?: string;
+  folderIcons?: string;
+  noteVisibleNames?: string;
+  folderVisibleNames?: string;
   paper?: string[];
   language?: string;
   lyra_initialized?: string | boolean;

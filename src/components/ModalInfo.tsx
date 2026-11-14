@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import useFile, { type FileStats } from "../hooks/useFile.ts";
 import { themes } from "../utils/helpers.ts";
+import { displayNoteName } from "../utils/visibleNames.ts";
 import type { Component } from "../utils/types.ts";
 import { logger } from "../utils/logger.ts";
 import InfoModal, { InfoRow } from "./InfoModal.tsx";
@@ -49,7 +50,7 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component {
     };
   }, [isOpen, fileName, getFileStats]);
 
-  const displayName = fileName.replace(/\.(txt|md)$/i, "");
+  const displayName = displayNoteName(fileName);
 
   return (
     <InfoModal

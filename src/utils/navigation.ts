@@ -1,5 +1,6 @@
 import { PAGES } from "./consts.ts";
 import { logger } from "./logger.ts";
+import { scrollDebug } from "./scrollDebug.ts";
 
 export type NavigateHandler = (path: string) => void | Promise<unknown>;
 
@@ -8,6 +9,7 @@ let pendingNavigation: string | null = null;
 
 function fallbackLocation(path: string): void {
   if (typeof window !== "undefined" && window.location && !pathIs(path)) {
+    scrollDebug("navigation.fallbackLocation", { to: path, from: window.location.pathname });
     window.location.pathname = path;
   }
 }

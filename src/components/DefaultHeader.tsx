@@ -6,6 +6,7 @@ import { configStore } from "../store/configStore.ts";
 import type { Component } from "../utils/types.ts";
 import { memo, type MouseEvent } from "react";
 import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
+import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 
 let activeThemeAnim: Animation | null = null;
 
@@ -178,6 +179,8 @@ function DefaultHeader(): Component {
         {pathIs(PAGES.file) && (
           <button
             onClick={() => {
+              scrollDebug("DefaultHeader.backFromFile.click");
+              snapshotScrollState("DefaultHeader.backFromFile.click");
               goTo(PAGES.list);
             }}
             className={`p-2 rounded-xl transition-all duration-150 active:scale-95 shadow-sm border cursor-pointer ${

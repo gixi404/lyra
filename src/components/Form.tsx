@@ -6,6 +6,8 @@ import CreateNoteDialog from "./CreateNoteDialog.tsx";
 import { invoke } from "@tauri-apps/api/core";
 import { configStore } from "../store/configStore.ts";
 import { fileStore } from "../store/fileStore.ts";
+import useStorage from "../hooks/useStorage.ts";
+import { expandAncestorsForNote, expandParentPath, readFolderExpandedState } from "../utils/folderTree.ts";
 import { PAGES } from "../utils/consts.ts";
 import { searchStore } from "../store/searchStore.ts";
 import { twMerge } from "tailwind-merge";
@@ -17,16 +19,15 @@ import {
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  getEditableFileName,
-  nameIsValid,
-  validateFileName,
   navigation,
   normalize,
   notification,
   themes,
 } from "../utils/helpers.ts";
+import { commitVisibleName, resolveNewFolderPhysicalPath, resolveNewNotePhysicalPath, validateVisibleEntryName } from "../utils/visibleNameOps.ts";
+import { displayNoteLabel, displayNoteName } from "../utils/visibleNames.ts";
 import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
-import { noteLabel } from "../utils/noteName.ts";
+import { getFileDirectory } from "../utils/noteName.ts";
 import type { Component, File } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
 
@@ -72,7 +73,8 @@ function Form(): Component {
     { goTo } = navigation(),
     { isDay } = themes(),
     { myPaper } = usePreferences(),
-    { createFile, resolveDisplayName, readFile } = useFile(),
+    { createFile, readFile } = useFile(),
+    { setItem } = useStorage(),
     searchInputRef = useRef<HTMLInputElement>(null),
     { paperIsOpen, setPaperIsOpen } = configStore(
       useShallow(state => ({
@@ -100,11 +102,7 @@ function Form(): Component {
     ),
     paperFiles = useMemo(() => myPaper(files), [files, myPaper]),
     paperSet = useMemo(() => new Set(paperFiles), [paperFiles]),
-    hasArchivedFiles = paperFiles.length > 0,
-    isRepeated = (fileName: string): boolean => {
-      const nextDisplayName: string = resolveDisplayName(fileName);
-      return files.some((name: string) => name === nextDisplayName);
-    };
+    hasArchivedFiles = paperFiles.length > 0;
 
   useEffect(() => {
     const openInFolder = (event: Event) => {
@@ -168,7 +166,9 @@ function Form(): Component {
       e.preventDefault();
       const source = paperIsOpen ? paperFiles : files.filter(f => !paperSet.has(f));
       const normalizedSearch = normalize(search);
-      const matches = source.filter(f => normalize(f).includes(normalizedSearch));
+      const matches = source.filter(f =>
+        normalize(f).includes(normalizedSearch) || normalize(displayNoteName(f)).includes(normalizedSearch)
+      );
 
       if (matches.length === 1) {
         void (async () => {
@@ -180,36 +180,42 @@ function Form(): Component {
             setSelectedFile({ name: fileName, content: fileContent });
             goTo(PAGES.file);
           } catch {
-            notification("error", `No se pudo abrir ${noteLabel(matches[0])}`);
+            notification("error", `No se pudo abrir ${displayNoteLabel(matches[0])}`);
           }
         })();
       }
     }
   }
 
-  async function fileManagement(file: File): Promise<void> {
+  async function fileManagement(file: File, visibleSegment: string): Promise<void> {
     try {
       setListScroll(getScrollPos("active"), "active");
       const displayName: string = await createFile(file.name, file.content);
+      // Confirmar nombre visible tras la creación física/identidad para que persista exactamente
+      // (la detección de reutilización no debe eliminar el nombre visible recién asignado).
+      commitVisibleName(displayName, "file", visibleSegment);
+      const noteDir = getFileDirectory(displayName);
+      const nextExpanded = expandAncestorsForNote(readFolderExpandedState(window.localStorage), noteDir);
+      setItem("folderExpanded", JSON.stringify(nextExpanded));
       const nextFile: File = { ...file, name: displayName };
       setSelectedFile(nextFile);
       goTo(PAGES.file);
     } catch {
-      notification("error", `No se pudo crear ${noteLabel(file.name)}`);
+      notification("error", `No se pudo crear ${displayNoteLabel(file.name)}`);
     }
   }
 
   function handleCreateConfirm(value?: string, folder = ""): void {
-    if (!value) return;
-    const nextName = value;
-
-    if (!nameIsValid(nextName)) {
+    if (value === undefined || value === null) return;
+    const validation = validateVisibleEntryName(value, "file");
+    if (!validation.ok) {
+      notification("error", validation.reason ?? d.InvalidName);
       return;
     }
 
-    const relativeName = folder ? `${folder}/${nextName}` : nextName;
-    if (isRepeated(relativeName)) {
-      notification("error", `${noteLabel(nextName)} ya existe`);
+    const { physicalPath, visibleSegment } = resolveNewNotePhysicalPath(value, folder);
+    if (files.includes(physicalPath)) {
+      notification("error", `${displayNoteLabel(physicalPath)} ya existe`);
       return;
     }
 
@@ -217,23 +223,36 @@ function Form(): Component {
     if (paperIsOpen) {
       setPaperIsOpen(false);
     }
-    const titleWithoutExtension = getEditableFileName(nextName);
-    const initialContent = `# ${titleWithoutExtension}\n\n`;
+    // Derive heading from visible segment without hidden extension; keep technical ext out of heading.
+    let headingTitle: string;
+    const lowerVis = visibleSegment.toLowerCase();
+    if (lowerVis.endsWith(".txt") || lowerVis.endsWith(".md")) {
+      headingTitle = visibleSegment.slice(0, -4);
+    } else {
+      const dot = visibleSegment.lastIndexOf(".");
+      headingTitle = dot > 0 ? visibleSegment.slice(0, dot) : visibleSegment;
+    }
+    const initialContent = `# ${headingTitle}\n\n`;
     const file: File = {
-      name: relativeName,
+      name: physicalPath,
       content: initialContent,
       initialCaretPos: initialContent.length,
     };
-    void fileManagement(file);
+    void fileManagement(file, visibleSegment);
   }
 
   async function createFolder(parent: string, name: string): Promise<string> {
-    const validation = validateFileName(name);
-    if (!validation.ok) throw new Error(validation.reason ?? "Nombre de carpeta inválido");
-    const path = parent ? `${parent}/${name}` : name;
-    await invoke("create_folder", { relativePath: path });
-    fileStore.getState().setFolders([...fileStore.getState().folders, path]);
-    return path;
+    const validation = validateVisibleEntryName(name, "folder");
+    if (!validation.ok) throw new Error(validation.reason ?? d.InvalidName);
+    const { physicalPath, visibleSegment } = resolveNewFolderPhysicalPath(name, parent);
+    await invoke("create_folder", { relativePath: physicalPath });
+    fileStore.getState().setFolders([...fileStore.getState().folders, physicalPath]);
+    commitVisibleName(physicalPath, "folder", visibleSegment);
+    if (parent) {
+      const nextExpanded = expandParentPath(readFolderExpandedState(window.localStorage), parent);
+      setItem("folderExpanded", JSON.stringify(nextExpanded));
+    }
+    return physicalPath;
   }
 
   function handleSubmit(e: FormEvent): void {

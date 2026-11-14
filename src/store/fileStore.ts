@@ -39,6 +39,7 @@ export interface FileStoreState {
   setEmptyingArchived: (busy: boolean) => void;
   statsMap: Record<string, FileItemStats>;
   isInitialized: boolean;
+  listingGeneration: number;
   exitingFiles: string[];
   addExitingFile: (name: string) => void;
   addExitingFiles: (names: string[]) => void;
@@ -89,6 +90,7 @@ export const fileStore = create<FileStoreState>(set => ({
   })),
   statsMap: {},
   isInitialized: false,
+  listingGeneration: 0,
   exitingFiles: [],
   addExitingFile: (name: string) =>
     set(state => ({
@@ -231,5 +233,5 @@ export const fileStore = create<FileStoreState>(set => ({
   },
   fileIsEdited: false,
   editedFile: () =>
-    set(state => ({ fileIsEdited: !state.fileIsEdited })),
+    set(state => ({ fileIsEdited: !state.fileIsEdited, listingGeneration: state.listingGeneration + 1 })),
 }));
