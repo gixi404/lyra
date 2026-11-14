@@ -142,9 +142,6 @@ const ListFiles = memo(({ arr }: Props): Component => {
       let res = 0;
       if (sortOption === "mtime") {
         res = (statsMap[b]?.mtime || 0) - (statsMap[a]?.mtime || 0);
-      } else if (sortOption === "manual") {
-        // La posición manual por carpeta se aplica en buildFolderTree; aquí solo el fallback determinista.
-        res = (statsMap[b]?.mtime || 0) - (statsMap[a]?.mtime || 0);
       } else if (sortOption === "az") {
         res = a.localeCompare(b);
       } else if (sortOption === "za") {
@@ -190,7 +187,6 @@ const ListFiles = memo(({ arr }: Props): Component => {
     }
 
     if (!paperIsOpen) return <>{folderListingWarnings.length > 0 && <li role="alert" className="list-none p-3 text-amber-400">No se pudieron leer todas las carpetas o entradas. Comprueba los permisos del directorio de Lyra.</li>}<FolderExplorer folders={visibleFolders} files={files}
-      manualOrder={sortOption === "manual"}
       renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} isExiting={exitingFiles.includes(name)} />} /></>;
     const archivedFiles = files.filter(inArchivedFolder);
     const separateFiles = files.filter(name => !inArchivedFolder(name));

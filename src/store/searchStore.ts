@@ -10,12 +10,12 @@ function resetContainerScroll(): void {
   } catch {}
 }
 
-export type SortOptionId = "mtime" | "az" | "za" | "recent" | "oldest" | "random" | "manual";
+export type SortOptionId = "mtime" | "az" | "za" | "recent" | "oldest" | "random";
 
 const getInitialSortOption = (): SortOptionId => {
   try {
     const saved = localStorage.getItem("sortOption");
-    if (saved && ["mtime", "az", "za", "recent", "oldest", "random", "manual"].includes(saved)) {
+    if (saved && ["mtime", "az", "za", "recent", "oldest", "random"].includes(saved)) {
       return saved as SortOptionId;
     }
   } catch {}

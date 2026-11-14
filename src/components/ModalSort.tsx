@@ -19,7 +19,6 @@ const SORT_OPTIONS: { id: SortOptionId; label: string }[] = [
   { id: "recent", label: "Más reciente" },
   { id: "oldest", label: "Más antiguo" },
   { id: "random", label: "Aleatorio" },
-  { id: "manual", label: "Manual" },
 ];
 
 function ModalSort({ isOpen, onClose }: ModalSortProps): Component | null {
