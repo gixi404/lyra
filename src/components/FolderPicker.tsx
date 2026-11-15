@@ -1,7 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
+import { buildFolderTree, type FolderOrder } from "../utils/folderTree";
 import { themes } from "../utils/helpers";
 import FolderSelect from "./FolderSelect";
+
+function readFolderOrder(): FolderOrder {
+  try {
+    const raw = window.localStorage.getItem("folderOrder");
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as FolderOrder) : {};
+  } catch {
+    return {};
+  }
+}
+
+function flattenFolderPaths(node: { folders: Array<{ path: string; folders: unknown[] }> }): string[] {
+  const paths: string[] = [];
+  for (const child of node.folders as Array<{ path: string; folders: Array<{ path: string; folders: unknown[] }> }>) {
+    paths.push(child.path);
+    paths.push(...flattenFolderPaths(child));
+  }
+  return paths;
+}
 
 export default function FolderPicker({ folders, value, onChange, onCreateFolder, excluded = [], label = "Carpeta de destino" }: {
   folders: string[];
@@ -18,9 +39,28 @@ export default function FolderPicker({ folders, value, onChange, onCreateFolder,
   const inputRef = useRef<HTMLInputElement>(null);
   const { isDay } = themes();
   const archivedFolders = fileStore(state => state.archivedFolders);
+  const prefTick = configStore(state => state.prefTick);
   const available = folders.filter(path =>
     !excluded.some(item => path === item || path.startsWith(`${item}/`))
     && !archivedFolders.some(item => path === item || path.startsWith(`${item}/`)));
+  // Mantener el mismo orden visual que el explorador (respeta folderOrder manual y orden de árbol).
+  const orderedAvailable = useMemo(() => {
+    const availableSet = new Set(available);
+    if (availableSet.size === 0) return [];
+    const order = readFolderOrder();
+    // Construir árbol con todas las carpetas conocidas para preservar el orden relativo ($top/hijos).
+    const tree = buildFolderTree(folders, [], order);
+    const ordered = flattenFolderPaths(tree).filter(path => availableSet.has(path));
+    // Incluir por seguridad cualquier carpeta disponible ausente en el árbol/orden (fallback estable).
+    if (ordered.length !== available.length) {
+      const seen = new Set(ordered);
+      for (const path of available) {
+        if (!seen.has(path)) ordered.push(path);
+      }
+    }
+    return ordered;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-lee folderOrder de localStorage ante cambios de preferencias
+  }, [available, folders, prefTick]);
 
   useEffect(() => {
     if (creating) inputRef.current?.focus();
@@ -46,7 +86,7 @@ export default function FolderPicker({ folders, value, onChange, onCreateFolder,
     <div className="space-y-2">
       {label ? <label className="block text-sm">{label}</label> : null}
       <FolderSelect
-        folders={available}
+        folders={orderedAvailable}
         value={value}
         onChange={onChange}
         onNewFolder={() => setCreating(true)}

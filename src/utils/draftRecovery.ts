@@ -1,9 +1,11 @@
 import { normalizeText } from "./editorSyncCoordinator.ts";
-import { contentHash, type DraftDiskPayload } from "./draftStore.ts";
+import { contentHash, draftIdFor, type DraftDiskPayload } from "./draftStore.ts";
+import type { EOLMetadata } from "./eol.ts";
 
 export interface DraftPayload {
   content: string;
   updatedAt: number;
+  eolMetadata?: EOLMetadata;
 }
 
 /**
@@ -190,7 +192,11 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
     }
     // El canónico cambió respecto de la base del borrador: nunca auto-aplicar.
     // Ir a rescate por copia verificada (paso 5).
-    if (diskDraft.baseHash !== contentHash(diskContent)) {
+    const isLegacyDraft = diskDraft.eolMetadata === undefined;
+    const baseMatches = diskDraft.baseHash === contentHash(diskContent) ||
+      (isLegacyDraft && diskDraft.baseHash === draftIdFor(diskContent));
+
+    if (!baseMatches) {
       // Los contenidos difieren y la base no coincide: rescate directo.
     } else {
       // Revisión viva sobre la misma base: usar borrador.

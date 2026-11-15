@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { logger } from "./logger.ts";
 import { canAttachDraft, getOpenedNoteIdentity } from "./noteIdentity.ts";
+import { getNoteEOL, type EOLMetadata } from "./eol.ts";
 
 /** M9 — Respaldo persistente de borradores con cola por nota y estado observable. */
 
@@ -15,6 +16,7 @@ export interface DraftDiskPayload {
   lastSavedHash: string;
   updatedAt: number;
   logicalIdentity?: string;
+  eolMetadata?: EOLMetadata;
 }
 
 export type DraftProtection =
@@ -40,9 +42,16 @@ export function draftIdFor(noteName: string): string {
   return h.toString(16).padStart(16, "0");
 }
 
-/** Hash de contenido (FNV-1a 64, mismo que draftId). Base para baseHash/lastSavedHash. */
+/** Hash de contenido físico (FNV-1a 64). Base para baseHash/lastSavedHash sin trim para preservar BOM y espacios. */
 export function contentHash(content: string): string {
-  return draftIdFor(content);
+  const key = content.normalize("NFC");
+  let h = 0xcbf29ce484222325n;
+  const enc = new TextEncoder().encode(key);
+  for (const b of enc) {
+    h ^= BigInt(b);
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, "0");
 }
 
 const queues = new Map<string, Promise<void>>();
@@ -198,9 +207,16 @@ function nextGeneration(draftId: string): number {
 export function flushDraftSync(noteName: string, content: string): boolean {
   if (!noteName) return false;
   try {
+    const logicalIdentity = getOpenedNoteIdentity(noteName);
+    const eolRecord = getNoteEOL(logicalIdentity, noteName);
     window.localStorage.setItem(
       draftKey(noteName),
-      JSON.stringify({ content, updatedAt: Date.now(), logicalIdentity: getOpenedNoteIdentity(noteName) }),
+      JSON.stringify({
+        content,
+        updatedAt: Date.now(),
+        logicalIdentity,
+        eolMetadata: eolRecord?.metadata,
+      }),
     );
     setProtection("protected_ls");
     return true;
@@ -225,6 +241,8 @@ async function writeDraftDisk(noteName: string, content: string): Promise<void> 
     const revision = (revisions.get(draftId) ?? 0) + 1;
     // "" = base desconocida -> recuperación conservadora (rescate), nunca auto-apply.
     const baseHash = baseHashes.get(draftId) ?? "";
+    const logicalIdentity = getOpenedNoteIdentity(noteName);
+    const eolRecord = getNoteEOL(logicalIdentity, noteName);
     const payload: DraftDiskPayload = {
       v: 1,
       noteName,
@@ -235,7 +253,8 @@ async function writeDraftDisk(noteName: string, content: string): Promise<void> 
       lastSavedRevision: clearedRevision.get(draftId) ?? 0,
       lastSavedHash: baseHash,
       updatedAt: Date.now(),
-      logicalIdentity: getOpenedNoteIdentity(noteName),
+      logicalIdentity,
+      eolMetadata: eolRecord?.metadata,
     };
     if (revision <= (clearedRevision.get(draftId) ?? 0)) {
       // Escritura tardía tras clear: descartar (Riesgo B).
@@ -265,9 +284,16 @@ export function writeDraft(noteName: string, draftContent: string): void {
   const overCap = byteLength(draftContent) > DRAFT_LOCALSTORAGE_CAP_BYTES;
   if (!overCap) {
     try {
+      const logicalIdentity = getOpenedNoteIdentity(noteName);
+      const eolRecord = getNoteEOL(logicalIdentity, noteName);
       window.localStorage.setItem(
         draftKey(noteName),
-        JSON.stringify({ content: draftContent, updatedAt: Date.now(), logicalIdentity: getOpenedNoteIdentity(noteName) }),
+        JSON.stringify({
+          content: draftContent,
+          updatedAt: Date.now(),
+          logicalIdentity,
+          eolMetadata: eolRecord?.metadata,
+        }),
       );
       setProtection("protected_ls");
       return;
@@ -294,7 +320,10 @@ export function markDraftSaved(noteName: string, savedContent: string, savedRevi
     await seedDraftRevision(noteName);
     if (capturedGeneration !== currentGeneration(draftId)) return;
     if (savedRevision < (clearedRevision.get(draftId) ?? 0)) return;
-    const savedHash = savedContent ? contentHash(savedContent) : (baseHashes.get(draftId) ?? "");
+    const logicalIdentity = getOpenedNoteIdentity(noteName);
+    const eolRecord = getNoteEOL(logicalIdentity, noteName);
+    const physicalSaved = eolRecord?.rawOriginal ?? savedContent;
+    const savedHash = physicalSaved ? contentHash(physicalSaved) : (baseHashes.get(draftId) ?? "");
     const existing = await readDraftDisk(noteName);
     if (existing && existing.revision > savedRevision) {
       // Hay revisión posterior (B) pendiente: no borrarla; solo avanzar
@@ -305,6 +334,8 @@ export function markDraftSaved(noteName: string, savedContent: string, savedRevi
         lastSavedRevision: Math.max(existing.lastSavedRevision, savedRevision),
         lastSavedHash: savedHash,
         updatedAt: Date.now(),
+        logicalIdentity,
+        eolMetadata: eolRecord?.metadata ?? existing.eolMetadata,
       };
       clearedRevision.set(draftId, Math.max(clearedRevision.get(draftId) ?? 0, savedRevision));
       baseHashes.set(draftId, savedHash);
@@ -327,6 +358,8 @@ export function markDraftSaved(noteName: string, savedContent: string, savedRevi
       lastSavedRevision: clearedRevision.get(draftId) ?? 0,
       lastSavedHash: savedHash,
       updatedAt: Date.now(),
+      logicalIdentity,
+      eolMetadata: eolRecord?.metadata,
     };
     try {
       await saveDraftDisk(payload);

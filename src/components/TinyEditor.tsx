@@ -1010,19 +1010,9 @@ function TinyEditor({
           const renderedContent = renderParagraphContent(p, paragraphStartIndices[i] || 0);
           const isLast = i === paragraphs.length - 1;
 
-          // Si el párrafo está vacío o termina en espacios, usamos \u200B (espacio de ancho cero)
+          // Si el párrafo está vacío, usamos \u200B (espacio de ancho cero)
           // para garantizar que WebKit nunca colapse la altura de la línea (line-height)
-          const safeContent =
-            p.length === 0
-              ? "\u200B"
-              : p.endsWith(" ")
-              ? (
-                  <>
-                    {renderedContent}
-                    {"\u200B"}
-                  </>
-                )
-              : renderedContent;
+          const safeContent = p.length === 0 ? "\u200B" : renderedContent;
 
           const activeColor = isDay ? "rgba(31, 41, 55, 1)" : "rgba(229, 231, 235, 1)";
           const inactiveColor = isDay ? "rgba(31, 41, 55, 0.28)" : "rgba(229, 231, 235, 0.28)";

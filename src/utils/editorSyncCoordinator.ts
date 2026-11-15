@@ -1,5 +1,6 @@
 import { getUpdateInstallInProgress } from "./editorPersistence.ts";
 import { flushDraftAsync } from "./draftStore.ts";
+import { normalizeToLF } from "./eol.ts";
 
 export interface EditorSyncCoordinatorOptions {
   fileName: string;
@@ -25,7 +26,7 @@ export interface EditorSyncCoordinatorOptions {
 }
 
 export function normalizeText(text: string): string {
-  return text.replace(/\r\n/g, "\n");
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 export function generateConflictFileName(
@@ -371,12 +372,16 @@ export class EditorSyncCoordinator {
 
       if (this.fileName !== currentFile) return;
 
+      // readFileContent puede devolver contenido físico (CRLF/CR/BOM) desde la fuente real;
+      // el coordinador y el editor deben operar siempre sobre LF lógico.
+      const freshLogicalContent = normalizeToLF(freshContent).text;
+
       if (!this.isDirty) {
         // Caso A: El usuario no tenía ediciones pendientes
-        this.latestContent = freshContent;
-        this.latestPersistedContent = freshContent;
-        this.initialContent = freshContent;
-        this.lastSyncedContent = freshContent;
+        this.latestContent = freshLogicalContent;
+        this.latestPersistedContent = freshLogicalContent;
+        this.initialContent = freshLogicalContent;
+        this.lastSyncedContent = freshLogicalContent;
         this.editRevision = 0;
         this.persistedRevision = 0;
         this.syncedRevision = 0;
@@ -388,7 +393,7 @@ export class EditorSyncCoordinator {
           this.options.clearDraft(currentFile);
         }
         if (this.options.onContentReloaded) {
-          this.options.onContentReloaded(freshContent);
+          this.options.onContentReloaded(freshLogicalContent);
         }
       } else {
         // Caso B: El usuario tenía cambios en curso (carrera concurrente).
@@ -416,10 +421,10 @@ export class EditorSyncCoordinator {
         }
 
         // Cargar en la nota activa la versión remota
-        this.latestContent = freshContent;
-        this.latestPersistedContent = freshContent;
-        this.initialContent = freshContent;
-        this.lastSyncedContent = freshContent;
+        this.latestContent = freshLogicalContent;
+        this.latestPersistedContent = freshLogicalContent;
+        this.initialContent = freshLogicalContent;
+        this.lastSyncedContent = freshLogicalContent;
         this.editRevision = 0;
         this.persistedRevision = 0;
         this.syncedRevision = 0;
@@ -431,7 +436,7 @@ export class EditorSyncCoordinator {
           this.options.clearDraft(currentFile);
         }
         if (this.options.onContentReloaded) {
-          this.options.onContentReloaded(freshContent);
+          this.options.onContentReloaded(freshLogicalContent);
         }
       }
     }

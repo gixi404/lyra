@@ -35,7 +35,13 @@ import {
   subscribeUpdateInstall,
 } from "../utils/editorPersistence.ts";
 import { logger } from "../utils/logger.ts";
-import { canAttachDraft, takeDraftIdentityConflict } from "../utils/noteIdentity.ts";
+import { canAttachDraft, getOpenedNoteIdentity, takeDraftIdentityConflict } from "../utils/noteIdentity.ts";
+import {
+  getNoteEOL,
+  normalizeToLF,
+  registerNoteEOL,
+  type EOLMetadata,
+} from "../utils/eol.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 const TinyEditor = lazy(() => import("../components/TinyEditor"));
@@ -44,6 +50,7 @@ interface DraftPayload {
   content: string;
   updatedAt: number;
   logicalIdentity?: string;
+  eolMetadata?: EOLMetadata;
 }
 
 let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -143,7 +150,9 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       isWelcomeFileName(selectedFile.name) &&
       rawInitial.includes("<p>"),
     initialStartingContent = isWelcomeLegacy ? INTRO_ES : rawInitial,
-    [content, setContent] = useState<string>(initialStartingContent),
+    logicalStartingContent = normalizeToLF(initialStartingContent).text,
+    logicalDiskContent = normalizeToLF(diskContent).text,
+    [content, setContent] = useState<string>(logicalStartingContent),
     loadedFileNameRef = useRef<string>(""),
     mountedRef = useRef(false),
     coordinatorRef = useRef<EditorSyncCoordinator | null>(null);
@@ -162,7 +171,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
   if (!coordinatorRef.current) {
     coordinatorRef.current = new EditorSyncCoordinator({
       fileName: selectedFile.name,
-      initialContent: diskContent,
+      initialContent: logicalDiskContent,
       saveFileContent: async (name, newContent) => {
         await saveFileContent(name, newContent);
       },
@@ -177,7 +186,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       },
       onSaveError: (name, _content, error) => reportSaveFailure(name, error),
       onContentReloaded: (newContent) => {
-        if (mountedRef.current) setContent(newContent);
+        if (mountedRef.current) setContent(normalizeToLF(newContent).text);
       },
       onConflictCreated: (conflictName) => {
         fileStore.getState().editedFile();
@@ -201,7 +210,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       },
     });
     if (hasRealDraft) {
-      coordinatorRef.current.handleUserContentChange(initialStartingContent);
+      coordinatorRef.current.handleUserContentChange(logicalStartingContent);
     }
   }
 
@@ -221,7 +230,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       },
       onSaveError: (name, _content, error) => reportSaveFailure(name, error),
       onContentReloaded: (newContent) => {
-        if (mountedRef.current) setContent(newContent);
+        if (mountedRef.current) setContent(normalizeToLF(newContent).text);
       },
       onConflictCreated: (conflictName) => {
         fileStore.getState().editedFile();
@@ -368,6 +377,13 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
 
       // Sembrar con base canónica ANTES de pedir mtime/draft y antes de la
       // primera edición (gana la carrera con el debounce de 250ms).
+      const noteIdentity = getOpenedNoteIdentity(selectedFile.name);
+      if (draft?.eolMetadata) {
+        registerNoteEOL(noteIdentity, selectedFile.name, draft.eolMetadata, currentDiskContent);
+      } else if (!getNoteEOL(noteIdentity, selectedFile.name)) {
+        const { metadata: detectedMeta } = normalizeToLF(currentDiskContent);
+        registerNoteEOL(noteIdentity, selectedFile.name, detectedMeta, currentDiskContent);
+      }
       await seedDraftRevision(selectedFile.name, currentDiskContent);
       if (isCancelled) return;
       const diskMtime = await getFileMtime(selectedFile.name);
@@ -411,11 +427,12 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
 
       // Si el usuario ya comenzó a escribir en este archivo, no sobreescribir su contenido en vivo
       if (!coordinatorRef.current?.getIsDirty()) {
-        setContent(result.contentToLoad);
+        const logicalToLoad = normalizeToLF(result.contentToLoad).text;
+        setContent(logicalToLoad);
         if (result.action === "use_draft") {
-          coordinatorRef.current?.handleUserContentChange(result.contentToLoad);
+          coordinatorRef.current?.handleUserContentChange(logicalToLoad);
         } else {
-          coordinatorRef.current?.setCleanContent(result.contentToLoad, selectedFile.name);
+          coordinatorRef.current?.setCleanContent(logicalToLoad, selectedFile.name);
         }
       }
     };

@@ -9,23 +9,37 @@ import { twMerge } from "tailwind-merge";
 import type { Component, File } from "../utils/types.ts";
 import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
 import { displayNoteLabel, displayNoteName } from "../utils/visibleNames.ts";
+import { searchStore } from "../store/searchStore.ts";
+import { getHighlightSegments, hasNormalizedMatch } from "../utils/searchHighlight.ts";
+import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 
 function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, onDragEnd, archivedByFolder = false, individuallyArchived = true }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
     { readFile } = useFile(),
-    setSelectedFile = fileStore(state => state.setSelectedFile);
+    setSelectedFile = fileStore(state => state.setSelectedFile),
+    search = searchStore(state => state.search);
 
-  function getListLabel(name: string): string {
-    return displayNoteName(name);
-  }
+  const visibleName = displayNoteName(fileName);
+  const shouldHighlightVisible = search.trim().length > 0 && hasNormalizedMatch(visibleName, search);
+  const labelSegments = shouldHighlightVisible
+    ? getHighlightSegments(visibleName, search)
+    : [{ text: visibleName, highlight: false }];
 
   async function openFile(): Promise<void> {
     if (isExiting) return;
     try {
       const currentView = paperIsOpen ? "paper" : "active";
-      setListScroll(getScrollPos(currentView), currentView);
+      const scrollBefore = getScrollPos(currentView);
+      setListScroll(scrollBefore, currentView);
+      scrollDebug("ItemFile.openExisting.beforeNavigate", {
+        fileName,
+        view: currentView,
+        scrollBeforeNavigate: scrollBefore,
+        storedScroll: getScrollPos(currentView),
+      });
+      snapshotScrollState("ItemFile.openExisting.beforeNavigate", { fileName, view: currentView });
       const fileContent: string = await readFile(fileName);
       const newSelectedFile: File = { name: fileName, content: fileContent };
       setSelectedFile(newSelectedFile);
@@ -56,9 +70,17 @@ function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, o
     >
       <span
         className="text-sm sm:text-[15px] truncate pr-4 text-left font-normal flex items-center min-w-0"
-        title={displayNoteName(fileName)}
+        title={visibleName}
       >
-        <span className="truncate">{getListLabel(fileName)}</span>
+        <span className="truncate">
+          {labelSegments.map((segment, index) =>
+            segment.highlight ? (
+              <mark key={index} className="bg-yellow-300 text-black rounded-[1px] p-0 m-0">{segment.text}</mark>
+            ) : (
+              <span key={index}>{segment.text}</span>
+            )
+          )}
+        </span>
       </span>
 
       <div className="flex items-center gap-x-2 shrink-0">

@@ -2,12 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 
 type DebugPayload = Record<string, unknown>;
 
-const ENABLED = true;
+const ENABLED = typeof import.meta !== "undefined" && Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
 let cleared = false;
 
 function ts(): string {
   try {
-    return `${Date.now()} ${performance.now().toFixed(3)}ms`;
+    const iso = new Date().toISOString();
+    return `${iso} ${Date.now()} ${performance.now().toFixed(3)}ms`;
   } catch {
     return String(Date.now());
   }
@@ -35,9 +36,6 @@ export function scrollDebug(event: string, payload: DebugPayload = {}): void {
   } catch {
     line = `${String(entry.t)} ${event}`;
   }
-  try {
-    console.log("[LYRA_SCROLL_DEBUG]", line);
-  } catch {}
   void append(line);
 }
 

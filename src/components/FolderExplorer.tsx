@@ -16,6 +16,7 @@ import { EXPLORER_DND_ENABLED } from "../dnd-explorer/config.ts";
 import { getFolderColors, getFolderIcons, resolveFolderColor, resolveFolderIcon } from "../utils/folderAppearance.ts";
 import { displayFolderName } from "../utils/visibleNames.ts";
 import { themes } from "../utils/helpers.ts";
+import { getForcedExpandedForSearch } from "../utils/searchProjection.ts";
 import { useExplorerDnd } from "../dnd-explorer/useExplorerDnd.ts";
 import type { DragItem, DropTarget } from "../dnd-explorer/types.ts";
 import DragOverlay from "../dnd-explorer/DragOverlay.tsx";
@@ -36,13 +37,14 @@ function fileContainerKeyForPath(path: string): string {
   return getFileDirectory(path);
 }
 
-export default function FolderExplorer({ folders, files, renderFile, showRoot = true, archivedPaths = [], manualOrder = false }: {
+export default function FolderExplorer({ folders, files, renderFile, showRoot = true, archivedPaths = [], manualOrder = false, searchActive = false }: {
   folders: string[];
   files: string[];
   renderFile: (name: string, depth: number) => ReactNode;
   showRoot?: boolean;
   archivedPaths?: string[];
   manualOrder?: boolean;
+  searchActive?: boolean;
 }) {
   const { setItem } = useStorage();
   const { isDay } = themes();
@@ -50,6 +52,16 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
   const [optimisticMove, setOptimisticMove] = useState<{ kind: "file" | "folder"; oldPath: string; newPath: string } | null>(null);
   const pendingOptimisticMoveRef = useRef<{ kind: "file" | "folder"; oldPath: string; newPath: string } | null>(null);
   const prefTick = configStore(state => state.prefTick);
+  const searchSnapshotRef = useRef<Record<string, boolean> | null>(null);
+  const wasSearchingRef = useRef(false);
+  // Captura el estado de expansión una sola vez al iniciar cada sesión de búsqueda y lo descarta al salir.
+  if (searchActive && !wasSearchingRef.current) {
+    searchSnapshotRef.current = readFolderExpandedState(window.localStorage);
+  }
+  if (!searchActive && wasSearchingRef.current) {
+    searchSnapshotRef.current = null;
+  }
+  wasSearchingRef.current = searchActive;
   // Derivar preferencias del almacenamiento para mantener coherencia inmediata con renombres/movimientos
   // (evita estados intermedios entre props remapeadas y estado local desfasado).
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read from localStorage on preference changes
@@ -77,8 +89,6 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
   const listRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
 
-  const effectiveExpanded = useMemo(() => ({ ...expanded, ...tempExpanded }), [expanded, tempExpanded]);
-
   const projectedFiles = useMemo(() => {
     if (!optimisticMove) return files;
     if (optimisticMove.kind === "file") {
@@ -89,6 +99,18 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
     const prefix = `${oldPath}/`;
     return files.map(f => (f === oldPath ? newPath : f.startsWith(prefix) ? `${newPath}/${f.slice(prefix.length)}` : f));
   }, [files, optimisticMove]);
+
+  const forcedExpanded = useMemo(
+    () => (searchActive ? getForcedExpandedForSearch(projectedFiles, showRoot) : {}),
+    [searchActive, projectedFiles, showRoot],
+  );
+
+  const effectiveExpanded = useMemo(() => {
+    if (searchActive) {
+      return { ...(searchSnapshotRef.current ?? expanded), ...forcedExpanded };
+    }
+    return { ...expanded, ...tempExpanded };
+  }, [searchActive, expanded, tempExpanded, forcedExpanded]);
   const projectedFolders = useMemo(() => {
     if (!optimisticMove || optimisticMove.kind !== "folder") return folders;
     const { oldPath, newPath } = optimisticMove;
@@ -141,6 +163,7 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
   }, []);
 
   function toggle(path: string) {
+    if (searchActive) return;
     const id = path || ROOT_FOLDER_ID;
     const current = (expanded[id] ?? true) || !!tempExpanded[path];
     const nextVal = !current;
@@ -358,21 +381,23 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
 
   const handleDragEndCleanup = useCallback((keepExpandedPaths: string[] | null, _cancelled: boolean) => {
     if (keepExpandedPaths && keepExpandedPaths.length > 0) {
-      const toKeep = new Set(keepExpandedPaths.filter(Boolean));
-      const baseExpanded = readFolderExpandedState(window.localStorage);
-      const nextExpanded = { ...baseExpanded, ...expandedRef.current };
-      let changed = false;
-      for (const p of toKeep) {
-        if (!nextExpanded[p]) { nextExpanded[p] = true; changed = true; }
-      }
-      if (changed) {
-        setItem("folderExpanded", JSON.stringify(nextExpanded));
+      if (!searchActive) {
+        const toKeep = new Set(keepExpandedPaths.filter(Boolean));
+        const baseExpanded = readFolderExpandedState(window.localStorage);
+        const nextExpanded = { ...baseExpanded, ...expandedRef.current };
+        let changed = false;
+        for (const p of toKeep) {
+          if (!nextExpanded[p]) { nextExpanded[p] = true; changed = true; }
+        }
+        if (changed) {
+          setItem("folderExpanded", JSON.stringify(nextExpanded));
+        }
       }
       setTempExpanded({});
     } else {
       setTempExpanded({});
     }
-  }, [setItem]);
+  }, [setItem, searchActive]);
 
   const [dragActive, setDragActive] = useState<{ kind: "file" | "folder"; id: string } | null>(null);
 
@@ -391,8 +416,8 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
     onDragActiveChange: (kind, id) => setDragActive(kind && id ? { kind, id } : null),
   });
 
-  // effective expanded including temp root key
-  const effectiveForRender = useMemo(() => ({ ...expanded, ...tempExpanded }), [expanded, tempExpanded]);
+  // Estado de expansión efectivo para renderizado (proyección temporal durante búsqueda).
+  const effectiveForRender = effectiveExpanded;
 
   // --- render helpers ---
   const stagger = useMemo(() => {

@@ -14,6 +14,7 @@ import { getFolderColors, getFolderIcons, setFolderColor, setFolderIcon } from "
 import { pruneExplorerKeys } from "../utils/explorerKeys.ts";
 import {
   applyListScroll,
+  getListContainer,
   getListScroll,
   getMaxScroll,
   getScrollPos,
@@ -27,10 +28,11 @@ import { logger } from "../utils/logger.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { recoverPendingLocalMove } from "../utils/pathOperations.ts";
 import { notification } from "../utils/helpers.ts";
+import { consumeCreatedNoteIntent, getCreatedNoteIntent } from "../utils/createdNoteIntent.ts";
 
 function List(): Component {
   const { getFilesWithStats } = useFile(),
-    { setFilesWithStats, setFolders, setFolderListingWarnings, setArchivedFolders, setFolderArchiveError, setFolderArchiveLoaded, fileIsEdited, files, folders } = fileStore(
+    { setFilesWithStats, setFolders, setFolderListingWarnings, setArchivedFolders, setFolderArchiveError, setFolderArchiveLoaded, fileIsEdited, files, folders, isInitialized } = fileStore(
       useShallow(state => ({
         setFilesWithStats: state.setFilesWithStats,
         setFolders: state.setFolders,
@@ -41,6 +43,7 @@ function List(): Component {
         fileIsEdited: state.fileIsEdited,
         files: state.files,
         folders: state.folders,
+        isInitialized: state.isInitialized,
       }))
     ),
     paperIsOpen = configStore(state => state.paperIsOpen),
@@ -84,27 +87,134 @@ function List(): Component {
   }, []);
 
   // Restauración determinista sobre el contenedor propio del listado.
+  // Prioriza el posicionamiento de una nota recién creada sobre la restauración previa.
   useLayoutEffect(() => {
     const targetY = getListScroll(currentView);
+    const activeIntent = getCreatedNoteIntent();
     scrollDebug("List.restoreEffect.start", {
-      currentView, isSearching, filesCount: files.length, foldersCount: folders.length, target: targetY,
+      currentView, isSearching, filesCount: files.length, foldersCount: folders.length, target: targetY, createdIntent: activeIntent?.fileName,
     });
-    snapshotScrollState("List.restoreEffect.start", { currentView, isSearching, target: targetY });
+    snapshotScrollState("List.restoreEffect.start", { currentView, isSearching, target: targetY, createdIntent: activeIntent?.fileName });
+
+    let raf = 0;
+
+    const tryRevealCreatedNote = (): boolean => {
+      const intent = getCreatedNoteIntent();
+      if (!intent || intent.view !== currentView || isSearching) return false;
+
+      const safeName = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(intent.fileName)
+        : intent.fileName.replace(/["\\]/g, "\\$&");
+      const el = document.querySelector<HTMLElement>(`[data-note-name="${safeName}"]`);
+      const container = getListContainer() ?? containerRef.current;
+      if (!el || !container) {
+        scrollDebug("List.restore.createdNote.wait", {
+          currentView,
+          fileName: intent.fileName,
+          reason: !container ? "missing-container" : "missing-element",
+          isInitialized,
+          filesCount: fileStore.getState().files.length,
+          hasFileInStore: fileStore.getState().files.includes(intent.fileName),
+        });
+        snapshotScrollState("List.restore.createdNote.wait", { fileName: intent.fileName, reason: !container ? "missing-container" : "missing-element" });
+        return false;
+      }
+
+      const isFullyVisible = (): boolean => {
+        const cRect = container.getBoundingClientRect();
+        const eRect = el.getBoundingClientRect();
+        return eRect.top >= cRect.top - 0.5 && eRect.bottom <= cRect.bottom + 0.5;
+      };
+
+      const beforeScrollTop = container.scrollTop;
+      if (!isFullyVisible()) {
+        const cRect = container.getBoundingClientRect();
+        const eRect = el.getBoundingClientRect();
+        let next = container.scrollTop;
+        if (eRect.height >= cRect.height) {
+          // Elemento más alto que el viewport: alinear al inicio para priorizar visibilidad.
+          next += eRect.top - cRect.top;
+        } else {
+          // Posicionar la nota más centrada en el área visible del explorador.
+          const desiredTop = cRect.top + (cRect.height - eRect.height) / 2;
+          next += eRect.top - desiredTop;
+        }
+        const applied = applyListScroll(next);
+        setListScroll(applied, currentView);
+        scrollDebug("List.restore.createdNote.adjust", {
+          currentView,
+          fileName: intent.fileName,
+          beforeScrollTop,
+          requested: next,
+          applied,
+          containerTop: cRect.top,
+          containerBottom: cRect.bottom,
+          containerHeight: cRect.height,
+          elementTop: eRect.top,
+          elementBottom: eRect.bottom,
+          elementHeight: eRect.height,
+        });
+      } else {
+        setListScroll(container.scrollTop, currentView);
+      }
+
+      if (isFullyVisible()) {
+        const cRect = container.getBoundingClientRect();
+        const eRect = el.getBoundingClientRect();
+        consumeCreatedNoteIntent(intent.fileName);
+        hasRestoredRef.current = true;
+        scrollDebug("List.restore.createdNote", {
+          currentView,
+          fileName: intent.fileName,
+          revealed: true,
+          consumed: true,
+          scrollTop: container.scrollTop,
+          containerTop: cRect.top,
+          containerBottom: cRect.bottom,
+          elementTop: eRect.top,
+          elementBottom: eRect.bottom,
+        });
+        snapshotScrollState("List.restore.createdNote.revealed", { fileName: intent.fileName, scrollTop: container.scrollTop });
+        return true;
+      }
+
+      // Geometría/animación aún no asentada: mantener intención y reintentar en el siguiente frame.
+      hasRestoredRef.current = true;
+      const cRect = container.getBoundingClientRect();
+      const eRect = el.getBoundingClientRect();
+      scrollDebug("List.restore.createdNote.pending", {
+        currentView,
+        fileName: intent.fileName,
+        consumed: false,
+        scrollTop: container.scrollTop,
+        containerTop: cRect.top,
+        containerBottom: cRect.bottom,
+        elementTop: eRect.top,
+        elementBottom: eRect.bottom,
+      });
+      raf = window.requestAnimationFrame(() => {
+        tryRevealCreatedNote();
+      });
+      return true;
+    };
 
     if (isSearching) {
       applyListScroll(0);
       hasRestoredRef.current = true;
       scrollDebug("List.restoreEffect.searchReset", { currentView });
-      return;
+      return () => { if (raf) window.cancelAnimationFrame(raf); };
+    }
+
+    if (tryRevealCreatedNote()) {
+      return () => { if (raf) window.cancelAnimationFrame(raf); };
     }
 
     hasRestoredRef.current = false;
     if (targetY <= 0) {
       hasRestoredRef.current = true;
-      return;
+      return () => { if (raf) window.cancelAnimationFrame(raf); };
     }
 
-    let raf = 0;
     const tryRestore = (): boolean => {
       const maxScroll = getMaxScroll();
       const desired = getListScroll(currentView);
@@ -132,7 +242,7 @@ function List(): Component {
       });
     }
     return () => { if (raf) window.cancelAnimationFrame(raf); };
-  }, [currentView, isSearching, files, folders]);
+  }, [currentView, isSearching, files, folders, isInitialized]);
 
   // Mantener el scroll del contenedor dentro del rango válido si el contenido cambia,
   // sin perder la intención guardada mientras pueda volver a crecer.

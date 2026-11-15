@@ -29,6 +29,15 @@ import { runPathOperation } from "../utils/pathOperationLock.ts";
 import { clearVisibleName } from "../utils/visibleNames.ts";
 import { configStore } from "../store/configStore.ts";
 import { scheduleSavePersistentPreferences } from "../utils/persistentPreferences.ts";
+import {
+  clearNoteEOL,
+  denormalizeEOL,
+  getNoteEOL,
+  normalizeToLF,
+  registerNoteEOL,
+  remapNoteEOL,
+  updateNoteEOL,
+} from "../utils/eol.ts";
 
 const DRAFT_STORAGE_PREFIX = "lyra-draft";
 
@@ -91,6 +100,7 @@ function useFile(): Files {
     }
 
     // Remap visible-name metadata with the physical path change (if any).
+    remapNoteEOL(oldName, nextDisplayName, getOpenedNoteIdentity(oldName));
     try {
       const raw = window.localStorage.getItem("noteVisibleNames");
       if (raw) {
@@ -126,6 +136,7 @@ function useFile(): Files {
     removeCompatibleKeys(name, "-modified");
     removeCompatibleKeys(name, "-scroll");
     clearDraftStore(name);
+    clearNoteEOL(name, getOpenedNoteIdentity(name));
     syncPaperState(name);
     clearDetachedSaveFailure(name);
     try {
@@ -263,7 +274,15 @@ function useFile(): Files {
       return;
     }
 
-    await writeFile(name, content);
+    const identity = getOpenedNoteIdentity(name);
+    const eolRecord = getNoteEOL(identity, name);
+    const physicalContent = denormalizeEOL(content, eolRecord?.metadata, {
+      hasEdits: true,
+      rawOriginal: eolRecord?.rawOriginal,
+    });
+
+    await writeFile(name, physicalContent);
+    updateNoteEOL(identity, name, physicalContent);
   }, [goTo, writeFile]);
 
   const readFile = useCallback(async (name: string): Promise<string> => {
@@ -276,6 +295,10 @@ function useFile(): Files {
       }
       rememberNoteIdentity(name, opened.identity, opened.firstSeen, opened.pathReused);
       if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
+
+      const { metadata } = normalizeToLF(opened.content);
+      registerNoteEOL(opened.identity, name, metadata, opened.content);
+
       if (isWelcomeFileName(name) &&
         (opened.content.includes("<p>") || (opened.content.includes("&oacute;") && opened.content.includes("&ntilde;")))) {
         try {
@@ -287,6 +310,8 @@ function useFile(): Files {
     }
     const { pathFile } = await getFilePath(name);
     let content: string = await readTextFile(pathFile, BASE_DIRECTORY);
+    const { metadata } = normalizeToLF(content);
+    registerNoteEOL(undefined, name, metadata, content);
     if (
       isWelcomeFileName(name) &&
       (content.includes("<p>") || (content.includes("&oacute;") && content.includes("&ntilde;")))

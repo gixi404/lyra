@@ -6,7 +6,7 @@ import NoMatches from "./NoMatches.tsx";
 import useFile from "../hooks/useFile.ts";
 import usePreferences from "../hooks/usePreferences.ts";
 import { configStore } from "../store/configStore.ts";
-import { len, normalize, notification, themes } from "../utils/helpers.ts";
+import { normalize, notification, themes } from "../utils/helpers.ts";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { searchStore, type SortOptionId } from "../store/searchStore.ts";
@@ -16,6 +16,7 @@ import { AlertCircle } from "lucide-react";
 import { includeRetainedExits } from "../utils/listExit.ts";
 import { deleteArchivedBatch } from "../utils/archiveDeletion.ts";
 import { displayNoteLabel, displayNoteName, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
+import { getNecessaryFolderPaths } from "../utils/searchProjection.ts";
 import { logger } from "../utils/logger.ts";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
@@ -178,22 +179,54 @@ const ListFiles = memo(({ arr }: Props): Component => {
   function renderFiles(): Component {
     if (!folderArchiveLoaded && !isInitialized) return <li className="p-3 text-sm opacity-60">Cargando carpetas…</li>;
     if (folderArchiveError) return <li role="alert" className="p-3 text-red-400">No se pudo leer el estado de carpetas archivadas. {folderArchiveError}</li>;
-    const visibleFolders = paperIsOpen
+    const isSearching = normalizedSearch.length > 0;
+    const visibleFoldersBase = paperIsOpen
       ? folders.filter(path => archivedFolders.some(archived => path === archived || path.startsWith(`${archived}/`) || archived.startsWith(`${path}/`)))
       : folders.filter(path => !inArchivedFolder(path));
-    if (paperIsOpen && len(files) === 0 && visibleFolders.length === 0) {
-      if (len(normalizedSearch) > 0) return <NoMatches />;
+
+    if (!paperIsOpen) {
+      const necessaryFolders = isSearching ? getNecessaryFolderPaths(files) : null;
+      const visibleFolders = necessaryFolders
+        ? visibleFoldersBase.filter(path => necessaryFolders.has(path))
+        : visibleFoldersBase;
+      if (isSearching && files.length === 0) {
+        return <NoMatches />;
+      }
+      return (
+        <>
+          {folderListingWarnings.length > 0 && <li role="alert" className="list-none p-3 text-amber-400">No se pudieron leer todas las carpetas o entradas. Comprueba los permisos del directorio de Lyra.</li>}
+          <FolderExplorer
+            folders={visibleFolders}
+            files={files}
+            searchActive={isSearching}
+            renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} isExiting={exitingFiles.includes(name)} />}
+          />
+        </>
+      );
+    }
+
+    const archivedFiles = files.filter(inArchivedFolder);
+    const separateFiles = files.filter(name => !inArchivedFolder(name));
+    const necessaryArchivedFolders = isSearching ? getNecessaryFolderPaths(archivedFiles) : null;
+    const visibleFolders = necessaryArchivedFolders
+      ? visibleFoldersBase.filter(path => necessaryArchivedFolders.has(path))
+      : visibleFoldersBase;
+
+    if (files.length === 0 && visibleFolders.length === 0) {
+      if (isSearching) return <NoMatches />;
       return <NoFiles />;
     }
 
-    if (!paperIsOpen) return <>{folderListingWarnings.length > 0 && <li role="alert" className="list-none p-3 text-amber-400">No se pudieron leer todas las carpetas o entradas. Comprueba los permisos del directorio de Lyra.</li>}<FolderExplorer folders={visibleFolders} files={files}
-      renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} isExiting={exitingFiles.includes(name)} />} /></>;
-    const archivedFiles = files.filter(inArchivedFolder);
-    const separateFiles = files.filter(name => !inArchivedFolder(name));
     return (
       <>
-        <FolderExplorer folders={visibleFolders} files={archivedFiles} showRoot={false} archivedPaths={archivedFolders}
-          renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder individuallyArchived={paperSet.has(name)} isExiting={exitingFiles.includes(name)} />} />
+        <FolderExplorer
+          folders={visibleFolders}
+          files={archivedFiles}
+          showRoot={false}
+          archivedPaths={archivedFolders}
+          searchActive={isSearching}
+          renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder individuallyArchived={paperSet.has(name)} isExiting={exitingFiles.includes(name)} />}
+        />
         {separateFiles.map((n: string) => (
           <ItemFile
             fileName={n}

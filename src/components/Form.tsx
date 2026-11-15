@@ -27,9 +27,11 @@ import {
 import { commitVisibleName, resolveNewFolderPhysicalPath, resolveNewNotePhysicalPath, validateVisibleEntryName } from "../utils/visibleNameOps.ts";
 import { displayNoteLabel, displayNoteName } from "../utils/visibleNames.ts";
 import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
+import { setCreatedNoteIntent } from "../utils/createdNoteIntent.ts";
 import { getFileDirectory } from "../utils/noteName.ts";
 import type { Component, File } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
+import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 
 interface ArchiveIconProps {
   size?: number;
@@ -174,7 +176,15 @@ function Form(): Component {
         void (async () => {
           try {
             const currentView = paperIsOpen ? "paper" : "active";
-            setListScroll(getScrollPos(), currentView);
+            const scrollBefore = getScrollPos(currentView);
+            setListScroll(scrollBefore, currentView);
+            scrollDebug("Form.openExisting.beforeNavigate", {
+              fileName: matches[0],
+              view: currentView,
+              scrollBeforeNavigate: scrollBefore,
+              storedScroll: getScrollPos(currentView),
+            });
+            snapshotScrollState("Form.openExisting.beforeNavigate", { fileName: matches[0], view: currentView });
             const fileName = matches[0];
             const fileContent = await readFile(fileName);
             setSelectedFile({ name: fileName, content: fileContent });
@@ -197,6 +207,15 @@ function Form(): Component {
       const noteDir = getFileDirectory(displayName);
       const nextExpanded = expandAncestorsForNote(readFolderExpandedState(window.localStorage), noteDir);
       setItem("folderExpanded", JSON.stringify(nextExpanded));
+      setCreatedNoteIntent(displayName, "active");
+      scrollDebug("Form.create.setCreatedNoteIntent", {
+        fileName: displayName,
+        view: "active",
+        noteDir,
+        scrollBeforeNavigate: getScrollPos("active"),
+        storedScroll: getScrollPos("active"),
+      });
+      snapshotScrollState("Form.create.beforeNavigate", { fileName: displayName, noteDir });
       const nextFile: File = { ...file, name: displayName };
       setSelectedFile(nextFile);
       goTo(PAGES.file);

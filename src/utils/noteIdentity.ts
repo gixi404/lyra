@@ -1,3 +1,5 @@
+import { remapNoteEOL } from "./eol.ts";
+
 interface OpenedIdentity { id: string; firstSeen: boolean; pathReused: boolean }
 const openedIdentities = new Map<string, OpenedIdentity>();
 const pendingDraftConflicts = new Set<string>();
@@ -34,6 +36,9 @@ export function remapOpenedNoteIdentities(changes: ReadonlyArray<{ oldPath: stri
     if (identity) {
       openedIdentities.delete(oldPath);
       openedIdentities.set(newPath, { ...identity, firstSeen: false, pathReused: false });
+      remapNoteEOL(oldPath, newPath, identity.id);
+    } else {
+      remapNoteEOL(oldPath, newPath);
     }
   }
 }
