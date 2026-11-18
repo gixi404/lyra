@@ -233,11 +233,15 @@ pub fn verified_account_from_state(
 
 /// Lee la cuenta activa y exige que tenga identidad verificada (`sub`).
 pub fn verify_current_account(app: &tauri::AppHandle) -> Result<VerifiedAccount, String> {
+    #[cfg(test)] AUTH_ACCESS_COUNT.with(|count| count.set(count.get() + 1));
     let _guard = auth_lock()?;
     let state = load_auth_state_unlocked(app)?
         .ok_or_else(|| "No hay una cuenta de Google Drive conectada.".to_string())?;
     verified_account_from_state(&state, account_epoch())
 }
+
+#[cfg(test)]
+thread_local! { pub(crate) static AUTH_ACCESS_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 /// Former plaintext token path, used only to migrate and remove existing copies.
 pub fn get_token_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

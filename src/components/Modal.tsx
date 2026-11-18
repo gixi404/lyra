@@ -19,6 +19,7 @@ interface ModalProps {
   variant?: "primary" | "danger";
   busy?: boolean;
   autoSelectInput?: boolean;
+  error?: string;
 }
 
 function Modal({
@@ -35,6 +36,7 @@ function Modal({
   variant = "primary",
   busy = false,
   autoSelectInput = false,
+  error = "",
 }: ModalProps): Component | null {
   const d = translations();
   const { isDay } = themes();
@@ -78,11 +80,12 @@ function Modal({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
       if (e.key === "Escape" && !busy) {
+        e.stopPropagation();
         onClose();
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [isOpen, onClose, busy]);
 
   useEffect(() => {
@@ -174,6 +177,7 @@ function Modal({
                       }`}
                     />
                   )}
+                  {error && <p role="alert" className="mt-2 text-sm text-red-400">{error}</p>}
 
                   <div className="flex items-center gap-3 mt-6">
                     <button

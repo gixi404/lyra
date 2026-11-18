@@ -53,6 +53,10 @@ struct ArchiveLedger {
     #[serde(default)]
     migrated_legacy: bool,
     #[serde(default)]
+    legacy_pending: BTreeMap<String, String>,
+    #[serde(default)]
+    legacy_unresolved: BTreeSet<String>,
+    #[serde(default)]
     local_only: BTreeMap<String, bool>,
     #[serde(default)]
     accounts: BTreeMap<String, AccountArchiveState>,
@@ -67,6 +71,8 @@ impl Default for ArchiveLedger {
             device_id: format!("device_{:032x}", rand::random::<u128>()),
             revision: 0,
             migrated_legacy: false,
+            legacy_pending: BTreeMap::new(),
+            legacy_unresolved: BTreeSet::new(),
             local_only: BTreeMap::new(),
             accounts: BTreeMap::new(),
             last_account: None,
@@ -246,13 +252,35 @@ pub fn set_archived(lyra_dir: &Path, name: &str, archived: bool, account_key: Op
 pub fn initialize_legacy(lyra_dir: &Path, archived_names: &[String]) -> Result<(), String> {
     let mut ledger = load(lyra_dir)?;
     if ledger.migrated_legacy { return Ok(()) }
-    // Import only notes present now. A legacy name is never attached to a
-    // later file reusing that name. Remote history is checked before publish.
-    for name in archived_names {
-        let Ok(note) = note_record(lyra_dir, name) else { continue };
-        ledger.local_only.insert(note.note_id, true);
+    let provenance = provenance::load_ledger(&provenance::get_ledger_path(lyra_dir))?.unwrap_or_default();
+    let names: BTreeSet<String> = archived_names.iter().cloned()
+        .chain(ledger.legacy_pending.keys().cloned()).collect();
+    for name in names {
+        if ledger.legacy_unresolved.contains(&name) { continue; }
+        let expected_id = ledger.legacy_pending.get(&name).cloned()
+            .or_else(|| provenance.by_name.get(&name).cloned());
+        match note_record(lyra_dir, &name) {
+            Ok(note) if expected_id.as_ref().is_none_or(|id| id == &note.note_id) => {
+                ledger.local_only.insert(note.note_id, true);
+                ledger.legacy_pending.remove(&name);
+            }
+            Ok(_) => {
+                // A different note reused the path. Never transfer old archive state.
+                ledger.legacy_pending.remove(&name);
+                ledger.legacy_unresolved.insert(name);
+            }
+            Err(_) => {
+                if let Some(id) = expected_id {
+                    ledger.legacy_pending.insert(name, id);
+                } else {
+                    // No historical identity exists to distinguish a returning
+                    // note from a newly created one at this path.
+                    ledger.legacy_unresolved.insert(name);
+                }
+            }
+        }
     }
-    ledger.migrated_legacy = true;
+    ledger.migrated_legacy = ledger.legacy_pending.is_empty() && ledger.legacy_unresolved.is_empty();
     save(lyra_dir, &mut ledger)
 }
 
@@ -550,6 +578,49 @@ mod tests {
     }
 
     #[test]
+    fn legacy_migration_retries_missing_known_note_and_rejects_reused_path() {
+        let dir = TestDir::new();
+        let old_id = add_note(&dir.0, "Note.md", None);
+        fs::rename(dir.0.join("Note.md"), dir.0.join("held.md")).unwrap();
+        initialize_legacy(&dir.0, &["Note.md".into()]).unwrap();
+        assert_eq!(load(&dir.0).unwrap().legacy_pending.get("Note.md"), Some(&old_id));
+        assert!(!load(&dir.0).unwrap().migrated_legacy);
+        fs::rename(dir.0.join("held.md"), dir.0.join("Note.md")).unwrap();
+        initialize_legacy(&dir.0, &[]).unwrap();
+        assert!(load(&dir.0).unwrap().migrated_legacy);
+        assert_eq!(projection(&dir.0, None).unwrap().archived_names, ["Note.md"]);
+
+        let replacement = TestDir::new();
+        let replaced_id = add_note(&replacement.0, "Note.md", None);
+        fs::remove_file(replacement.0.join("Note.md")).unwrap();
+        initialize_legacy(&replacement.0, &["Note.md".into()]).unwrap();
+        fs::write(replacement.0.join("Note.md"), b"new note").unwrap();
+        provenance::record_local_write(&replacement.0, "Note.md", None, true).unwrap();
+        initialize_legacy(&replacement.0, &[]).unwrap();
+        assert_ne!(provenance::load_ledger(&provenance::get_ledger_path(&replacement.0)).unwrap().unwrap().by_name["Note.md"], replaced_id);
+        assert!(projection(&replacement.0, None).unwrap().archived_names.is_empty());
+    }
+
+    #[test]
+    fn stable_style_legacy_paper_migration_preserves_raw_note_bytes_across_restart() {
+        let dir = TestDir::new();
+        let fixtures = [
+            ("LF.txt", b"line one\nline two\n".as_slice()),
+            ("CRLF.md", b"line one\r\nline two\r\n".as_slice()),
+            ("BOM.txt", b"\xef\xbb\xbfline one\rline two".as_slice()),
+        ];
+        for (name, bytes) in fixtures { fs::write(dir.0.join(name), bytes).unwrap(); }
+        let names = fixtures.iter().map(|(name, _)| (*name).to_string()).collect::<Vec<_>>();
+        initialize_legacy(&dir.0, &names).unwrap();
+        assert!(load(&dir.0).unwrap().migrated_legacy);
+        assert_eq!(projection(&dir.0, None).unwrap().archived_names.len(), 3);
+        for (name, bytes) in fixtures { assert_eq!(fs::read(dir.0.join(name)).unwrap(), bytes); }
+        initialize_legacy(&dir.0, &names).unwrap();
+        assert_eq!(projection(&dir.0, None).unwrap().archived_names.len(), 3);
+        for (name, bytes) in fixtures { assert_eq!(fs::read(dir.0.join(name)).unwrap(), bytes); }
+    }
+
+    #[test]
     fn account_state_is_isolated_by_verified_binding() {
         let dir = TestDir::new();
         add_note(&dir.0, "Note.md", Some(("account_a", "drive_a")));
@@ -665,5 +736,78 @@ mod tests {
         assert_eq!(remote.lock().unwrap().len(), 5);
         stop.store(true, Ordering::SeqCst);
         handle.join().unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod v215_compat_tests {
+    use super::*;
+    use std::fs;
+
+    struct TestDir(std::path::PathBuf);
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "lyra_archive_v215_{label}_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+
+    #[test]
+    fn loads_v215_archive_ledger_format_and_preserves_legacy_paper_migration() {
+        let dir = TestDir::new("load");
+        let base = &dir.0;
+        fs::write(base.join("Nota.txt"), b"bytes antiguos").unwrap();
+        // Ledger con formato equivalente a v2.0.15 (schema v1, campos conocidos).
+        let v215 = serde_json::json!({
+            "schema_version": 1,
+            "device_id": "device_v215_fixed",
+            "revision": 7,
+            "migrated_legacy": false,
+            "local_only": {},
+            "accounts": {},
+            "last_account": null
+        });
+        fs::write(base.join(FILE_NAME), serde_json::to_vec_pretty(&v215).unwrap()).unwrap();
+
+        // Migración/conservación de notas archivadas mediante paper (legacy projection).
+        initialize_legacy(base, &["Nota.txt".to_string()]).unwrap();
+        initialize_legacy(base, &["Nota.txt".to_string()]).unwrap(); // idempotente
+        let proj = projection(base, None).unwrap();
+        assert!(proj.archived_names.iter().any(|n| n == "Nota.txt"));
+        assert_eq!(fs::read(base.join("Nota.txt")).unwrap(), b"bytes antiguos");
+        let loaded = load(base).unwrap();
+        assert!(loaded.migrated_legacy);
+        assert_eq!(loaded.schema_version, 1);
+        assert_eq!(loaded.device_id, "device_v215_fixed");
+    }
+
+    #[test]
+    fn archive_initialization_is_idempotent_and_does_not_create_new_identity_folder_or_draft_files() {
+        let dir = TestDir::new("init");
+        let base = &dir.0;
+        fs::write(base.join("A.md"), b"contenido A").unwrap();
+        initialize_legacy(base, &[]).unwrap();
+        let before: std::collections::BTreeSet<_> = fs::read_dir(base).unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        initialize_legacy(base, &[]).unwrap();
+        projection(base, None).unwrap();
+        let after: std::collections::BTreeSet<_> = fs::read_dir(base).unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        assert_eq!(before, after, "la inicialización debe ser idempotente en archivos generados");
+        assert!(!base.join(".lyra_local_identity.json").exists());
+        assert!(!base.join(".lyra_local_identity.lock").exists());
+        assert!(!base.join(".lyra_move_journal.json").exists());
+        assert!(!base.join(".lyra_delete_journal.json").exists());
+        assert!(!base.join(".lyra_drafts").exists());
+        assert_eq!(fs::read(base.join("A.md")).unwrap(), b"contenido A");
     }
 }

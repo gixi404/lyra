@@ -6,6 +6,7 @@ import { buildFolderTree, readFolderExpandedState, ROOT_FOLDER_ID, type FolderOr
 import { flattenVisible, type FlatRow } from "../utils/flattenExplorer.ts";
 import { getExplorerRowKey } from "../utils/explorerKeys.ts";
 import FolderMenu from "./FolderMenu.tsx";
+import { classifyArchivedViewFolder } from "../utils/archivePathState.ts";
 import { moveLocalPath } from "../utils/pathOperations.ts";
 import { persistOrderAfterPhysicalMove } from "../utils/persistAfterPhysicalMove.ts";
 import { getFileBaseName, getFileDirectory } from "../utils/noteName.ts";
@@ -13,13 +14,14 @@ import { notification } from "../utils/helpers.ts";
 import { configStore } from "../store/configStore.ts";
 import { ancestorsOf } from "../utils/dndExpansion.ts";
 import { EXPLORER_DND_ENABLED } from "../dnd-explorer/config.ts";
-import { getFolderColors, getFolderIcons, resolveFolderColor, resolveFolderIcon } from "../utils/folderAppearance.ts";
+import { getFolderIconColors, getFolderIcons, getFolderTextColors, resolveFolderColor, resolveFolderIcon } from "../utils/folderAppearance.ts";
 import { displayFolderName } from "../utils/visibleNames.ts";
 import { themes } from "../utils/helpers.ts";
 import { getForcedExpandedForSearch } from "../utils/searchProjection.ts";
 import { useExplorerDnd } from "../dnd-explorer/useExplorerDnd.ts";
 import type { DragItem, DropTarget } from "../dnd-explorer/types.ts";
 import DragOverlay from "../dnd-explorer/DragOverlay.tsx";
+import { bindMetadataWithFeedback, metadataMatches, prepareMetadataWrite } from "../utils/metadataIdentity.ts";
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -30,6 +32,7 @@ function readJson<T>(key: string, fallback: T): T {
 
 const EASING: [number, number, number, number] = [0.32, 0.72, 0.35, 1];
 const ITEM_DURATION = 0.32;
+const FOLD_DURATION = 0.3;
 const CLOSED_Y = -36;
 const STAGGER_SPREAD = 0.18;
 
@@ -72,10 +75,14 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
   const storedFileOrder = useMemo(() => readJson<FolderOrder>("fileOrder", {}), [prefTick]);
   const [orderOverride, setOrderOverride] = useState<FolderOrder | null>(null);
   const [fileOrderOverride, setFileOrderOverride] = useState<FolderOrder | null>(null);
-  const order = orderOverride ?? storedOrder;
-  const fileOrder = fileOrderOverride ?? storedFileOrder;
+  const order = Object.fromEntries(Object.entries(orderOverride ?? storedOrder).map(([parent, paths]) =>
+    [parent, paths.filter(path => metadataMatches("folder", path))]));
+  const fileOrder = Object.fromEntries(Object.entries(fileOrderOverride ?? storedFileOrder).map(([parent, paths]) =>
+    [parent, paths.filter(path => metadataMatches("file", path))]));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read localStorage appearance maps on preference changes
-  const folderColors = useMemo(() => getFolderColors(), [prefTick]);
+  const folderTextColors = useMemo(() => getFolderTextColors(), [prefTick]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read localStorage appearance maps on preference changes
+  const folderIconColors = useMemo(() => getFolderIconColors(), [prefTick]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read localStorage appearance maps on preference changes
   const folderIcons = useMemo(() => getFolderIcons(), [prefTick]);
   const [reducedMotion] = useState(() =>
@@ -167,6 +174,10 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
     const id = path || ROOT_FOLDER_ID;
     const current = (expanded[id] ?? true) || !!tempExpanded[path];
     const nextVal = !current;
+    if (path) {
+      prepareMetadataWrite("folder", path);
+      bindMetadataWithFeedback("folder", path);
+    }
     const next = { ...expanded, [id]: nextVal };
     if (!nextVal && path && tempExpanded[path]) {
       setTempExpanded(prev => { const n = { ...prev }; delete n[path]; return n; });
@@ -181,8 +192,14 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
 
   const freshOrder = useCallback((): FolderOrder => readJson("folderOrder", {}), []);
   const freshFileOrder = useCallback((): FolderOrder => readJson("fileOrder", {}), []);
-  const applyFolderOrder = useCallback((nextMap: FolderOrder) => { setOrderOverride(nextMap); setItemRef.current("folderOrder", JSON.stringify(nextMap)); }, []);
-  const applyFileOrder = useCallback((nextMap: FolderOrder) => { setFileOrderOverride(nextMap); setItemRef.current("fileOrder", JSON.stringify(nextMap)); }, []);
+  const applyFolderOrder = useCallback((nextMap: FolderOrder) => {
+    for (const paths of Object.values(nextMap)) for (const path of paths) bindMetadataWithFeedback("folder", path);
+    setOrderOverride(nextMap); setItemRef.current("folderOrder", JSON.stringify(nextMap));
+  }, []);
+  const applyFileOrder = useCallback((nextMap: FolderOrder) => {
+    for (const paths of Object.values(nextMap)) for (const path of paths) bindMetadataWithFeedback("file", path);
+    setFileOrderOverride(nextMap); setItemRef.current("fileOrder", JSON.stringify(nextMap));
+  }, []);
 
   const moveEntry = useCallback(async (kind: "file" | "folder", sourcePath: string, destinationPath: string): Promise<boolean> => {
     try {
@@ -446,11 +463,11 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
       duration: ITEM_DURATION,
       delay,
       ease: EASING,
-      opacity: { duration: 0.2, delay, ease: EASING },
-      visibility: { duration: 0, delay: row.open ? 0 : 0.2 },
+      opacity: { duration: FOLD_DURATION, ease: EASING },
+      visibility: { duration: 0, delay: row.open ? 0 : FOLD_DURATION },
     };
   }
-  const heightTransition = noAnim ? { duration: 0 } : { duration: 0.3, ease: EASING };
+  const heightTransition = noAnim ? { duration: 0 } : { duration: FOLD_DURATION, ease: EASING };
 
   function renderRowInner(row: FlatRow): ReactNode {
     const open = row.open;
@@ -460,23 +477,31 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
       const depth = row.depth;
       const selfKey = isRoot ? ROOT_FOLDER_ID : row.path;
       const selfOpen = effectiveForRender[selfKey] ?? (expanded[selfKey] ?? true);
-      const colorKey = folderColors[row.path];
+      const textColor = resolveFolderColor(folderTextColors[row.path], isDay);
+      const iconColor = resolveFolderColor(folderIconColors[row.path], isDay);
       const iconKey = folderIcons[row.path];
-      const folderColor = resolveFolderColor(colorKey, isDay);
       const RowFolderIcon = resolveFolderIcon(iconKey);
       const folderLabel = displayFolderName(row.path);
       const folderContent = (
         <div className="flex items-center">
           <button type="button" onClick={() => toggle(row.path)} aria-expanded={selfOpen}
             className="flex min-w-0 flex-1 items-center gap-2 py-3 text-left text-sm font-medium hover:text-sky-400 outline-none focus:outline-none focus-visible:outline-none"
-            style={{ paddingLeft: depth * 20, color: folderColor }}>
-            <span style={folderColor ? { color: folderColor } : undefined} className="flex items-center">
-              {selfOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </span>
-            <RowFolderIcon size={17} style={folderColor ? { color: folderColor } : undefined} />
-            <span className="truncate" style={folderColor ? { color: folderColor } : undefined}>{folderLabel}</span>
+            style={{ paddingLeft: depth * 20, ...(textColor ? { color: textColor } : {}) }}>
+            <motion.span initial={false} animate={{ rotate: selfOpen ? 90 : 0 }} transition={heightTransition}
+              style={iconColor ? { color: iconColor } : undefined} className="flex items-center">
+              <ChevronRight size={16} />
+            </motion.span>
+            <RowFolderIcon size={17} style={iconColor ? { color: iconColor } : undefined} />
+            <span data-explorer-name className="truncate" style={textColor ? { color: textColor } : undefined}>{folderLabel}</span>
           </button>
-          <FolderMenu path={row.path} archived={archivedPaths.includes(row.path)} structural={!showRoot && !archivedPaths.includes(row.path)} />
+          {(() => {
+            const inArchivedView = archivedPaths.length > 0 || !showRoot;
+            if (!inArchivedView) {
+              return <FolderMenu path={row.path} archived={false} structural={false} folderArchiveKind="active" />;
+            }
+            const kind = classifyArchivedViewFolder(row.path, archivedPaths);
+            return <FolderMenu path={row.path} archived={kind !== "structural"} structural={kind === "structural"} folderArchiveKind={kind} />;
+          })()}
         </div>
       );
       return (
@@ -632,19 +657,19 @@ export default function FolderExplorer({ folders, files, renderFile, showRoot = 
     <div className="w-full h-full" style={{ opacity: 0.98 }}>
       {/* Render row content in open/visible state for clone */}
       {draggedRow.kind === "folder" ? (() => {
-        const cKey = folderColors[draggedRow.path];
+        const textColor = resolveFolderColor(folderTextColors[draggedRow.path], isDay);
+        const iconColor = resolveFolderColor(folderIconColors[draggedRow.path], isDay);
         const iKey = folderIcons[draggedRow.path];
-        const c = resolveFolderColor(cKey, isDay);
         const DIcon = resolveFolderIcon(iKey);
         const label = displayFolderName(draggedRow.path);
         return (
-        <div className="flex items-center py-3 text-sm font-medium" style={{ paddingLeft: draggedRow.depth * 20, color: c }}>
-          <span className="flex items-center gap-2 min-w-0">
-            {(effectiveForRender[draggedRow.path || ROOT_FOLDER_ID] ?? true) ? <ChevronDown size={16} style={c ? { color: c } : undefined} /> : <ChevronRight size={16} style={c ? { color: c } : undefined} />}
-            <DIcon size={17} style={c ? { color: c } : undefined} />
-            <span className="truncate" style={c ? { color: c } : undefined}>{label}</span>
-          </span>
-        </div>
+          <div className="flex items-center py-3 text-sm font-medium" style={{ paddingLeft: draggedRow.depth * 20, ...(textColor ? { color: textColor } : {}) }}>
+            <span className="flex items-center gap-2 min-w-0">
+              {(effectiveForRender[draggedRow.path || ROOT_FOLDER_ID] ?? true) ? <ChevronDown size={16} style={iconColor ? { color: iconColor } : undefined} /> : <ChevronRight size={16} style={iconColor ? { color: iconColor } : undefined} />}
+              <DIcon size={17} style={iconColor ? { color: iconColor } : undefined} />
+              <span className="truncate" style={textColor ? { color: textColor } : undefined}>{label}</span>
+            </span>
+          </div>
         );
       })() : (
         renderFile(draggedRow.path, draggedRow.depth)

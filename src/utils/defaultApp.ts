@@ -26,9 +26,7 @@ export interface DefaultAppStatusResult {
 
 export interface DefaultAppInstructions {
   title: string;
-  subtitle: string;
   steps: string[];
-  note?: string;
 }
 
 /**
@@ -103,45 +101,36 @@ export function getDefaultAppInstructions(os: string): DefaultAppInstructions {
 
   if (normalized === "macos") {
     return {
-      title: "Configurar Lyra como predeterminada en macOS",
-      subtitle:
-        "macOS gestiona las asociaciones de archivos por extensión desde el Finder siguiendo estos pasos:",
+      title: "Configurar Lyra como editor predeterminado",
       steps: [
         "Selecciona en el Finder cualquier archivo de texto compatible (por ejemplo .txt, .md, .json, .py).",
         "Abre la ventana de información pulsando Cmd + I (o haz clic derecho y selecciona «Obtener información»).",
         "En la sección «Abrir con:», selecciona Lyra en la lista desplegable.",
         "Pulsa el botón «Cambiar todo...» y confirma la acción para aplicar la asociación a todos los archivos de ese tipo.",
       ],
-      note: "Puedes repetir este procedimiento con cualquier otra extensión de texto que desees abrir siempre con Lyra.",
     };
   }
 
   if (normalized === "linux") {
     return {
-      title: "Configurar Lyra como predeterminada en Linux",
-      subtitle:
-        "La forma estándar de asociar extensiones de texto en escritorios Linux es desde tu gestor de archivos:",
+      title: "Configurar Lyra como editor predeterminado",
       steps: [
         "En tu gestor de archivos (Nautilus, Dolphin, Nemo, Thunar, etc.), haz clic derecho sobre un archivo compatible.",
         "Selecciona «Abrir con...» o «Abrir con otra aplicación...» (o en «Propiedades» > pestaña «Abrir con»).",
         "Elige Lyra en la lista de aplicaciones del sistema.",
         "Marca la casilla «Establecer como predeterminada» o «Recordar esta aplicación para este tipo de archivos».",
       ],
-      note: "Si tu entorno de escritorio dispone de un panel de aplicaciones predeterminadas, también puedes consultarlo en la configuración del sistema.",
     };
   }
 
   // Windows
   return {
-    title: "Configurar Lyra como predeterminada en Windows",
-    subtitle:
-      "Si la ventana de Configuración de Windows no se abrió automáticamente, sigue estos pasos manuales:",
+    title: "Configurar Lyra como editor predeterminado",
     steps: [
       "Abre la Configuración de Windows presionando la combinación de teclas Win + I.",
       "Dirígete al apartado «Aplicaciones» y selecciona «Aplicaciones predeterminadas».",
       "Busca Lyra en la lista de aplicaciones o escribe la extensión que deseas asociar (por ejemplo .txt o .md).",
       "Selecciona Lyra y establécela como tu aplicación predeterminada.",
     ],
-    note: "También puedes hacer clic derecho sobre cualquier archivo en el Explorador de Windows, pulsar «Abrir con» > «Elegir otra aplicación» y marcar «Siempre».",
   };
 }

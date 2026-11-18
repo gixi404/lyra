@@ -38,9 +38,13 @@ export const PERSISTENT_KEYS = [
   "fileOrder",
   "folderExpanded",
   "folderColors",
+  "folderTextColors",
+  "folderIconColors",
   "folderIcons",
   "noteVisibleNames",
   "folderVisibleNames",
+  "metadataIdentityBindings",
+  "metadataIdentityHistory",
   "paper",
   "language",
   "lyra_initialized",
@@ -66,9 +70,13 @@ export interface PreferencesData {
   fileOrder?: string;
   folderExpanded?: string;
   folderColors?: string;
+  folderTextColors?: string;
+  folderIconColors?: string;
   folderIcons?: string;
   noteVisibleNames?: string;
   folderVisibleNames?: string;
+  metadataIdentityBindings?: string;
+  metadataIdentityHistory?: string;
   paper?: string[];
   language?: string;
   lyra_initialized?: string | boolean;
@@ -87,6 +95,12 @@ export async function getPreferencesFilePath(): Promise<string> {
 }
 
 let initPreferencesPromise: Promise<void> | null = null;
+let startupPreferencesPromise: Promise<void> | null = null;
+
+export function initStartupPreferences(): Promise<void> {
+  startupPreferencesPromise ??= initPersistentPreferences();
+  return startupPreferencesPromise;
+}
 
 export async function initPersistentPreferences(): Promise<void> {
   if (initPreferencesPromise) {

@@ -127,12 +127,12 @@ export async function readImportedNoteContent(fileName: string): Promise<Importe
     return { ok: false, error: "Lectura no disponible fuera de Tauri" };
   }
   try {
-    const opened = await invoke<{ identity: string; content: string; firstSeen: boolean; pathReused: boolean }>("open_note_identity", { fileName });
+    const opened = await invoke<{ identity: string; content: string; physicalHash: string; firstSeen: boolean; pathReused: boolean }>("open_note_identity", { fileName });
     // Reutilización de ruta física: metadatos de nombre visible previos no son confiables.
     if (opened.pathReused) {
       try { clearVisibleName(fileName, "file"); } catch { /* metadatos corruptos: no bloquear lectura */ }
     }
-    rememberNoteIdentity(fileName, opened.identity, opened.firstSeen, opened.pathReused);
+    rememberNoteIdentity(fileName, opened.identity, opened.firstSeen, opened.pathReused, opened.physicalHash);
     const content = opened.content;
     return { ok: true, content };
   } catch (err: unknown) {

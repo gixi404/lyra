@@ -7,21 +7,24 @@ import { themes } from "../utils/helpers";
 import { computeMenuPosition, isSameMenuPosition, type MenuPlacement } from "../utils/menuPosition.ts";
 import { folderListDepthPx } from "../utils/folderIndent.ts";
 import { displayFolderName } from "../utils/visibleNames.ts";
-import { getFolderColors, getFolderIcons, resolveFolderColor, resolveFolderIcon } from "../utils/folderAppearance.ts";
+import { getFolderIconColors, getFolderIcons, getFolderTextColors, resolveFolderColor, resolveFolderIcon } from "../utils/folderAppearance.ts";
 
 const FALLBACK_LIST_HEIGHT = 240;
 
-export default function FolderSelect({ folders, value, onChange, onNewFolder, disabled = false }: {
+export default function FolderSelect({ folders, value, onChange, onNewFolder, disabled = false, allowRoot = true }: {
   folders: string[];
   value: string;
   onChange: (path: string) => void;
   onNewFolder: () => void;
   disabled?: boolean;
+  allowRoot?: boolean;
 }): JSX.Element {
   const { isDay } = themes();
   const prefTick = configStore(state => state.prefTick);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read appearance on preference changes
-  const folderColors = useMemo(() => getFolderColors(), [prefTick]);
+  const folderTextColors = useMemo(() => getFolderTextColors(), [prefTick]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read appearance on preference changes
+  const folderIconColors = useMemo(() => getFolderIconColors(), [prefTick]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read appearance on preference changes
   const folderIcons = useMemo(() => getFolderIcons(), [prefTick]);
   const [open, setOpen] = useState(false);
@@ -122,7 +125,8 @@ export default function FolderSelect({ folders, value, onChange, onNewFolder, di
   }, [open]);
 
   const label = value === "" ? displayFolderName("") : displayFolderName(value);
-  const selectedColor = resolveFolderColor(folderColors[value], isDay);
+  const selectedTextColor = resolveFolderColor(folderTextColors[value], isDay);
+  const selectedIconColor = resolveFolderColor(folderIconColors[value], isDay);
   const SelectedIcon = resolveFolderIcon(folderIcons[value]);
 
   function select(path: string) {
@@ -144,8 +148,8 @@ export default function FolderSelect({ folders, value, onChange, onNewFolder, di
           isDay ? "bg-neutral-50 border-neutral-300 text-neutral-900" : "bg-zinc-800/80 border-zinc-700 text-zinc-100"
         } ${disabled ? "opacity-50 cursor-not-allowed" : "hover:border-sky-500"}`}
       >
-        <span className="flex items-center gap-2 truncate min-w-0" style={selectedColor ? { color: selectedColor } : undefined}>
-          <SelectedIcon size={16} style={selectedColor ? { color: selectedColor } : undefined} />
+        <span className="flex items-center gap-2 truncate min-w-0" style={selectedTextColor ? { color: selectedTextColor } : undefined}>
+          <SelectedIcon size={16} style={selectedIconColor ? { color: selectedIconColor } : undefined} />
           <span className="truncate">{label}</span>
         </span>
         <ChevronDown size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
@@ -181,27 +185,31 @@ export default function FolderSelect({ folders, value, onChange, onNewFolder, di
                   Nueva carpeta
                 </button>
               </li>
-              <li>
-                {(() => {
-                  const rootColor = resolveFolderColor(folderColors[""], isDay);
-                  const RootIcon = resolveFolderIcon(folderIcons[""]);
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => select("")}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
-                        value === "" ? (isDay ? "bg-neutral-100" : "bg-zinc-800") : ""
-                      } ${isDay ? "hover:bg-neutral-100" : "hover:bg-zinc-800"}`}
-                      style={{ paddingLeft: 12, ...(rootColor ? { color: rootColor } : {}) }}
-                    >
-                      <RootIcon size={16} style={rootColor ? { color: rootColor } : undefined} />
-                      <span className="truncate">{displayFolderName("")}</span>
-                    </button>
-                  );
-                })()}
-              </li>
+              {allowRoot && (
+                <li>
+                  {(() => {
+                    const rootTextColor = resolveFolderColor(folderTextColors[""], isDay);
+                    const rootIconColor = resolveFolderColor(folderIconColors[""], isDay);
+                    const RootIcon = resolveFolderIcon(folderIcons[""]);
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => select("")}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
+                          value === "" ? (isDay ? "bg-neutral-100" : "bg-zinc-800") : ""
+                        } ${isDay ? "hover:bg-neutral-100" : "hover:bg-zinc-800"}`}
+                        style={{ paddingLeft: 12, ...(rootTextColor ? { color: rootTextColor } : {}) }}
+                      >
+                        <RootIcon size={16} style={rootIconColor ? { color: rootIconColor } : undefined} />
+                        <span className="truncate">{displayFolderName("")}</span>
+                      </button>
+                    );
+                  })()}
+                </li>
+              )}
               {folders.map(folder => {
-                const color = resolveFolderColor(folderColors[folder], isDay);
+                const textColor = resolveFolderColor(folderTextColors[folder], isDay);
+                const iconColor = resolveFolderColor(folderIconColors[folder], isDay);
                 const Icon = resolveFolderIcon(folderIcons[folder]);
                 return (
                   <li key={folder}>
@@ -211,9 +219,9 @@ export default function FolderSelect({ folders, value, onChange, onNewFolder, di
                       className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
                         value === folder ? (isDay ? "bg-neutral-100" : "bg-zinc-800") : ""
                       } ${isDay ? "hover:bg-neutral-100" : "hover:bg-zinc-800"}`}
-                      style={{ paddingLeft: folderListDepthPx(folder), ...(color ? { color } : {}) }}
+                      style={{ paddingLeft: folderListDepthPx(folder), ...(textColor ? { color: textColor } : {}) }}
                     >
-                      <Icon size={16} style={color ? { color } : undefined} />
+                      <Icon size={16} style={iconColor ? { color: iconColor } : undefined} />
                       <span className="truncate">{displayFolderName(folder)}</span>
                     </button>
                   </li>

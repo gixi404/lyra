@@ -5,6 +5,7 @@ import { downloadDir } from "@tauri-apps/api/path";
 import useFile from "../hooks/useFile.ts";
 import { setArchiveState } from "../utils/archiveState.ts";
 import { useSyncStore } from "../store/syncStore.ts";
+import { GDRIVE_REMOTE_SYNC_ENABLED } from "../utils/gdriveRemote.ts";
 import { fileStore } from "../store/fileStore.ts";
 import translations from "../utils/dictionary.ts";
 import { notification } from "../utils/helpers.ts";
@@ -167,7 +168,7 @@ function MenuFile({ fileName }: Props): Component {
         return;
       }
       if (mountedRef.current) setIsTrashOpen(false);
-      if (useSyncStore.getState().isConnected && navigator.onLine) {
+      if (GDRIVE_REMOTE_SYNC_ENABLED && useSyncStore.getState().isConnected && navigator.onLine) {
         void useSyncStore.getState().syncNow(true, true);
       }
 
@@ -189,14 +190,6 @@ function MenuFile({ fileName }: Props): Component {
     <div className="relative flex items-center">
       <ContextMenu label="Opciones" title="Opciones" reveal="hover">
         <MenuItem
-          icon={FileDown}
-          label="Exportar"
-          onSelect={() => void handleExportPDF()}
-        />
-
-        <MenuSeparator />
-
-        <MenuItem
           icon={EditIcon}
           label={d.EditName ?? "Renombrar"}
           onSelect={() => setIsEditOpen(true)}
@@ -208,6 +201,14 @@ function MenuFile({ fileName }: Props): Component {
           icon={MoveIcon}
           label="Mover a…"
           onSelect={() => setIsMoveOpen(true)}
+        />
+
+        <MenuSeparator />
+
+        <MenuItem
+          icon={FileDown}
+          label="Exportar"
+          onSelect={() => void handleExportPDF()}
         />
 
         <MenuSeparator />

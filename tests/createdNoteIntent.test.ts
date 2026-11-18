@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   clearCreatedNoteIntent,
   consumeCreatedNoteIntent,
+  expandCreatedNoteOnReturn,
   getCreatedNoteIntent,
   setCreatedNoteIntent,
 } from "../src/utils/createdNoteIntent.ts";
@@ -11,6 +12,20 @@ test("registra y expone la intención de navegación para la nota recién creada
   clearCreatedNoteIntent();
   setCreatedNoteIntent("Carpeta/Nueva.txt", "active");
   assert.deepEqual(getCreatedNoteIntent(), { fileName: "Carpeta/Nueva.txt", view: "active" });
+  clearCreatedNoteIntent();
+});
+
+test("expande la carpeta de la nota solo al regresar y conserva el estado de las demás", () => {
+  clearCreatedNoteIntent();
+  setCreatedNoteIntent("Trabajo/Sub/Nueva.txt", "active");
+  const stored = { "root:lyra": true, Trabajo: false, "Trabajo/Sub": false, Otra: false };
+  let persisted: string | null = null;
+  const storage = { getItem: () => persisted ?? JSON.stringify(stored) };
+  assert.deepEqual(JSON.parse(storage.getItem()), stored);
+  assert.equal(expandCreatedNoteOnReturn(storage, value => { persisted = value; }), true);
+  assert.deepEqual(JSON.parse(persisted!), { "root:lyra": true, Trabajo: true, "Trabajo/Sub": true, Otra: false });
+  assert.deepEqual(getCreatedNoteIntent(), { fileName: "Trabajo/Sub/Nueva.txt", view: "active" });
+  assert.equal(expandCreatedNoteOnReturn(storage, value => { persisted = value; }), false);
   clearCreatedNoteIntent();
 });
 

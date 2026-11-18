@@ -16,6 +16,7 @@ import { acceptsSyncCompletion, isVisibleSyncReason, shouldAcceptSyncStart, shou
 import { useToastStore } from "./toastStore.ts";
 import { noteLabel } from "../utils/noteName.ts";
 import { logger } from "../utils/logger.ts";
+import { GDRIVE_REMOTE_SYNC_ENABLED } from "../utils/gdriveRemote.ts";
 
 export interface SyncStatusPayload {
   is_connected: boolean;
@@ -145,7 +146,7 @@ function dismissSyncToast(): void {
 }
 
 function initSyncListeners(): Promise<void> {
-  if (listenersInitialized || typeof window === "undefined") return Promise.resolve();
+  if (!GDRIVE_REMOTE_SYNC_ENABLED || listenersInitialized || typeof window === "undefined") return Promise.resolve();
   if (listenersPromise) return listenersPromise;
   listenersPromise = registerSyncListeners().finally(() => { listenersPromise = null; });
   return listenersPromise;
@@ -252,7 +253,7 @@ async function registerSyncListeners(): Promise<void> {
   listenersInitialized = true;
 }
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && GDRIVE_REMOTE_SYNC_ENABLED) {
   void initSyncListeners().catch(error => logger.warn("Google Drive listeners unavailable", error));
 }
 
@@ -275,6 +276,27 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   hasManageableNotes: false,
 
   fetchStatus: async () => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      set({
+        isConnected: false,
+        isSyncing: false,
+        userEmail: null,
+        userName: null,
+        userPhoto: null,
+        lastSyncTimestamp: null,
+        lastError: null,
+        isInitialized: true,
+        backendVersion: null,
+        backendBuildTimestamp: null,
+        pendingAuthorization: null,
+        isAuthorizingPending: false,
+        pendingAuthorizationError: null,
+        managementNotes: null,
+        managementAccountLabel: null,
+        hasManageableNotes: false,
+      });
+      return;
+    }
     const generation = connectionGeneration;
     try {
       await initSyncListeners();
@@ -322,6 +344,9 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   login: async () => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      return;
+    }
     const loginRequestId = `login-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     activeLoginRequestId = loginRequestId;
     visibleSyncRequests.add(loginRequestId);
@@ -372,6 +397,9 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   cancelLogin: async () => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      return;
+    }
     try {
       await invoke("gdrive_cancel_login");
       if (activeLoginRequestId) visibleSyncRequests.delete(activeLoginRequestId);
@@ -387,6 +415,26 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   logout: async () => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      connectionGeneration += 1;
+      dismissedPendingRequestIds.clear();
+      set({
+        isConnected: false,
+        isSyncing: false,
+        userEmail: null,
+        userName: null,
+        userPhoto: null,
+        lastSyncTimestamp: null,
+        lastError: null,
+        pendingAuthorization: null,
+        isAuthorizingPending: false,
+        pendingAuthorizationError: null,
+        managementNotes: null,
+        managementAccountLabel: null,
+        hasManageableNotes: false,
+      });
+      return true;
+    }
     logoutInProgress = true;
     visibleSyncRequests.clear();
     activeLoginRequestId = null;
@@ -442,6 +490,9 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   syncNow: async (silent = false, force = false, reason = "background") => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      return;
+    }
     const state = get();
     const reqId = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const isManual = !silent;
@@ -623,7 +674,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   checkManageableNotes: async () => {
-    if (!get().isConnected) {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED || !get().isConnected) {
       set({ hasManageableNotes: false });
       return false;
     }
@@ -641,7 +692,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   refreshPendingAuthorization: async () => {
-    if (!get().isConnected) {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED || !get().isConnected) {
       set({ pendingAuthorization: null });
       return;
     }
@@ -663,6 +714,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   authorizePending: async (selectedIds: string[]) => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) return;
     const { pendingAuthorization, isAuthorizingPending } = get();
     if (!pendingAuthorization || isAuthorizingPending) return;
     const label = accountLabel(pendingAuthorization);
@@ -691,6 +743,10 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   manageLocalNotes: async (reopenDeclined = true) => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      set({ managementNotes: null, managementAccountLabel: null, pendingAuthorization: null });
+      return;
+    }
     const generation = connectionGeneration;
     try {
       const view = await invoke<LocalNoteManagement>("gdrive_manage_local_notes", { reopenDeclined });
@@ -704,6 +760,11 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   dismissPending: async () => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) {
+      set({ pendingAuthorization: null, pendingAuthorizationError: null, managementNotes: null,
+        managementAccountLabel: null, isAuthorizingPending: false });
+      return;
+    }
     const { pendingAuthorization, isAuthorizingPending } = get();
     if (isAuthorizingPending) return;
     if (pendingAuthorization) {

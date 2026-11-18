@@ -8,6 +8,7 @@ import { getCompatibleStorageKeys, getDate, navigation, notification } from "../
 import type { Component, File } from "../utils/types.ts";
 import { useSyncStore, registerPreSyncHandler, type SyncResultPayload } from "../store/syncStore.ts";
 import { listen } from "@tauri-apps/api/event";
+import { GDRIVE_REMOTE_SYNC_ENABLED } from "../utils/gdriveRemote.ts";
 import {
   EditorSyncCoordinator,
   normalizeText,
@@ -57,6 +58,7 @@ let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 const CLOUD_SYNC_DEBOUNCE_MS = 15_000; // 15 segundos de inactividad de escritura para sincronizar con Google Drive
 
 function scheduleCloudSync(onSyncStart?: () => void): void {
+  if (!GDRIVE_REMOTE_SYNC_ENABLED) return;
   const syncState = useSyncStore.getState();
   if (!syncState.isConnected) return;
   if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
@@ -339,6 +341,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
       if (coordinator) {
         void coordinator.handleUnmount().then(savedSuccessfully => {
           if (!savedSuccessfully) markDetachedSaveFailure(coordinator.getFileName());
+          if (!GDRIVE_REMOTE_SYNC_ENABLED) return;
           const syncState = useSyncStore.getState();
           if (syncState.isConnected && hadUnsyncedChanges && savedSuccessfully) {
             coordinator.markSyncInFlight();
@@ -447,6 +450,7 @@ function FileContentSession({ selectedFile }: { selectedFile: File }): Component
 
   // GD-007: Prevención de carreras entre autosave, desmontaje y sincronización remota
   useEffect(() => {
+    if (!GDRIVE_REMOTE_SYNC_ENABLED) return;
     let unlistenFinished: (() => void) | null = null;
     let unlistenError: (() => void) | null = null;
     let isMounted = true;

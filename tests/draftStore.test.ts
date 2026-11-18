@@ -31,20 +31,24 @@ test("M9-T2 quota error does not throw", async () => {
   await ds.flushDraftAsync("nota.txt");
 });
 
-test("M9-T3 obsolete disk draft after canonical save is cleared", async () => {
+test("M9-T3 legacy saved-revision metadata cannot discard different draft bytes", async () => {
   const diskDraft = {
     v: 1 as const, noteName: "a.txt", draftId: draftIdFor("a.txt"),
     revision: 3, baseHash: contentHash("viejo"), content: "borrador",
     lastSavedRevision: 3, lastSavedHash: contentHash("nuevo"), updatedAt: 1000,
   };
   let cleared = false;
+  const rescue = new Map<string, string>();
   const res = await reconcileDraftState({
     fileName: "a.txt", diskContent: "nuevo", draft: null, diskDraft, diskMtime: 2000,
-    saveFile: (async () => {}) as never, readFile: (async () => "") as never, fileExists: (async () => false) as never,
+    saveFile: async (name, content) => { rescue.set(name, content); },
+    readFile: async name => rescue.get(name) ?? "",
+    fileExists: async name => rescue.has(name),
     clearDraft: () => { cleared = true; },
   });
-  assert.equal(res.action, "use_disk");
+  assert.equal(res.action, "conflict_created");
   assert.equal(res.contentToLoad, "nuevo");
+  assert.equal(rescue.get(res.conflictFileName ?? ""), "borrador");
   assert.equal(cleared, true);
 });
 
@@ -210,6 +214,109 @@ test("M9-T11 restart with advanced state recovers conservatively", async () => {
   });
   assert.equal(res.action, "use_disk");
   assert.equal(cleared, true);
+});
+
+test("AUD2-004 and AUD2-007 keep a newer disk draft after an older save settles", async () => {
+  const { EditorSyncCoordinator } = await import("../src/utils/editorSyncCoordinator.ts");
+  const ds = await import("../src/utils/draftStore.ts");
+  for (const outcome of ["success", "failure"] as const) {
+    __resetDraftStoreForTests();
+    const diskDrafts = new Map<string, string>();
+    setupDesktop(diskDrafts);
+    rememberNoteIdentity("note.txt", "fixture-note");
+    let finish!: (outcome: "success" | "failure") => void;
+    const pending = new Promise<"success" | "failure">(resolve => { finish = resolve; });
+    const coordinator = new EditorSyncCoordinator({
+      fileName: "note.txt", initialContent: "initial", autosaveDebounceMs: 10_000, draftDebounceMs: 10_000,
+      saveFileContent: async (_name, content) => {
+        if (content === "A") {
+          if (await pending === "failure") throw new Error("injected save failure");
+        }
+      },
+      readFileContent: async () => "initial",
+      writeDraft: ds.writeDraft,
+      clearDraft: ds.clearDraft,
+      onSaveSuccess: (name, _previous, content, revision) => ds.markDraftSaved(name, content, revision),
+    });
+    coordinator.handleUserContentChange("A");
+    const firstSave = coordinator.persistLatestToDisk();
+    const newer = "B".repeat(1024 * 1024 + 1);
+    coordinator.handleUserContentChange(newer);
+    ds.writeDraft("note.txt", newer);
+    assert.equal(await ds.flushDraftAsync("note.txt"), true);
+    assert.equal((await ds.readDraftDisk("note.txt"))?.content.length, newer.length);
+    finish(outcome);
+    assert.equal(await firstSave, outcome === "success");
+    await ds.flushDraftAsync("note.txt");
+    assert.equal((await ds.readDraftDisk("note.txt"))?.content.length, newer.length);
+    await coordinator.handleUnmount();
+  }
+});
+
+test("AUD2-004 restart preserves both divergent localStorage and disk drafts", async () => {
+  const diskDraft = {
+    v: 1 as const, noteName: "note.txt", draftId: draftIdFor("note.txt"),
+    revision: 2, baseHash: contentHash("initial"), content: "A",
+    lastSavedRevision: 0, lastSavedHash: contentHash("initial"), updatedAt: 10,
+  };
+  const rescued = new Map<string, string>();
+  let cleared = false;
+  const result = await reconcileDraftState({
+    fileName: "note.txt", diskContent: "initial", diskMtime: 0,
+    draft: { content: "B", updatedAt: 20 }, diskDraft,
+    saveFile: async (name, content) => { rescued.set(name, content); },
+    readFile: async name => rescued.get(name) ?? "",
+    fileExists: async name => rescued.has(name),
+    clearDraft: () => { cleared = true; },
+  });
+  assert.equal(result.action, "use_draft");
+  assert.equal(result.contentToLoad, "B");
+  assert.equal(rescued.get(result.conflictFileName ?? ""), "A");
+  assert.equal(cleared, false);
+});
+
+test("Scenario A: failed older save, abrupt restart, and disk draft recovery keep B", async () => {
+  const { EditorSyncCoordinator } = await import("../src/utils/editorSyncCoordinator.ts");
+  const ds = await import("../src/utils/draftStore.ts");
+  __resetDraftStoreForTests();
+  const disk = new Map<string, string>();
+  setupDesktop(disk);
+  rememberNoteIdentity("scenario-a.txt", "scenario-a-id");
+  let rejectSave!: (reason: Error) => void;
+  const pending = new Promise<void>((_resolve, reject) => { rejectSave = reject; });
+  let physical = "initial";
+  const coordinator = new EditorSyncCoordinator({
+    fileName: "scenario-a.txt", initialContent: physical,
+    autosaveDebounceMs: 10_000, draftDebounceMs: 10_000,
+    saveFileContent: async (_name, content) => { await pending; physical = content; },
+    readFileContent: async () => physical,
+    writeDraft: ds.writeDraft, clearDraft: ds.clearDraft,
+    onSaveSuccess: (name, _previous, content, revision) => ds.markDraftSaved(name, content, revision),
+  });
+  coordinator.handleUserContentChange("A");
+  const oldSave = coordinator.persistLatestToDisk();
+  const latest = "B".repeat(1024 * 1024 + 1);
+  coordinator.handleUserContentChange(latest);
+  ds.writeDraft("scenario-a.txt", latest);
+  assert.equal(await ds.flushDraftAsync("scenario-a.txt"), true);
+  rejectSave(new Error("injected disk failure"));
+  assert.equal(await oldSave, false);
+  const persisted = await ds.readDraftDisk("scenario-a.txt");
+  assert.ok(persisted);
+  assert.equal(physical, "initial");
+  __resetDraftStoreForTests();
+  const rescued = new Map<string, string>();
+  const recovered = await reconcileDraftState({
+    fileName: "scenario-a.txt", diskContent: physical, diskMtime: 0,
+    draft: null, diskDraft: persisted,
+    saveFile: async (name, content) => { rescued.set(name, content); },
+    readFile: async name => rescued.get(name) ?? physical,
+    fileExists: async name => rescued.has(name), clearDraft: () => {},
+  });
+  assert.ok(recovered.action === "use_draft" || recovered.action === "conflict_created");
+  assert.equal(recovered.action === "use_draft" ? recovered.contentToLoad : rescued.get(recovered.conflictFileName ?? ""), latest);
+  assert.ok(disk.has(draftIdFor("scenario-a.txt")));
+  await coordinator.handleUnmount();
 });
 
 test("M9-T12 corrupt disk draft is ignored without throwing", async () => {

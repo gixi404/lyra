@@ -7,20 +7,21 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative: string): string => readFileSync(join(root, relative), "utf8");
 
-test("note creation flow expands ancestors only after successful physical creation", () => {
+test("note creation defers folder expansion until returning from the editor", () => {
   const form = read("src/components/Form.tsx");
   const fileFlowStart = form.indexOf("async function fileManagement");
   const fileFlowEnd = form.indexOf("} catch {", fileFlowStart);
   assert.ok(fileFlowStart > -1 && fileFlowEnd > fileFlowStart, "fileManagement flow must exist");
   const successFlow = form.slice(fileFlowStart, fileFlowEnd);
   const createIdx = successFlow.indexOf("await createFile(file.name, file.content)");
-  const expandIdx = successFlow.indexOf("expandAncestorsForNote(");
-  const persistIdx = successFlow.indexOf('setItem("folderExpanded"');
+  const intentIdx = successFlow.indexOf("setCreatedNoteIntent(");
   const navIdx = successFlow.indexOf('goTo(PAGES.file)');
   assert.ok(createIdx > -1, "must create note physically");
-  assert.ok(expandIdx > createIdx, "must expand after successful creation");
-  assert.ok(persistIdx > expandIdx, "must persist expansion after computing it");
-  assert.ok(navIdx > persistIdx, "must navigate after persisting expansion state");
+  assert.ok(intentIdx > createIdx, "must record the created note after successful creation");
+  assert.ok(navIdx > intentIdx, "must navigate after recording the intent");
+  assert.equal(successFlow.includes('setItem("folderExpanded"'), false, "creation must not expand the visible list");
+  const router = read("src/router.tsx");
+  assert.ok(router.includes("expandCreatedNoteOnReturn("), "return navigation must apply the deferred expansion");
 });
 
 test("note creation failure path does not change expansion or listing state", () => {

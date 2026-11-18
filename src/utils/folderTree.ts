@@ -1,5 +1,6 @@
 import { getFileDirectory } from "./noteName.ts";
 import { displayFolderName } from "./visibleNames.ts";
+import { metadataMatches } from "./metadataIdentity.ts";
 
 export const ROOT_FOLDER_ID = "root:lyra";
 
@@ -40,6 +41,30 @@ export function buildFolderTree(
     }
   }
   return root;
+}
+
+export function readFolderOrder(): FolderOrder {
+  try {
+    const raw = window.localStorage.getItem("folderOrder");
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as FolderOrder) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function flattenFolderPaths(node: FolderNode): string[] {
+  const paths: string[] = [];
+  for (const child of node.folders) {
+    paths.push(child.path);
+    paths.push(...flattenFolderPaths(child));
+  }
+  return paths;
+}
+
+export function getOrderedFolderPaths(folders: string[], order: FolderOrder = readFolderOrder()): string[] {
+  const tree = buildFolderTree(folders, [], order);
+  return flattenFolderPaths(tree);
 }
 
 /** Reordena `moving` al índice que ocupa `target` en `paths` (arrayMove clásico).
@@ -144,5 +169,6 @@ export function parseFolderExpandedState(raw: string | null | undefined): Record
 }
 
 export function readFolderExpandedState(storage: Pick<Storage, "getItem">): Record<string, boolean> {
-  return parseFolderExpandedState(storage.getItem("folderExpanded"));
+  return Object.fromEntries(Object.entries(parseFolderExpandedState(storage.getItem("folderExpanded")))
+    .filter(([path]) => path === ROOT_FOLDER_ID || metadataMatches("folder", path)));
 }

@@ -1,7 +1,7 @@
 import { useEffect, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { animated, useTransition } from "@react-spring/web";
-import { AppWindow, Info, X } from "lucide-react";
+import { AppWindow, X } from "lucide-react";
 import { themes } from "../utils/helpers.ts";
 import { getDefaultAppInstructions } from "../utils/defaultApp.ts";
 import type { Component } from "../utils/types.ts";
@@ -75,22 +75,12 @@ export function DefaultAppModal({ isOpen, onClose, os }: DefaultAppModalProps): 
                 >
                   <AppWindow size={22} />
                 </div>
-                <div>
-                  <h2
-                    id="modal-default-app-title"
-                    className="text-base sm:text-lg font-semibold tracking-tight"
-                  >
-                    {instructions.title}
-                  </h2>
-                  <p
-                    className={twMerge(
-                      "text-xs leading-relaxed mt-0.5",
-                      isDay ? "text-neutral-500" : "text-zinc-400"
-                    )}
-                  >
-                    {instructions.subtitle}
-                  </p>
-                </div>
+                <h2
+                  id="modal-default-app-title"
+                  className="text-base sm:text-lg font-semibold tracking-tight"
+                >
+                  {instructions.title}
+                </h2>
               </div>
 
               <button
@@ -126,21 +116,6 @@ export function DefaultAppModal({ isOpen, onClose, os }: DefaultAppModalProps): 
                 </li>
               ))}
             </ol>
-
-            {/* Note / Tip callout */}
-            {instructions.note && (
-              <div
-                className={twMerge(
-                  "p-3 rounded-xl flex items-start gap-x-2.5 text-xs leading-relaxed border",
-                  isDay
-                    ? "bg-neutral-50 border-neutral-200 text-neutral-600"
-                    : "bg-zinc-800/60 border-zinc-700 text-zinc-300"
-                )}
-              >
-                <Info size={16} className="shrink-0 mt-0.5 opacity-80" />
-                <span>{instructions.note}</span>
-              </div>
-            )}
 
             {/* Footer */}
             <div className="flex justify-end pt-1">

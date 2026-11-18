@@ -5,6 +5,9 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
+thread_local! { pub(crate) static NETWORK_ACCESS_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FileListResponse {
@@ -158,6 +161,7 @@ impl DriveClient {
         F: Fn(String) -> Fut,
         Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
     {
+        #[cfg(test)] NETWORK_ACCESS_COUNT.with(|count| count.set(count.get() + 1));
         let mut current_token = if !token_override.trim().is_empty() {
             token_override.to_string()
         } else if let Some(ref provider) = self.token_provider {

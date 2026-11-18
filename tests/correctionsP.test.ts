@@ -56,7 +56,7 @@ test("M9-P1 A/B concurrent: confirming A preserves B draft and baseHash", async 
   assert.equal(after.content, "B", "B draft must be preserved");
   assert.equal(after.revision, 2);
   assert.equal(after.baseHash, contentHash("A"), "baseHash must point at confirmed canonical A");
-  assert.ok(after.lastSavedRevision >= 1, "lastSaved must advance without regressing");
+  assert.equal(after.lastSavedRevision, 0, "an editor revision must not advance the disk-draft counter");
   assert.equal(disk.has(draftIdFor("a.txt")), true, "B draft file must still exist");
 });
 

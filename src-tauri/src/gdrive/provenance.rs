@@ -447,6 +447,26 @@ pub fn retire_note(lyra_dir: &Path, name: &str) -> Result<(), String> {
     save_ledger(&path, &ledger)
 }
 
+/// Retire only the identity captured by a completed local deletion. A later
+/// file at the same path may already have its own provenance mapping.
+pub fn retire_deleted_note_if_id(lyra_dir: &Path, name: &str, expected_id: &str) -> Result<(), String> {
+    let path = get_ledger_path(lyra_dir);
+    let Some(mut ledger) = load_ledger(&path)? else { return Ok(()); };
+    if ledger.by_name.get(name).is_some_and(|id| id == expected_id) {
+        ledger.by_name.remove(name);
+    }
+    if let Some(record) = ledger.notes.get_mut(expected_id) {
+        record.retired = true;
+        record.missing_since = Some(now_ms());
+    }
+    save_ledger(&path, &ledger)
+}
+
+pub fn was_deleted_name(lyra_dir: &Path, name: &str) -> Result<bool, String> {
+    let Some(ledger) = load_ledger(&get_ledger_path(lyra_dir))? else { return Ok(false); };
+    Ok(ledger.notes.values().any(|record| record.name == name && record.retired))
+}
+
 /// Only the backend file operations call this after an exclusive create or an
 /// atomic save. A scan never treats a newly appearing filename as creation.
 pub fn record_local_write(
@@ -953,6 +973,23 @@ mod tests {
     use super::*;
     use crate::gdrive::types::FileManifestItem;
     use md5::{Digest, Md5};
+
+    #[test]
+    fn deleted_welcome_record_survives_restart_without_claiming_a_reused_path() {
+        let dir = TempDir::new("welcome_deleted");
+        let name = "¡Bienvenid@ a Lyra!.txt";
+        fs::write(dir.path().join(name), b"welcome").unwrap();
+        record_local_write(dir.path(), name, None, true).unwrap();
+        assert!(!was_deleted_name(dir.path(), name).unwrap());
+        let id = load_ledger(&get_ledger_path(dir.path())).unwrap().unwrap().by_name[name].clone();
+        fs::remove_file(dir.path().join(name)).unwrap();
+        retire_deleted_note_if_id(dir.path(), name, &id).unwrap();
+        assert!(was_deleted_name(dir.path(), name).unwrap());
+        fs::write(dir.path().join(name), b"restored").unwrap();
+        record_local_write(dir.path(), name, None, true).unwrap();
+        assert!(dir.path().join(name).exists());
+        assert!(was_deleted_name(dir.path(), name).unwrap());
+    }
 
     struct TempDir(PathBuf);
 
@@ -2191,5 +2228,58 @@ impl SyncAccountContext {
             .pending
             .get(&self.account_key)
             .map(|p| p.to_view())
+    }
+}
+
+
+#[cfg(test)]
+mod v215_compat_tests {
+    use super::*;
+
+    struct TestDir(std::path::PathBuf);
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "lyra_prov_v215_{label}_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+
+    #[test]
+    fn loads_v215_provenance_ledger_format_without_creating_new_local_artifacts() {
+        let dir = TestDir::new("load");
+        let base = &dir.0;
+        std::fs::write(base.join("Vieja.txt"), b"contenido original v215").unwrap();
+        // Ledger mínimo compatible con v2.0.15 (version 1, estructuras base).
+        let v215 = serde_json::json!({
+            "version": 1,
+            "notes": {},
+            "by_name": {},
+            "sessions": {},
+            "pending": {},
+            "declined": {},
+            "declined_note_ids": {}
+        });
+        let ledger_path = get_ledger_path(base);
+        std::fs::write(&ledger_path, serde_json::to_vec_pretty(&v215).unwrap()).unwrap();
+
+        let loaded = load_ledger(&ledger_path).unwrap().expect("ledger v215 debe cargarse");
+        assert_eq!(loaded.version, 1);
+        assert!(loaded.notes.is_empty());
+        assert_eq!(std::fs::read(base.join("Vieja.txt")).unwrap(), b"contenido original v215");
+
+        // Cargar/operar metadatos de procedencia no debe crear archivos nuevos de identidad/carpetas/borradores.
+        assert!(!base.join(".lyra_local_identity.json").exists());
+        assert!(!base.join(".lyra_local_identity.lock").exists());
+        assert!(!base.join(".lyra_move_journal.json").exists());
+        assert!(!base.join(".lyra_delete_journal.json").exists());
+        assert!(!base.join(".lyra_drafts").exists());
     }
 }

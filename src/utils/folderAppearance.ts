@@ -21,6 +21,7 @@ import {
   Rocket,
   type LucideIcon,
 } from "lucide-react";
+import { bindMetadataWithFeedback, metadataMatches, prepareMetadataWrite } from "./metadataIdentity.ts";
 
 export type FolderColorKey =
   | "default"
@@ -37,7 +38,12 @@ export type FolderColorKey =
   | "cyan"
   | "indigo"
   | "fuchsia"
-  | "rose";
+  | "rose"
+  | "emerald"
+  | "sky"
+  | "yellow"
+  | "stone"
+  | "brown";
 
 export interface FolderColorDef {
   key: FolderColorKey;
@@ -66,6 +72,11 @@ export const FOLDER_COLORS: FolderColorDef[] = [
   { key: "indigo", label: "Índigo", light: "#4f46e5", dark: "#818cf8", swatch: "#6366f1" },
   { key: "fuchsia", label: "Fucsia", light: "#c026d3", dark: "#e879f9", swatch: "#d946ef" },
   { key: "rose", label: "Rosa intenso", light: "#e11d48", dark: "#fb7185", swatch: "#f43f5e" },
+  { key: "emerald", label: "Esmeralda", light: "#059669", dark: "#34d399", swatch: "#10b981" },
+  { key: "sky", label: "Cielo", light: "#0284c7", dark: "#38bdf8", swatch: "#0ea5e9" },
+  { key: "yellow", label: "Amarillo", light: "#ca8a04", dark: "#facc15", swatch: "#eab308" },
+  { key: "stone", label: "Piedra", light: "#78716c", dark: "#a8a29e", swatch: "#78716c" },
+  { key: "brown", label: "Marrón", light: "#92400e", dark: "#d97706", swatch: "#b45309" },
 ];
 
 export const FOLDER_COLOR_MAP = new Map(FOLDER_COLORS.map(c => [c.key, c]));
@@ -137,7 +148,9 @@ export function resolveFolderIcon(key: string | undefined): LucideIcon {
 
 export type FolderAppearanceMap = Record<string, string>;
 
-function readMap(key: "folderColors" | "folderIcons"): FolderAppearanceMap {
+type AppearanceKey = "folderTextColors" | "folderIconColors" | "folderIcons" | "folderColors";
+
+function readRawMap(key: AppearanceKey): FolderAppearanceMap {
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return {};
@@ -153,48 +166,119 @@ function readMap(key: "folderColors" | "folderIcons"): FolderAppearanceMap {
   }
 }
 
+function writeMap(key: AppearanceKey, map: FolderAppearanceMap): void {
+  window.localStorage.setItem(key, JSON.stringify(map));
+}
+
+function migrateLegacyFolderColors(): void {
+  try {
+    const legacy = readRawMap("folderColors");
+    if (Object.keys(legacy).length === 0) return;
+    const text = readRawMap("folderTextColors");
+    const icon = readRawMap("folderIconColors");
+    let changedText = false;
+    let changedIcon = false;
+    for (const [path, value] of Object.entries(legacy)) {
+      if (!(path in text)) { text[path] = value; changedText = true; }
+      if (!(path in icon)) { icon[path] = value; changedIcon = true; }
+    }
+    if (changedText) writeMap("folderTextColors", text);
+    if (changedIcon) writeMap("folderIconColors", icon);
+    window.localStorage.removeItem("folderColors");
+  } catch {
+    // ignorar datos corruptos; no bloquear la UI
+  }
+}
+
+export function getFolderTextColors(): FolderAppearanceMap {
+  migrateLegacyFolderColors();
+  return Object.fromEntries(Object.entries(readRawMap("folderTextColors")).filter(([path]) => metadataMatches("folder", path)));
+}
+
+export function getFolderIconColors(): FolderAppearanceMap {
+  migrateLegacyFolderColors();
+  return Object.fromEntries(Object.entries(readRawMap("folderIconColors")).filter(([path]) => metadataMatches("folder", path)));
+}
+
+/** @deprecated compat: devuelve el mapa de colores de texto (antes color único). */
 export function getFolderColors(): FolderAppearanceMap {
-  return readMap("folderColors");
+  return getFolderTextColors();
 }
 
 export function getFolderIcons(): FolderAppearanceMap {
-  return readMap("folderIcons");
+  return Object.fromEntries(Object.entries(readRawMap("folderIcons")).filter(([path]) => metadataMatches("folder", path)));
 }
 
+export function getFolderTextColor(path: string): string | undefined {
+  return getFolderTextColors()[path];
+}
+
+export function getFolderIconColor(path: string): string | undefined {
+  return getFolderIconColors()[path];
+}
+
+/** @deprecated compat: antes devolvía el color único; ahora el de texto. */
 export function getFolderColor(path: string): string | undefined {
-  return getFolderColors()[path];
+  return getFolderTextColor(path);
 }
 
 export function getFolderIcon(path: string): string | undefined {
   return getFolderIcons()[path];
 }
 
-export function setFolderColor(path: string, colorKey: string | undefined): void {
-  const map = getFolderColors();
+export function setFolderTextColor(path: string, colorKey: string | undefined): void {
+  if (colorKey && colorKey !== "default") prepareMetadataWrite("folder", path);
+  migrateLegacyFolderColors();
+  const map = readRawMap("folderTextColors");
   if (!colorKey || colorKey === "default") delete map[path];
   else map[path] = colorKey;
-  window.localStorage.setItem("folderColors", JSON.stringify(map));
+  writeMap("folderTextColors", map);
+  if (colorKey && colorKey !== "default") bindMetadataWithFeedback("folder", path);
+}
+
+export function setFolderIconColor(path: string, colorKey: string | undefined): void {
+  if (colorKey && colorKey !== "default") prepareMetadataWrite("folder", path);
+  migrateLegacyFolderColors();
+  const map = readRawMap("folderIconColors");
+  if (!colorKey || colorKey === "default") delete map[path];
+  else map[path] = colorKey;
+  writeMap("folderIconColors", map);
+  if (colorKey && colorKey !== "default") bindMetadataWithFeedback("folder", path);
+}
+
+/** @deprecated compat: aplica el mismo color a texto e icono. */
+export function setFolderColor(path: string, colorKey: string | undefined): void {
+  setFolderTextColor(path, colorKey);
+  setFolderIconColor(path, colorKey);
 }
 
 export function setFolderIcon(path: string, iconKey: string | undefined): void {
+  if (iconKey && iconKey !== "default") prepareMetadataWrite("folder", path);
   const map = getFolderIcons();
   if (!iconKey || iconKey === "default") delete map[path];
   else map[path] = iconKey;
-  window.localStorage.setItem("folderIcons", JSON.stringify(map));
+  writeMap("folderIcons", map);
+  if (iconKey && iconKey !== "default") bindMetadataWithFeedback("folder", path);
+}
+
+function remapSingleMap(key: AppearanceKey, oldPath: string, newPath: string): boolean {
+  const prefix = `${oldPath}/`;
+  const rename = (p: string) => (p === oldPath ? newPath : p.startsWith(prefix) ? `${newPath}${p.slice(oldPath.length)}` : p);
+  const map = readRawMap(key);
+  let changed = false;
+  const next: FolderAppearanceMap = {};
+  for (const [p, v] of Object.entries(map)) {
+    const rp = rename(p);
+    if (rp !== p) changed = true;
+    next[rp] = v;
+  }
+  if (changed) writeMap(key, next);
+  return changed;
 }
 
 export function remapFolderAppearance(oldPath: string, newPath: string): void {
-  const prefix = `${oldPath}/`;
-  const rename = (p: string) => (p === oldPath ? newPath : p.startsWith(prefix) ? `${newPath}${p.slice(oldPath.length)}` : p);
-  for (const key of ["folderColors", "folderIcons"] as const) {
-    const map = readMap(key);
-    let changed = false;
-    const next: FolderAppearanceMap = {};
-    for (const [p, v] of Object.entries(map)) {
-      const rp = rename(p);
-      if (rp !== p) changed = true;
-      next[rp] = v;
-    }
-    if (changed) window.localStorage.setItem(key, JSON.stringify(next));
+  migrateLegacyFolderColors();
+  for (const key of ["folderTextColors", "folderIconColors", "folderIcons", "folderColors"] as const) {
+    try { remapSingleMap(key, oldPath, newPath); } catch { /* ignorar */ }
   }
 }

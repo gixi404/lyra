@@ -10,23 +10,23 @@ export interface LogEntry {
   details?: Record<string, unknown>;
 }
 
+const DEV_DIAGNOSTICS_ENABLED =
+  typeof import.meta !== "undefined" &&
+  Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
+
 class EditorDebugger {
   private logs: LogEntry[] = [];
   private readonly maxLogs: number = 300;
   private listeners: Array<() => void> = [];
 
   constructor() {
-    if (typeof window !== "undefined") {
-      window.__lyraDebug = {
-        getLogs: () => this.getFormattedLogs(),
-        saveToFile: () => this.saveToFile(),
-        clear: () => this.clear(),
-        entries: this.logs,
-      };
-    }
+    // Sin exposición global ni recopilación implícita en producción.
   }
 
   public subscribe(listener: () => void): () => void {
+    if (!DEV_DIAGNOSTICS_ENABLED) {
+      return () => {};
+    }
     this.listeners.push(listener);
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
@@ -34,6 +34,7 @@ class EditorDebugger {
   }
 
   private notify(): void {
+    if (!DEV_DIAGNOSTICS_ENABLED) return;
     for (const listener of this.listeners) {
       listener();
     }
@@ -44,7 +45,7 @@ class EditorDebugger {
     name: string,
     details?: Record<string, unknown>
   ): void {
-    if (!((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false) && this.listeners.length === 0) {
+    if (!DEV_DIAGNOSTICS_ENABLED) {
       return;
     }
 
@@ -65,30 +66,30 @@ class EditorDebugger {
       this.logs.shift();
     }
 
-    if (((typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) ?? false)) {
-      const color =
-        category === "TRANSITION"
-          ? "#f59e0b"
-          : category === "RENDER"
-          ? "#8b5cf6"
-          : category === "STATE"
-          ? "#10b981"
-          : "#00a8ff";
-      logger.log(
-        `%c[${category}] ${name} @ ${timeStr} (+${entry.timestamp}ms)`,
-        `color: ${color}; font-weight: bold`,
-        details ?? ""
-      );
-    }
+    const color =
+      category === "TRANSITION"
+        ? "#f59e0b"
+        : category === "RENDER"
+        ? "#8b5cf6"
+        : category === "STATE"
+        ? "#10b981"
+        : "#00a8ff";
+    logger.log(
+      `%c[${category}] ${name} @ ${timeStr} (+${entry.timestamp}ms)`,
+      `color: ${color}; font-weight: bold`,
+      details ?? ""
+    );
 
     this.notify();
   }
 
   public getRecentLogs(count: number = 8): LogEntry[] {
+    if (!DEV_DIAGNOSTICS_ENABLED) return [];
     return this.logs.slice(-count);
   }
 
   public getFormattedLogs(): string {
+    if (!DEV_DIAGNOSTICS_ENABLED) return "";
     const header = `=== LYRA EDITOR DEBUG LOG ===\nDate: ${new Date().toISOString()}\nTotal events: ${this.logs.length}\n\n`;
     const lines = this.logs.map(l => {
       const detailsStr = l.details ? JSON.stringify(l.details) : "";
@@ -98,6 +99,9 @@ class EditorDebugger {
   }
 
   public async saveToFile(): Promise<string> {
+    if (!DEV_DIAGNOSTICS_ENABLED) {
+      return "Diagnóstico deshabilitado";
+    }
     const logContent = this.getFormattedLogs();
     const fileName = `${MAIN_FOLDER}/editor_debug.log`;
     try {
@@ -106,23 +110,12 @@ class EditorDebugger {
       return `Guardado con éxito en ~/Documents/${fileName}`;
     } catch (err) {
       logger.error("[Lyra Debug] Failed to write log file:", err);
-      // Fallback: download as text file in browser context
-      try {
-        const blob = new Blob([logContent], { type: "text/plain" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "editor_debug.log";
-        a.click();
-        URL.revokeObjectURL(url);
-        return "Descargado editor_debug.log";
-      } catch (fallbackErr) {
-        return `Error al guardar: ${String(fallbackErr)}`;
-      }
+      return `Error al guardar: ${String(err)}`;
     }
   }
 
   public clear(): void {
+    if (!DEV_DIAGNOSTICS_ENABLED) return;
     this.logs = [];
     this.notify();
   }

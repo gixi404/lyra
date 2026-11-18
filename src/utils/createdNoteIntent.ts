@@ -1,4 +1,6 @@
 import type { ListViewMode } from "./listScroll.ts";
+import { expandAncestorsForNote, parseFolderExpandedState } from "./folderTree.ts";
+import { getFileDirectory } from "./noteName.ts";
 
 export interface CreatedNoteIntent {
   fileName: string;
@@ -13,6 +15,18 @@ export function setCreatedNoteIntent(fileName: string, view: ListViewMode): void
 
 export function getCreatedNoteIntent(): CreatedNoteIntent | null {
   return pendingIntent;
+}
+
+export function expandCreatedNoteOnReturn(
+  storage: Pick<Storage, "getItem">,
+  persist: (expanded: string) => void,
+): boolean {
+  if (!pendingIntent || pendingIntent.view !== "active") return false;
+  const current = parseFolderExpandedState(storage.getItem("folderExpanded"));
+  const next = expandAncestorsForNote(current, getFileDirectory(pendingIntent.fileName));
+  if (JSON.stringify(next) === JSON.stringify(current)) return false;
+  persist(JSON.stringify(next));
+  return true;
 }
 
 export function consumeCreatedNoteIntent(fileName?: string): CreatedNoteIntent | null {

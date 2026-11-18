@@ -26,13 +26,18 @@ import {
   validateVisibleEntryName,
 } from "../src/utils/visibleNameOps.ts";
 import {
-  getFolderColors,
+  getFolderIconColor,
+  getFolderIconColors,
   getFolderIcons,
+  getFolderTextColor,
+  getFolderTextColors,
   remapFolderAppearance,
   resolveFolderColor,
   resolveFolderIcon,
   setFolderColor,
   setFolderIcon,
+  setFolderIconColor,
+  setFolderTextColor,
 } from "../src/utils/folderAppearance.ts";
 
 function setupWindow() {
@@ -50,6 +55,7 @@ function setupWindow() {
     __TAURI_INTERNALS__: {
       invoke: async () => undefined,
     },
+    __LYRA_METADATA_TEST_BYPASS__: true,
   };
   configStore.setState({ prefTick: 0 } as never);
   fileStore.setState({
@@ -65,32 +71,42 @@ function setupWindow() {
   return local;
 }
 
-test("phase 15/16: folder color and icon are stored per folder, independent, and removable", () => {
+test("phase 15/16: folder text/icon colors and icon are stored per folder, independent, and removable", () => {
   const local = setupWindow();
-  setFolderColor("Trabajo", "blue");
+  setFolderTextColor("Trabajo", "blue");
+  setFolderIconColor("Trabajo", "red");
   setFolderIcon("Trabajo", "star");
-  setFolderColor("Trabajo/Sub", "pink");
-  assert.equal(getFolderColors()["Trabajo"], "blue");
+  setFolderColor("Trabajo/Sub", "pink"); // compat: aplica a texto e icono
+  assert.equal(getFolderTextColors()["Trabajo"], "blue");
+  assert.equal(getFolderIconColors()["Trabajo"], "red");
   assert.equal(getFolderIcons()["Trabajo"], "star");
-  assert.equal(getFolderColors()["Trabajo/Sub"], "pink");
+  assert.equal(getFolderTextColors()["Trabajo/Sub"], "pink");
+  assert.equal(getFolderIconColors()["Trabajo/Sub"], "pink");
   assert.equal(getFolderIcons()["Trabajo/Sub"], undefined);
   assert.ok(resolveFolderColor("blue", true));
   assert.ok(resolveFolderIcon("star"));
-  setFolderColor("Trabajo", undefined);
+
+  setFolderTextColor("Trabajo", undefined);
+  assert.equal(getFolderTextColors()["Trabajo"], undefined);
+  assert.equal(getFolderIconColors()["Trabajo"], "red");
+  setFolderIconColor("Trabajo", undefined);
   setFolderIcon("Trabajo", undefined);
-  assert.equal(getFolderColors()["Trabajo"], undefined);
+  assert.equal(getFolderIconColors()["Trabajo"], undefined);
   assert.equal(getFolderIcons()["Trabajo"], undefined);
   assert.ok(!local.get("folderColors") || JSON.parse(local.get("folderColors")!)["Trabajo"] === undefined);
 });
 
-test("phase 15/16: folder appearance remaps on folder move and is cleaned for redundant/missing data", () => {
+test("phase 15/16: folder appearance remaps on folder move and keeps text/icon colors independent", () => {
   setupWindow();
-  setFolderColor("A", "mint");
-  setFolderColor("A/B", "amber");
+  setFolderTextColor("A", "mint");
+  setFolderIconColor("A", "blue");
+  setFolderTextColor("A/B", "amber");
+  setFolderIconColor("A/B", "red");
   setFolderIcon("A", "book");
   setFolderIcon("A/B", "code");
   remapFolderAppearance("A", "Ren/A");
-  assert.deepEqual(getFolderColors(), { "Ren/A": "mint", "Ren/A/B": "amber" });
+  assert.deepEqual(getFolderTextColors(), { "Ren/A": "mint", "Ren/A/B": "amber" });
+  assert.deepEqual(getFolderIconColors(), { "Ren/A": "blue", "Ren/A/B": "red" });
   assert.deepEqual(getFolderIcons(), { "Ren/A": "book", "Ren/A/B": "code" });
 });
 
@@ -199,7 +215,7 @@ test("phase 17: folder display and editable names use visible metadata with phys
   assert.equal(displayFolderName("Trabajo/Docs"), "Docs");
 });
 
-test("phase 17: visible-name metadata remaps on folder/file moves and is pruned when paths disappear", () => {
+test("phase 17: visible-name metadata remaps on moves and retains unresolved historical values", () => {
   setupWindow();
   setVisibleNameForPath("A/nota.txt", "file", "Idea?.txt");
   setVisibleNameForPath("A", "folder", "Área/A");
@@ -210,26 +226,29 @@ test("phase 17: visible-name metadata remaps on folder/file moves and is pruned 
   assert.equal(getVisibleSegment("A/nota.txt", "file"), undefined);
 
   pruneVisibleNameMetadata(["B/otra.txt"], ["B"]);
-  assert.equal(getVisibleSegment("B/nota.txt", "file"), undefined);
+  assert.equal(getVisibleSegment("B/nota.txt", "file"), "Idea?.txt");
   assert.equal(getVisibleSegment("B", "folder"), "Área/A");
 });
 
 test("phase 17 integrity: reused physical paths must fall back to physical/default metadata", () => {
   setupWindow();
   setVisibleNameForPath("nota.txt", "file", "Nombre visible?.txt");
-  setFolderColor("Docs", "blue");
+  setFolderTextColor("Docs", "blue");
+  setFolderIconColor("Docs", "red");
   setFolderIcon("Docs", "star");
   setVisibleNameForPath("Docs", "folder", "Documentos visibles");
 
   // Reutilización/sustitución detectada: se elimina la asociación personalizada.
   clearVisibleName("nota.txt", "file");
   removeVisibleNamesForPath("Docs", "folder", false);
-  setFolderColor("Docs", undefined);
+  setFolderTextColor("Docs", undefined);
+  setFolderIconColor("Docs", undefined);
   setFolderIcon("Docs", undefined);
 
   assert.equal(displayNoteName("nota.txt"), "nota");
   assert.equal(displayFolderName("Docs"), "Docs");
-  assert.equal(getFolderColors()["Docs"], undefined);
+  assert.equal(getFolderTextColor("Docs"), undefined);
+  assert.equal(getFolderIconColor("Docs"), undefined);
   assert.equal(getFolderIcons()["Docs"], undefined);
   assert.equal(getVisibleSegment("Docs", "folder"), undefined);
 });

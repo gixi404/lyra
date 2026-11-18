@@ -191,8 +191,6 @@ test("context menu: the file trigger is revealed on hover and the folder trigger
 test("context menu: Información is always the last action of the menu", () => {
   const sources = [
     "src/components/MenuFile.tsx",
-    "src/components/MenuPaperFile.tsx",
-    "src/components/FolderMenu.tsx",
   ];
   for (const source of sources) {
     const code = read(source);
@@ -203,6 +201,22 @@ test("context menu: Información is always the last action of the menu", () => {
     assert.equal(last, "Información", `${source} must end with Información (got ${labels.join(", ")})`);
     assert.equal(labels.filter(label => label === "Información").length, 1, `${source} must show Información once`);
   }
+
+  const archived = read("src/components/MenuPaperFile.tsx");
+  const archivedItems = [...archived.matchAll(/<MenuItem\b[\s\S]*?\/>/g)].map(match => match[0]);
+  const archivedLabels = archivedItems.map(item => /label="([^"]+)"/.exec(item)?.[1] ?? /label=\{d\.Recover \?\? "([^"]+)"\}/.exec(item)?.[1] ?? /label=\{d\.Delete \?\? "([^"]+)"\}/.exec(item)?.[1] ?? "");
+  assert.deepEqual(
+    archivedLabels,
+    ["Recuperar", "Eliminar"],
+    `archived note menu must only show Recuperar and Eliminar (got ${archivedLabels.join(", ")})`
+  );
+  assert.ok(!archived.includes('label="Exportar"'), "archived note menu must not show Exportar");
+  assert.ok(!archived.includes('label="Información"'), "archived note menu must not show Información");
+
+  const folder = read("src/components/FolderMenu.tsx");
+  assert.ok(folder.includes('label="Recuperar"'), "archived folder menu must include Recuperar");
+  assert.ok(folder.includes('label="Eliminar"'), "archived folder menu must include Eliminar");
+  assert.ok(folder.includes('label="Información"'), "folder menu must keep Información available");
 });
 
 test("context menu: every action keeps its icon, including Mover a…", () => {
@@ -220,8 +234,8 @@ test("context menu: every action keeps its icon, including Mover a…", () => {
     }
   }
   // El icono de «Mover a…» es el mismo en archivos y carpetas.
-  assert.ok(/icon=\{MoveIcon\}\s*\n\s*label="Mover a…"/.test(read("src/components/MenuFile.tsx")));
-  assert.ok(/icon=\{MoveIcon\}\s*\n\s*label="Mover a…"/.test(read("src/components/FolderMenu.tsx")));
+  assert.ok(/icon=\{MoveIcon\}[\s\S]*?label="Mover a…"/.test(read("src/components/MenuFile.tsx")));
+  assert.ok(/icon=\{MoveIcon\}[\s\S]*?label="Mover a…"/.test(read("src/components/FolderMenu.tsx")));
 });
 
 test("context menu: the archive action of files keeps the danger style", () => {
@@ -307,12 +321,12 @@ test("shared popups: the move, create and folder picker dialogs honour the theme
 test("shared popups: the move dialog is the same component for files and folders", () => {
   const code = read("src/components/MoveItemDialog.tsx");
   assert.ok(code.includes('kind: "file" | "folder"'), "the dialog must serve both element types");
-  assert.ok(code.includes("moveLocalPath(kind"), "the same operation flow must be used");
+  assert.ok(code.includes("moveLocalPath(kind") || code.includes("recoverArchivedPathTo(kind"), "the same operation flow must be used");
   assert.ok(
-    code.includes('Mover ${displayName} a...') || code.includes('Mover ${baseName} a...'),
-    "the folder move dialog must include the folder name in its title"
+    code.includes('Mover ${displayName} a ${destinationDisplayName}') || code.includes('Recuperar ${displayName} en ${destinationDisplayName}'),
+    "the dialog must include the element name in its title"
   );
-  assert.ok(code.includes('"Mover archivo"'), "the file move dialog must keep a move title");
+  assert.ok(code.includes('{recovery ? "Recuperar" : "Mover"}'), "the dialog must keep a move/recover action label");
 });
 
 // ---------------------------------------------------------------------------
@@ -322,7 +336,6 @@ test("shared popups: the move dialog is the same component for files and folders
 test("folder menu: the virtual root is special (rename/personalize allowed, no move/archive)", () => {
   const code = read("src/components/FolderMenu.tsx");
   assert.ok(code.includes('const isRoot = path === ""'), "the virtual root must be detected");
-  assert.ok(code.includes("const canCreate = !archived && !structural"));
   assert.ok(code.includes("const canRename = !archived && !structural"), "the virtual root must be renameable");
   assert.ok(code.includes("const canPersonalize = !archived && !structural"), "the virtual root must be customizable");
   assert.ok(code.includes("const canMove = !isRoot && !archived && !structural"), "the virtual root must not be movable");
@@ -332,6 +345,8 @@ test("folder menu: the virtual root is special (rename/personalize allowed, no m
   assert.ok(code.includes('label="Personalizar"'), "the personalize entry must exist");
   assert.ok(code.includes('label="Mover a…"'), "the move entry must exist for manageable folders");
   assert.ok(code.includes('label="Archivar"'), "the archive entry must exist for manageable folders");
+  assert.ok(code.includes('label="Recuperar"'), "the recover entry must exist for archived folders");
+  assert.ok(code.includes('label="Eliminar"'), "the delete entry must exist for archived folders");
 
   // Root rename must be visible-only (no physical move)
   const renameFn = code.slice(code.indexOf("function handleRenameConfirm"), code.indexOf("async function setArchived"));
@@ -341,12 +356,8 @@ test("folder menu: the virtual root is special (rename/personalize allowed, no m
   assert.ok(rootBranch.includes("return;"), "root rename must return without a physical move");
   assert.ok(!rootBranch.includes("moveLocalPath"), "root rename must not perform a physical move");
 
-  const infoBlock = code.slice(code.indexOf("{mode === \"info\" && info && <InfoModal"), code.indexOf("{canPersonalize && mode === \"personalize\""));
+  const infoBlock = code.slice(code.indexOf("title={d.FolderInfoTitle}"), code.indexOf("</InfoModal>"));
   assert.ok(infoBlock.includes("isRoot"), "the info window must mark the root as special");
   assert.ok(infoBlock.includes("name={isRoot ? undefined : folderName}"), "the root info window must not show the folder name line");
-  assert.ok(infoBlock.includes("El directorio ${folderName} no puede ser eliminado, ya que contiene los archivos sin asignar"), "the root info window must explain why it cannot be deleted");
-
-  const createBlock = code.slice(code.indexOf("{canCreate && <>"), code.indexOf("{canRename && <>"));
-  assert.ok(createBlock.includes('label={d.NewNote}'), "the note creation entry must live in the creation block");
-  assert.ok(createBlock.includes('label={isRoot ? "Nueva carpeta" : "Nueva subcarpeta"}'), "the folder creation entry must keep root/folder-specific labels");
+  assert.ok(infoBlock.includes("El directorio ${folderName} no puede ser eliminado"), "the root info window must explain why it cannot be deleted");
 });

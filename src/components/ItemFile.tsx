@@ -13,7 +13,7 @@ import { searchStore } from "../store/searchStore.ts";
 import { getHighlightSegments, hasNormalizedMatch } from "../utils/searchHighlight.ts";
 import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
 
-function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, onDragEnd, archivedByFolder = false, individuallyArchived = true }: Props): Component {
+function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, onDragEnd, archivedByFolder = false, individuallyArchived = true, needsRecoveryDestination = false }: Props): Component {
   const { goTo } = navigation(),
     { isDay } = themes(),
     paperIsOpen = configStore(state => state.paperIsOpen),
@@ -69,6 +69,7 @@ function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, o
       )}
     >
       <span
+        data-explorer-name
         className="text-sm sm:text-[15px] truncate pr-4 text-left font-normal flex items-center min-w-0"
         title={visibleName}
       >
@@ -85,7 +86,7 @@ function ItemFile({ fileName, isExiting = false, folderDepth = 0, onDragStart, o
 
       <div className="flex items-center gap-x-2 shrink-0">
         {!paperIsOpen && <MenuFile fileName={fileName} />}
-        {paperIsOpen && <MenuPaperFile fileName={fileName} individuallyArchived={individuallyArchived} archivedByFolder={archivedByFolder} />}
+        {paperIsOpen && <MenuPaperFile fileName={fileName} individuallyArchived={individuallyArchived} archivedByFolder={archivedByFolder} needsRecoveryDestination={needsRecoveryDestination} />}
       </div>
     </li>
   );
@@ -101,4 +102,5 @@ interface Props {
   onDragEnd?: () => void;
   archivedByFolder?: boolean;
   individuallyArchived?: boolean;
+  needsRecoveryDestination?: boolean;
 }

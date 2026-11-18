@@ -1,36 +1,37 @@
-import { ArrowUpLeft as RecoveryIcon, Trash as RemoveIcon, Info, FileDown } from "lucide-react";
+import { ArrowUpLeft as RecoveryIcon, Trash as RemoveIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { downloadDir } from "@tauri-apps/api/path";
 import useFile from "../hooks/useFile.ts";
 import useStorage from "../hooks/useStorage.ts";
 import { fileStore } from "../store/fileStore.ts";
 import translations from "../utils/dictionary.ts";
-import { notification } from "../utils/helpers.ts";
+import { navigation, notification } from "../utils/helpers.ts";
 import { isWelcomeFileName, setWelcomeManuallyRestored } from "../utils/welcome.ts";
-import { setArchiveState } from "../utils/archiveState.ts";
+import { setArchiveState, refreshArchiveState } from "../utils/archiveState.ts";
 import { useSyncStore } from "../store/syncStore.ts";
+import { GDRIVE_REMOTE_SYNC_ENABLED } from "../utils/gdriveRemote.ts";
 import type { Component } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
 import Modal from "./Modal.tsx";
-import ModalInfo from "./ModalInfo.tsx";
+import MoveItemDialog from "./MoveItemDialog.tsx";
 import ContextMenu, { MenuItem, MenuSeparator } from "./ContextMenu.tsx";
 import { runExclusiveDeletion } from "../utils/noteDeletion.ts";
 import { displayNoteLabel, displayNoteName, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
+import { PAGES } from "../utils/consts.ts";
 import { logger } from "../utils/logger.ts";
 
-function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder = false }: Props): Component {
+function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder = false, needsRecoveryDestination = false }: Props): Component {
   const d = translations(),
     { getItem } = useStorage(),
-    { deleteFile, readFile } = useFile(),
+    { deleteFile } = useFile(),
     { editedFile, removeFileFromList } = fileStore(
       useShallow(state => ({
         editedFile: state.editedFile,
         removeFileFromList: state.removeFileFromList,
       }))
     ),
-    [isInfoOpen, setIsInfoOpen] = useState<boolean>(false),
+    { goTo } = navigation(),
     [isRestoreOpen, setIsRestoreOpen] = useState<boolean>(false),
+    [isRestoreMoveOpen, setIsRestoreMoveOpen] = useState<boolean>(false),
     [isRestoring, setIsRestoring] = useState<boolean>(false),
     restoringRef = useRef(false),
     [isDeleteOpen, setIsDeleteOpen] = useState<boolean>(false),
@@ -38,78 +39,22 @@ function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder
     isEmptyingArchived = fileStore(state => state.isEmptyingArchived),
     deletionBusy = isDeleting || isEmptyingArchived,
     mountedRef = useRef(false);
-  const canRecoverIndividually = individuallyArchived || !archivedByFolder;
+
+  void archivedByFolder;
+  void individuallyArchived;
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  function sanitizePdfText(text: string): string {
-    return text
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, '"')
-      .replace(/[\u2013\u2014]/g, "-")
-      .replace(/\u2026/g, "...")
-      .replace(/\u2022/g, "*")
-      .normalize("NFC");
-  }
-
-  async function handleExportPDF(): Promise<void> {
-    try {
-      const content = await readFile(fileName);
-      const title = displayNoteName(fileName);
-      const { jsPDF } = await import("jspdf");
-
-      const doc = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "bold");
-      doc.text(sanitizePdfText(title), 20, 20);
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-
-      const maxWidth = 170;
-      const sanitizedContent = sanitizePdfText(content || "");
-      const lines = doc.splitTextToSize(sanitizedContent, maxWidth);
-
-      let y = 30;
-      const lineHeight = 6;
-      const pageHeight = 280;
-
-      for (let i = 0; i < lines.length; i++) {
-        if (y > pageHeight) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.text(lines[i], 20, y);
-        y += lineHeight;
-      }
-
-      doc.save(`${title}.pdf`);
-      notification("success", `${displayNoteLabel(fileName)} se exportó a PDF`);
-
-      try {
-        const downloadsPath = await downloadDir();
-        if (downloadsPath) {
-          await invoke("open_folder", { path: downloadsPath });
-        }
-      } catch (openErr) {
-        logger.warn("Could not open Downloads folder:", openErr);
-      }
-    } catch (err) {
-      logger.error("Error exporting PDF:", err);
-      notification("error", `No se pudo exportar ${displayNoteLabel(fileName)} a PDF`);
-    }
-  }
-
   async function handleRestoreConfirm(): Promise<void> {
     if (restoringRef.current) return;
+    if (needsRecoveryDestination) {
+      setIsRestoreOpen(false);
+      setIsRestoreMoveOpen(true);
+      return;
+    }
     restoringRef.current = true;
     setIsRestoring(true);
     const restoringName = fileName;
@@ -125,7 +70,7 @@ function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder
         throw new Error("The note remains archived after a concurrent change");
       }
       if (mountedRef.current) setIsRestoreOpen(false);
-      if (useSyncStore.getState().isConnected && navigator.onLine) {
+      if (GDRIVE_REMOTE_SYNC_ENABLED && useSyncStore.getState().isConnected && navigator.onLine) {
         void useSyncStore.getState().syncNow(true, true);
       }
 
@@ -170,26 +115,26 @@ function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder
     });
   }
 
+  function onRecoveredToActive(): void {
+    void (async () => {
+      try {
+        await refreshArchiveState();
+      } catch { /* best effort */ }
+      editedFile();
+      goTo(PAGES.list);
+    })();
+  }
+
   return (
     <div className="relative flex items-center">
       <ContextMenu label="Opciones" title="Opciones" reveal="hover">
         <MenuItem
-          icon={FileDown}
-          label="Exportar"
-          onSelect={() => void handleExportPDF()}
-        />
-
-        <MenuSeparator />
-
-        <MenuItem
           icon={RecoveryIcon}
-          label={d.Recover ?? "Restaurar"}
+          label={d.Recover ?? "Recuperar"}
           tone="success"
-          disabled={!canRecoverIndividually}
-          title={!canRecoverIndividually ? "Recupera primero la carpeta que contiene esta nota" : undefined}
           onSelect={() => {
-            if (!canRecoverIndividually) return;
-            setIsRestoreOpen(true);
+            if (needsRecoveryDestination) setIsRestoreMoveOpen(true);
+            else setIsRestoreOpen(true);
           }}
         />
 
@@ -201,21 +146,7 @@ function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder
           tone="danger"
           onSelect={() => setIsDeleteOpen(true)}
         />
-
-        <MenuSeparator />
-
-        <MenuItem
-          icon={Info}
-          label="Información"
-          onSelect={() => setIsInfoOpen(true)}
-        />
       </ContextMenu>
-
-      <ModalInfo
-        isOpen={isInfoOpen}
-        onClose={() => setIsInfoOpen(false)}
-        fileName={fileName}
-      />
 
       <Modal
         isOpen={isRestoreOpen}
@@ -226,6 +157,15 @@ function MenuPaperFile({ fileName, individuallyArchived = true, archivedByFolder
         confirmText={d.Recover}
         cancelText={d.Cancel}
         busy={isRestoring}
+      />
+
+      <MoveItemDialog
+        isOpen={isRestoreMoveOpen}
+        kind="file"
+        itemName={fileName}
+        onClose={() => setIsRestoreMoveOpen(false)}
+        recovery
+        onCompleted={() => onRecoveredToActive()}
       />
 
       <Modal
@@ -249,4 +189,5 @@ interface Props {
   fileName: string;
   individuallyArchived?: boolean;
   archivedByFolder?: boolean;
+  needsRecoveryDestination?: boolean;
 }

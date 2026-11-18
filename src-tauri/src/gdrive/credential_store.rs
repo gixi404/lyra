@@ -13,6 +13,9 @@ pub trait CredentialStore {
 
 pub struct SystemCredentialStore;
 
+#[cfg(test)]
+thread_local! { pub(crate) static CREDENTIAL_ACCESS_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 impl SystemCredentialStore {
     fn entry(user: &str) -> Result<Entry, String> {
         if !cfg!(any(target_os = "windows", target_os = "linux")) {
@@ -24,6 +27,7 @@ impl SystemCredentialStore {
 
 impl CredentialStore for SystemCredentialStore {
     fn read(&self) -> Result<Option<Vec<u8>>, String> {
+        #[cfg(test)] CREDENTIAL_ACCESS_COUNT.with(|count| count.set(count.get() + 1));
         match Self::entry(ACTIVE_ACCOUNT)?.get_secret() {
             Ok(value) => Ok(Some(value)),
             Err(Error::NoEntry) => Ok(None),
@@ -32,11 +36,13 @@ impl CredentialStore for SystemCredentialStore {
     }
 
     fn write(&self, value: &[u8]) -> Result<(), String> {
+        #[cfg(test)] CREDENTIAL_ACCESS_COUNT.with(|count| count.set(count.get() + 1));
         Self::entry(ACTIVE_ACCOUNT)?.set_secret(value)
             .map_err(|_| STORE_ERROR.to_string())
     }
 
     fn delete(&self) -> Result<(), String> {
+        #[cfg(test)] CREDENTIAL_ACCESS_COUNT.with(|count| count.set(count.get() + 1));
         match Self::entry(ACTIVE_ACCOUNT)?.delete_credential() {
             Ok(()) | Err(Error::NoEntry) => Ok(()),
             Err(_) => Err(STORE_ERROR.to_string()),
@@ -44,6 +50,7 @@ impl CredentialStore for SystemCredentialStore {
     }
 
     fn probe(&self) -> Result<(), String> {
+        #[cfg(test)] CREDENTIAL_ACCESS_COUNT.with(|count| count.set(count.get() + 1));
         // A read-only lookup cannot prove that a locked store accepts a new session.
         let user = format!("probe-{}-{}", std::process::id(), rand::random::<u64>());
         let entry = Self::entry(&user)?;

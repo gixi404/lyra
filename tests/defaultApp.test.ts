@@ -92,7 +92,8 @@ test("2. getEffectiveOs utiliza el comando get_platform_os de Tauri o fallback",
 test("3. getDefaultAppInstructions para macOS proporciona los 4 pasos exactos de Finder", () => {
   const instructions = getDefaultAppInstructions("macos");
 
-  assert.equal(instructions.title.includes("macOS"), true);
+  // Título e instrucciones según implementación actual (sin subtítulo/nota en el modal actual).
+  assert.equal(instructions.title, "Configurar Lyra como editor predeterminado");
   assert.equal(instructions.steps.length, 4);
 
   // Paso 1: Seleccionar archivo en Finder
@@ -111,7 +112,7 @@ test("3. getDefaultAppInstructions para macOS proporciona los 4 pasos exactos de
 test("4. getDefaultAppInstructions para Linux guía a través del gestor de archivos", () => {
   const instructions = getDefaultAppInstructions("linux");
 
-  assert.equal(instructions.title.includes("Linux"), true);
+  assert.equal(instructions.title, "Configurar Lyra como editor predeterminado");
   assert.equal(instructions.steps.length >= 4, true);
 
   // Gestor de archivos
@@ -127,7 +128,7 @@ test("4. getDefaultAppInstructions para Linux guía a través del gestor de arch
 test("5. getDefaultAppInstructions para Windows guía a través de Configuración de Windows", () => {
   const instructions = getDefaultAppInstructions("windows");
 
-  assert.equal(instructions.title.includes("Windows"), true);
+  assert.equal(instructions.title, "Configurar Lyra como editor predeterminado");
   assert.equal(instructions.steps.some(s => s.includes("Win + I") || s.includes("Configuración")), true);
   assert.equal(instructions.steps.some(s => s.includes("Aplicaciones predeterminadas")), true);
   assert.equal(instructions.steps.some(s => s.includes("Lyra")), true);

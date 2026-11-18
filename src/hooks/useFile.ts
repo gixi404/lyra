@@ -5,6 +5,7 @@ import { fileStore, type FileItemStats } from "../store/fileStore.ts";
 import { clearDetachedSaveFailure, moveDetachedSaveFailure } from "../utils/editorPersistence.ts";
 import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
+import { formatDisplayDateTime } from "../utils/formatDate.ts";
 import {
   getCompatibleStorageKeys,
   notification,
@@ -24,11 +25,12 @@ import {
 } from "@tauri-apps/plugin-fs";
 import { clearDraft as clearDraftStore, migrateDraftDisk } from "../utils/draftStore.ts";
 import { logger } from "../utils/logger.ts";
-import { getOpenedNoteIdentity, rememberNoteIdentity, remapOpenedNoteIdentities } from "../utils/noteIdentity.ts";
+import { confirmNotePhysicalHash, getOpenedNoteIdentity, getOpenedNotePhysicalHash, rememberNoteIdentity, remapOpenedNoteIdentities } from "../utils/noteIdentity.ts";
 import { runPathOperation } from "../utils/pathOperationLock.ts";
 import { clearVisibleName } from "../utils/visibleNames.ts";
+import { remapMetadataBindings, forgetMetadataBinding } from "../utils/metadataIdentity.ts";
 import { configStore } from "../store/configStore.ts";
-import { scheduleSavePersistentPreferences } from "../utils/persistentPreferences.ts";
+import { savePersistentPreferencesNow, scheduleSavePersistentPreferences } from "../utils/persistentPreferences.ts";
 import {
   clearNoteEOL,
   denormalizeEOL,
@@ -119,6 +121,7 @@ function useFile(): Files {
     } catch { /* metadatos corruptos/ausentes: se ignoran sin bloquear el renombrado */ }
 
     remapOpenedNoteIdentities([{ oldPath: oldName, newPath: nextDisplayName }]);
+    remapMetadataBindings([{ oldPath: oldName, newPath: nextDisplayName }]);
 
     editedFile();
     return nextDisplayName;
@@ -126,16 +129,18 @@ function useFile(): Files {
 
   async function deleteFile(name: string): Promise<void> {
     if (!name) throw new Error("File name is required");
-    if (isWelcomeFileName(name)) {
-      handleWelcomeFileDeleted(name);
-    }
     // Eliminación autoritativa e íntegra vía gdrive_delete_file (registra tombstone antes del borrado físico).
     // No se utiliza fallback que omita el tombstone, garantizando que no haya desincronizaciones ni resurrecciones.
     await invoke("gdrive_delete_file", { fileName: name });
+    if (isWelcomeFileName(name)) {
+      handleWelcomeFileDeleted(name);
+      await savePersistentPreferencesNow();
+    }
     removeCompatibleKeys(name, "", DRAFT_STORAGE_PREFIX);
     removeCompatibleKeys(name, "-modified");
     removeCompatibleKeys(name, "-scroll");
     clearDraftStore(name);
+    forgetMetadataBinding("file", name);
     clearNoteEOL(name, getOpenedNoteIdentity(name));
     syncPaperState(name);
     clearDetachedSaveFailure(name);
@@ -151,13 +156,13 @@ function useFile(): Files {
       Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
       await invoke("create_note", { fileName: displayName, content });
-      const opened = await invoke<{ identity: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: displayName });
+      const opened = await invoke<{ identity: string; physicalHash: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: displayName });
       // No limpiar aquí el nombre visible: en flujos de creación el llamador lo confirma
       // después (y una reutilización detectada invalida metadatos previos, no el recién asignado).
       if (opened.pathReused) {
         try { clearVisibleName(displayName, "file"); } catch { /* metadatos corruptos: no bloquear apertura */ }
       }
-      rememberNoteIdentity(displayName, opened.identity, opened.firstSeen, opened.pathReused);
+      rememberNoteIdentity(displayName, opened.identity, opened.firstSeen, opened.pathReused, opened.physicalHash);
       if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
     } else {
       const { pathFile } = await getFilePath(displayName);
@@ -259,7 +264,10 @@ function useFile(): Files {
       // EditorSyncCoordinator para retener el borrador en localStorage y disparar onSaveError sin degradar a escrituras no atómicas.
       const expectedIdentity = getOpenedNoteIdentity(name);
       if (!expectedIdentity) throw new Error("Note identity is unavailable; reopen the note. Your draft remains recoverable.");
-      await invoke("save_note_atomic", { fileName: name, content: text, expectedIdentity });
+      const expectedPhysicalHash = getOpenedNotePhysicalHash(name);
+      if (!expectedPhysicalHash) throw new Error("Note content version is unavailable; reopen the note. Your draft remains recoverable.");
+      const saved = await invoke<{ physicalHash: string }>("save_note_atomic", { fileName: name, content: text, expectedIdentity, expectedPhysicalHash });
+      confirmNotePhysicalHash(name, expectedIdentity, saved.physicalHash);
       return;
     }
 
@@ -288,12 +296,12 @@ function useFile(): Files {
   const readFile = useCallback(async (name: string): Promise<string> => {
     const isTauri = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
     if (isTauri) {
-      const opened = await invoke<{ identity: string; content: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: name });
+      const opened = await invoke<{ identity: string; content: string; physicalHash: string; firstSeen: boolean; pathReused: boolean; saveUnavailable?: string }>("open_note_identity", { fileName: name });
       // Si la ruta fue reutilizada por otro elemento, los metadatos visuales previos no son confiables.
       if (opened.pathReused) {
         try { clearVisibleName(name, "file"); } catch { /* metadatos corruptos: no bloquear lectura */ }
       }
-      rememberNoteIdentity(name, opened.identity, opened.firstSeen, opened.pathReused);
+      rememberNoteIdentity(name, opened.identity, opened.firstSeen, opened.pathReused, opened.physicalHash);
       if (opened.saveUnavailable) notification("error", `This note can be read, but saves require identity recovery: ${opened.saveUnavailable}`);
 
       const { metadata } = normalizeToLF(opened.content);
@@ -302,7 +310,8 @@ function useFile(): Files {
       if (isWelcomeFileName(name) &&
         (opened.content.includes("<p>") || (opened.content.includes("&oacute;") && opened.content.includes("&ntilde;")))) {
         try {
-          await invoke("save_note_atomic", { fileName: name, content: INTRO_ES, expectedIdentity: opened.identity });
+          const saved = await invoke<{ physicalHash: string }>("save_note_atomic", { fileName: name, content: INTRO_ES, expectedIdentity: opened.identity, expectedPhysicalHash: opened.physicalHash });
+          confirmNotePhysicalHash(name, opened.identity, saved.physicalHash);
         } catch (err) { logger.warn("Could not update legacy welcome file:", err); }
         return INTRO_ES;
       }
@@ -388,20 +397,8 @@ function useFile(): Files {
       sizeFormatted = `${(size / 1024).toFixed(2)} KB`;
     }
 
-    const formatDate = (dateInput: Date | number | null | undefined): string => {
-      if (!dateInput) return "No disponible";
-      const d = new Date(dateInput);
-      if (isNaN(d.getTime())) return "No disponible";
-      const day = d.getDate().toString().padStart(2, "0");
-      const month = (d.getMonth() + 1).toString().padStart(2, "0");
-      const year = d.getFullYear().toString().slice(-2);
-      const hours = d.getHours().toString().padStart(2, "0");
-      const minutes = d.getMinutes().toString().padStart(2, "0");
-      return `${day}/${month}/${year} ${hours}:${minutes}`;
-    };
-
-    const createdAt = formatDate(fileStat.birthtime || fileStat.mtime);
-    const modifiedAt = formatDate(fileStat.mtime || fileStat.birthtime);
+    const createdAt = formatDisplayDateTime(fileStat.birthtime || fileStat.mtime);
+    const modifiedAt = formatDisplayDateTime(fileStat.mtime || fileStat.birthtime);
 
     const charCount = content.length;
     const paragraphCount = content.trim()

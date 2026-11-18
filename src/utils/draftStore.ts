@@ -312,64 +312,28 @@ export function writeDraft(noteName: string, draftContent: string): void {
  * Dos pasos: (1) escribe el estado avanzado, (2) borra si no hay revisión
  * posterior pendiente. Un cierre entre ambos deja `revision <= lastSavedRevision`.
  */
-export function markDraftSaved(noteName: string, savedContent: string, savedRevision: number): void {
+export function markDraftSaved(noteName: string, savedContent: string, _savedRevision: number): void {
   if (!noteName) return;
   const draftId = draftIdFor(noteName);
   const capturedGeneration = currentGeneration(draftId);
   void enqueue(draftId, async () => {
     await seedDraftRevision(noteName);
     if (capturedGeneration !== currentGeneration(draftId)) return;
-    if (savedRevision < (clearedRevision.get(draftId) ?? 0)) return;
     const logicalIdentity = getOpenedNoteIdentity(noteName);
     const eolRecord = getNoteEOL(logicalIdentity, noteName);
     const physicalSaved = eolRecord?.rawOriginal ?? savedContent;
     const savedHash = physicalSaved ? contentHash(physicalSaved) : (baseHashes.get(draftId) ?? "");
     const existing = await readDraftDisk(noteName);
-    if (existing && existing.revision > savedRevision) {
-      // Hay revisión posterior (B) pendiente: no borrarla; solo avanzar
-      // su estado base hacia el nuevo canónico, sin regresión.
-      const payload: DraftDiskPayload = {
-        ...existing,
-        baseHash: savedHash,
-        lastSavedRevision: Math.max(existing.lastSavedRevision, savedRevision),
-        lastSavedHash: savedHash,
-        updatedAt: Date.now(),
-        logicalIdentity,
-        eolMetadata: eolRecord?.metadata ?? existing.eolMetadata,
-      };
-      clearedRevision.set(draftId, Math.max(clearedRevision.get(draftId) ?? 0, savedRevision));
-      baseHashes.set(draftId, savedHash);
-      try {
-        await saveDraftDisk(payload);
-      } catch (err) {
-        logger.warn(`[draftStore] No se pudo actualizar estado guardado de ${noteName}:`, err);
-      }
-      return;
-    }
-    clearedRevision.set(draftId, Math.max(clearedRevision.get(draftId) ?? 0, savedRevision));
     baseHashes.set(draftId, savedHash);
-    const payload: DraftDiskPayload = {
-      v: 1,
-      noteName,
-      draftId,
-      revision: savedRevision,
-      baseHash: savedHash,
-      content: savedContent,
-      lastSavedRevision: clearedRevision.get(draftId) ?? 0,
-      lastSavedHash: savedHash,
-      updatedAt: Date.now(),
-      logicalIdentity,
-      eolMetadata: eolRecord?.metadata,
-    };
+    if (!existing || capturedGeneration !== currentGeneration(draftId)) return;
+    // The coordinator clears a draft only when its exact edit revision was
+    // persisted. This callback has no comparable disk revision, even if bytes
+    // happen to match after an edit and undo.
+    if (existing.logicalIdentity && existing.logicalIdentity !== logicalIdentity) return;
     try {
-      await saveDraftDisk(payload);
+      await saveDraftDisk({ ...existing, baseHash: savedHash, lastSavedHash: savedHash });
     } catch (err) {
-      logger.warn(`[draftStore] No se pudo persistir estado guardado de ${noteName}:`, err);
-    }
-    try {
-      await deleteDraftDisk(draftId);
-    } catch (err) {
-      logger.warn(`[draftStore] No se pudo eliminar respaldo de ${noteName}:`, err);
+      logger.warn(`[draftStore] Could not update draft base for ${noteName}:`, err);
     }
   });
 }

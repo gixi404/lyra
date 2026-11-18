@@ -250,6 +250,11 @@ export async function ensureWelcomeFileState(
       if (isWelcomeDismissed(storageOps)) {
         return { created: false, activeWelcome: null };
       }
+      if (fsOps === defaultFsOps && typeof window !== "undefined" && window.__TAURI_INTERNALS__ &&
+          await invoke<boolean>("was_welcome_deleted")) {
+        setWelcomeDismissed(true, storageOps);
+        return { created: false, activeWelcome: null };
+      }
 
       // Crear el archivo de bienvenida
       const welcomePath = await resolveWelcomePath(MAIN_FOLDER, WELCOME_FILE_NAME);

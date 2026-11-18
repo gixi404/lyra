@@ -48,6 +48,9 @@ import {
   normalizeScrollSpeed,
 } from "../utils/scrollSpeed.ts";
 import { logger } from "../utils/logger.ts";
+import { compareVersions } from "../utils/updaterVersion.ts";
+
+const CHANGELOG_VERSION = "2.1.0";
 
 const d = translations(),
   fontsOptions: Options[] = [
@@ -91,9 +94,10 @@ const d = translations(),
   // NOTA: Al agregar funcionalidades en esta lista o en notas de versión, NO usar formato
   // markdown (**negrita**, cursiva, enlaces, etc.). Cada elemento se muestra como texto plano directo.
   defaultChangelog = [
-    "Nuevo tema 'Sistema'",
-    "Mejoras visuales",
-    "Correción de bugs",
+    "Sistema de organización por carpetas.",
+    "Personaliza el icono y color de tus carpetas.",
+    "Configura Lyra como editor predeterminado.",
+    "Velocidad de desplazamiento configurable.",
   ] as const;
 
 function parseChangelog(raw: string | null): string[] | null {
@@ -128,13 +132,16 @@ function Preferences(): Component {
         : THEMES.auto,
     [currentVersion, setCurrentVersion] = useState<string>(packageJson.version),
     [checkingUpdate, setCheckingUpdate] = useState<boolean>(() => getIsCheckingUpdate()),
-    [releaseNotes, setReleaseNotes] = useState<readonly string[]>(() => {
+    [releaseNotes, setReleaseNotes] = useState<{ version: string; items: readonly string[] }>(() => {
       try {
+        const storedVersion = window.localStorage.getItem("lyra_release_version");
         const raw = window.localStorage.getItem("lyra_release_notes");
         const parsed = parseChangelog(raw);
-        if (parsed) return parsed;
+        if (storedVersion && compareVersions(storedVersion, CHANGELOG_VERSION) > 0 && parsed) {
+          return { version: storedVersion, items: parsed };
+        }
       } catch {}
-      return defaultChangelog;
+      return { version: CHANGELOG_VERSION, items: defaultChangelog };
     }),
     [showDefaultAppModal, setShowDefaultAppModal] = useState<boolean>(false),
     [currentOs, setCurrentOs] = useState<string>("linux"),
@@ -221,7 +228,10 @@ function Preferences(): Component {
       await checkAndApplyUpdate(true);
       const raw = window.localStorage.getItem("lyra_release_notes");
       const parsed = parseChangelog(raw);
-      if (parsed) setReleaseNotes(parsed);
+      const version = window.localStorage.getItem("lyra_release_version");
+      if (parsed && version && compareVersions(version, CHANGELOG_VERSION) > 0) {
+        setReleaseNotes({ version, items: parsed });
+      }
     } catch {
     } finally {
       setCheckingUpdate(false);
@@ -570,11 +580,11 @@ function Preferences(): Component {
                 <div className="flex items-center gap-x-2">
                   <Sparkles size={16} className={isDay ? "text-amber-500" : "text-amber-400"} />
                   <h3 className={twMerge("text-xs sm:text-sm font-semibold", isDay ? "text-neutral-900" : "text-white")}>
-                    Novedades de la versión {currentVersion}
+                    Novedades de la versión {releaseNotes.version}
                   </h3>
                 </div>
                 <ul className={twMerge("flex flex-col gap-y-1 text-xs sm:text-[13px] pl-4 list-disc", isDay ? "text-neutral-700" : "text-zinc-200")}>
-                  {releaseNotes.map((item, idx) => (
+                  {releaseNotes.items.map((item, idx) => (
                     <li key={idx} className="leading-relaxed">
                       {item}
                     </li>

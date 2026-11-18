@@ -13,6 +13,7 @@ import { remapOpenedNoteIdentities } from "./noteIdentity.ts";
 import { runPathOperation } from "./pathOperationLock.ts";
 import { remapExplorerKeys } from "./explorerKeys.ts";
 import { getFileDirectory } from "./noteName.ts";
+import { remapMetadataBindings } from "./metadataIdentity.ts";
 
 export interface PathChange { oldPath: string; newPath: string }
 interface PendingMove {
@@ -272,7 +273,9 @@ export async function migratePreferences(changes: PathChange[], folderMove?: { o
     window.localStorage.setItem("folderOrder", JSON.stringify(remapped));
 
     // Apariencia y nombres visibles: remapear claves con el prefijo de la carpeta movida.
-    for (const appKey of ["folderColors", "folderIcons", "noteVisibleNames", "folderVisibleNames"] as const) {
+    const appearanceKeys = ["folderColors", "folderTextColors", "folderIconColors", "folderIcons"] as const;
+    const visibleNameKeys = ["noteVisibleNames", "folderVisibleNames"] as const;
+    for (const appKey of [...appearanceKeys, ...visibleNameKeys]) {
       let appMap: Record<string, string> = {};
       try {
         const raw: unknown = JSON.parse(window.localStorage.getItem(appKey) ?? "{}");
@@ -280,13 +283,16 @@ export async function migratePreferences(changes: PathChange[], folderMove?: { o
       } catch { /* metadatos corruptos se reinician sin afectar notas */ }
       let changed = false;
       const nextApp: Record<string, string> = {};
+      const isVisibleNameKey = (visibleNameKeys as readonly string[]).includes(appKey);
       for (const [path, value] of Object.entries(appMap)) {
         if (typeof value !== "string") continue;
         const rp = rename(path);
         if (rp !== path) changed = true;
-        // si el segmento físico coincide con el visible tras el movimiento, soltar override
-        const base = rp.split("/").pop() ?? rp;
-        if (value === base) { changed = true; continue; }
+        // si el segmento físico coincide con el visible tras el movimiento, soltar override (solo nombres visibles)
+        if (isVisibleNameKey) {
+          const base = rp.split("/").pop() ?? rp;
+          if (value === base) { changed = true; continue; }
+        }
         nextApp[rp] = value;
       }
       if (changed || Object.keys(nextApp).length !== Object.keys(appMap).length) {
@@ -314,15 +320,20 @@ export async function migratePreferences(changes: PathChange[], folderMove?: { o
     for (const change of changes) fileOrder = relocateEntry(fileOrder, change);
   }
   window.localStorage.setItem("fileOrder", JSON.stringify(fileOrder));
+  remapMetadataBindings(changes, folderMove);
   configStore.getState().bumpPrefTick();
   await savePersistentPreferencesNow();
 }
 
 export async function moveLocalPath(kind: "file" | "folder", sourcePath: string, destinationPath: string): Promise<string[]> {
-  return runPathOperation(() => moveLocalPathLocked(kind, sourcePath, destinationPath));
+  return runPathOperation(() => moveLocalPathLocked(kind, sourcePath, destinationPath, false));
 }
 
-async function moveLocalPathLocked(kind: "file" | "folder", sourcePath: string, destinationPath: string): Promise<string[]> {
+export async function recoverArchivedPathTo(kind: "file" | "folder", sourcePath: string, destinationPath: string): Promise<string[]> {
+  return runPathOperation(() => moveLocalPathLocked(kind, sourcePath, destinationPath, true));
+}
+
+async function moveLocalPathLocked(kind: "file" | "folder", sourcePath: string, destinationPath: string, recovery: boolean): Promise<string[]> {
   if (!(await flushActiveEditors())) throw new Error("An open note could not be saved; move cancelled");
   await flushEditorDrafts();
   const known = fileStore.getState().files;
@@ -332,8 +343,11 @@ async function moveLocalPathLocked(kind: "file" | "folder", sourcePath: string, 
   const drafts = await prepareDrafts(predicted);
   let changes: PathChange[];
   try {
-    changes = await invoke<PathChange[]>(kind === "folder" ? "move_folder_local" : "move_note_local", {
-      sourcePath, destinationPath, ...(kind === "folder" ? { expectedNotes: predicted.map(change => change.oldPath) } : {}),
+    const command = recovery
+      ? (kind === "folder" ? "recover_archived_folder_to" : "recover_archived_note_to")
+      : (kind === "folder" ? "move_folder_local" : "move_note_local");
+    changes = await invoke<PathChange[]>(command, {
+      sourcePath, destinationPath, ...(kind === "folder" && !recovery ? { expectedNotes: predicted.map(change => change.oldPath) } : {}),
     });
   } catch (error) {
     const status = await invoke<"notMoved" | "pending" | "unknown">("local_move_status", {

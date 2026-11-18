@@ -236,17 +236,6 @@ export class EditorSyncCoordinator {
     const snapshotToPersist = this.latestContent;
     const currentEditRev = this.editRevision;
 
-    if (normalizeText(snapshotToPersist) === normalizeText(this.latestPersistedContent)) {
-      this.isDirty = false;
-      if (normalizeText(this.latestPersistedContent) === normalizeText(this.lastSyncedContent)) {
-        this.hasUnsyncedLocalChanges = false;
-      }
-      if (this.options.clearDraft) {
-        this.options.clearDraft(targetFileName);
-      }
-      return Promise.resolve(true);
-    }
-
     const currentSeq = ++this.saveSeq;
 
     let writeSucceeded = false;
@@ -266,7 +255,7 @@ export class EditorSyncCoordinator {
         if (this.fileName === targetFileName) {
           this.latestPersistedContent = snapshotToPersist;
           this.persistedRevision = Math.max(this.persistedRevision, currentEditRev);
-          if (this.latestContent === snapshotToPersist) {
+          if (this.editRevision === currentEditRev) {
             this.isDirty = false;
             if (this.options.clearDraft) {
               this.options.clearDraft(targetFileName);
@@ -282,7 +271,10 @@ export class EditorSyncCoordinator {
       } catch (err) {
         writeSucceeded = false;
         if (this.options.writeDraft) {
-          this.options.writeDraft(targetFileName, snapshotToPersist);
+          // A failed older save must never replace a newer edit's draft.
+          if (this.fileName === targetFileName && this.isDirty) {
+            this.options.writeDraft(targetFileName, this.latestContent);
+          }
         }
         if (this.options.onSaveError) {
           this.options.onSaveError(targetFileName, snapshotToPersist, err);

@@ -6,6 +6,9 @@ import type { LazyCmp } from "./utils/types.ts";
 import { registerNavigator, navigateTo } from "./utils/navigation.ts";
 import { DND_PROTOTYPE_ROUTE_ENABLED } from "./dnd-explorer/config.ts";
 import { scrollDebug, snapshotScrollState } from "./utils/scrollDebug.ts";
+import { expandCreatedNoteOnReturn } from "./utils/createdNoteIntent.ts";
+import { configStore } from "./store/configStore.ts";
+import { scheduleSavePersistentPreferences } from "./utils/persistentPreferences.ts";
 
 const FilePage: LazyCmp = lazy(() => import("./pages/FileContent"));
 const PreferencesPage: LazyCmp = lazy(() => import("./pages/Preferences"));
@@ -36,7 +39,19 @@ export const router = createBrowserRouter(
   }
 );
 
+let previousPath = router.state.location.pathname;
 router.subscribe((state) => {
+  const currentPath = state.location.pathname;
+  if (previousPath !== PAGES.list && currentPath === PAGES.list) {
+    try {
+      expandCreatedNoteOnReturn(window.localStorage, expanded => {
+        window.localStorage.setItem("folderExpanded", expanded);
+        configStore.getState().bumpPrefTick();
+        scheduleSavePersistentPreferences();
+      });
+    } catch { /* Navigation remains available if preferences cannot be saved. */ }
+  }
+  previousPath = currentPath;
   try {
     scrollDebug("router.subscribe", {
       location: state.location?.pathname,

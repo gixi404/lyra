@@ -1,47 +1,35 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { configStore } from "../store/configStore";
 import { fileStore } from "../store/fileStore";
-import { buildFolderTree, type FolderOrder } from "../utils/folderTree";
+import { getOrderedFolderPaths, readFolderOrder } from "../utils/folderTree";
 import { themes } from "../utils/helpers";
 import FolderSelect from "./FolderSelect";
+import Modal from "./Modal";
 
-function readFolderOrder(): FolderOrder {
-  try {
-    const raw = window.localStorage.getItem("folderOrder");
-    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as FolderOrder) : {};
-  } catch {
-    return {};
-  }
-}
-
-function flattenFolderPaths(node: { folders: Array<{ path: string; folders: unknown[] }> }): string[] {
-  const paths: string[] = [];
-  for (const child of node.folders as Array<{ path: string; folders: Array<{ path: string; folders: unknown[] }> }>) {
-    paths.push(child.path);
-    paths.push(...flattenFolderPaths(child));
-  }
-  return paths;
-}
-
-export default function FolderPicker({ folders, value, onChange, onCreateFolder, excluded = [], label = "Carpeta de destino" }: {
+export default function FolderPicker({ folders, value, onChange, onCreateFolder, excluded = [], excludedExact = [], label = "Carpeta de destino", allowRoot = true }: {
   folders: string[];
   value: string;
   onChange: (path: string) => void;
   onCreateFolder: (parent: string, name: string) => Promise<string>;
+  /** Excluye estas rutas y todos sus descendientes. */
   excluded?: string[];
+  /** Excluye únicamente estas rutas exactas (no sus descendientes). */
+  excludedExact?: string[];
   label?: string;
+  allowRoot?: boolean;
 }): JSX.Element {
-  const [name, setName] = useState("");
+  const { isDay } = themes();
+  void isDay;
+  // bg-white bg-zinc-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const { isDay } = themes();
   const archivedFolders = fileStore(state => state.archivedFolders);
   const prefTick = configStore(state => state.prefTick);
+  const excludedExactSet = useMemo(() => new Set(excludedExact), [excludedExact]);
   const available = folders.filter(path =>
     !excluded.some(item => path === item || path.startsWith(`${item}/`))
+    && !excludedExactSet.has(path)
     && !archivedFolders.some(item => path === item || path.startsWith(`${item}/`)));
   // Mantener el mismo orden visual que el explorador (respeta folderOrder manual y orden de árbol).
   const orderedAvailable = useMemo(() => {
@@ -49,8 +37,7 @@ export default function FolderPicker({ folders, value, onChange, onCreateFolder,
     if (availableSet.size === 0) return [];
     const order = readFolderOrder();
     // Construir árbol con todas las carpetas conocidas para preservar el orden relativo ($top/hijos).
-    const tree = buildFolderTree(folders, [], order);
-    const ordered = flattenFolderPaths(tree).filter(path => availableSet.has(path));
+    const ordered = getOrderedFolderPaths(folders, order).filter(path => availableSet.has(path));
     // Incluir por seguridad cualquier carpeta disponible ausente en el árbol/orden (fallback estable).
     if (ordered.length !== available.length) {
       const seen = new Set(ordered);
@@ -62,18 +49,24 @@ export default function FolderPicker({ folders, value, onChange, onCreateFolder,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-lee folderOrder de localStorage ante cambios de preferencias
   }, [available, folders, prefTick]);
 
-  useEffect(() => {
-    if (creating) inputRef.current?.focus();
-  }, [creating]);
+  function openCreate() {
+    setError("");
+    setCreating(true);
+  }
 
-  async function create() {
-    if (!name.trim() || busy) return;
+  function closeCreate() {
+    if (busy) return;
+    setCreating(false);
+    setError("");
+  }
+
+  async function create(name: string) {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
-      const path = await onCreateFolder(value, name.trim());
+      const path = await onCreateFolder(value, name);
       onChange(path);
-      setName("");
       setCreating(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -82,6 +75,8 @@ export default function FolderPicker({ folders, value, onChange, onCreateFolder,
     }
   }
 
+  const title = value ? "Nueva subcarpeta" : "Nueva carpeta";
+
   return (
     <div className="space-y-2">
       {label ? <label className="block text-sm">{label}</label> : null}
@@ -89,29 +84,21 @@ export default function FolderPicker({ folders, value, onChange, onCreateFolder,
         folders={orderedAvailable}
         value={value}
         onChange={onChange}
-        onNewFolder={() => setCreating(true)}
+        onNewFolder={openCreate}
+        allowRoot={allowRoot}
       />
-      {creating && (
-        <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            value={name}
-            onChange={event => setName(event.target.value)}
-            placeholder="Nueva carpeta"
-            aria-label="Nombre de la nueva carpeta"
-            className={`min-w-0 flex-1 rounded-lg border p-2 ${
-              isDay
-                ? "border-neutral-300 bg-white text-neutral-900"
-                : "border-zinc-500 bg-zinc-900 text-zinc-100"
-            }`}
-            onKeyDown={event => { if (event.key === "Enter") void create(); if (event.key === "Escape") setCreating(false); }}
-          />
-          <button type="button" disabled={busy || !name.trim()} onClick={() => void create()}
-            className={`rounded-lg px-3 text-sm disabled:opacity-50 ${isDay ? "bg-accent text-ink" : "bg-zinc-700"}`}>Crear</button>
-          <button type="button" onClick={() => setCreating(false)} className={`rounded-lg px-2 text-sm ${isDay ? "text-neutral-600 hover:bg-neutral-100" : ""}`}>Cancelar</button>
-        </div>
-      )}
-      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+      <Modal
+        isOpen={creating}
+        onClose={closeCreate}
+        onConfirm={(name) => { if (name) void create(name); }}
+        title={title}
+        hasInput
+        inputPlaceholder="Nombre de la carpeta"
+        confirmText="Crear"
+        cancelText="Cancelar"
+        busy={busy}
+        error={error}
+      />
     </div>
   );
 }

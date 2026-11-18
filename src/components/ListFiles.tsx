@@ -17,6 +17,7 @@ import { includeRetainedExits } from "../utils/listExit.ts";
 import { deleteArchivedBatch } from "../utils/archiveDeletion.ts";
 import { displayNoteLabel, displayNoteName, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
 import { getNecessaryFolderPaths } from "../utils/searchProjection.ts";
+import { hasArchivedAncestor } from "../utils/archivePathState.ts";
 import { logger } from "../utils/logger.ts";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
@@ -219,19 +220,22 @@ const ListFiles = memo(({ arr }: Props): Component => {
 
     return (
       <>
-        <FolderExplorer
-          folders={visibleFolders}
-          files={archivedFiles}
-          showRoot={false}
-          archivedPaths={archivedFolders}
-          searchActive={isSearching}
-          renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder individuallyArchived={paperSet.has(name)} isExiting={exitingFiles.includes(name)} />}
-        />
+        {(visibleFolders.length > 0 || archivedFiles.length > 0) && (
+          <FolderExplorer
+            folders={visibleFolders}
+            files={archivedFiles}
+            showRoot={false}
+            archivedPaths={archivedFolders}
+            searchActive={isSearching}
+            renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} archivedByFolder individuallyArchived={paperSet.has(name)} needsRecoveryDestination={hasArchivedAncestor(name, archivedFolders)} isExiting={exitingFiles.includes(name)} />}
+          />
+        )}
         {separateFiles.map((n: string) => (
           <ItemFile
             fileName={n}
             key={n}
             individuallyArchived={paperSet.has(n)}
+            needsRecoveryDestination={false}
             isExiting={exitingFiles.includes(n)}
           />
         ))}
@@ -339,16 +343,16 @@ const ListFiles = memo(({ arr }: Props): Component => {
         ) : (
           <>
             <span
-              key={`dirs-${paperIsOpen}`}
+              key={`files-${paperIsOpen}`}
               className="font-mono text-[11px] font-semibold tracking-widest uppercase animate-list-header"
             >
-              DIRECTORIOS {visibleFoldersCount}
+              ARCHIVOS {visibleFilesCount}
             </span>
             <span
-              key={`files-${paperIsOpen}`}
+              key={`dirs-${paperIsOpen}`}
               className="font-mono text-[11px] font-semibold tracking-widest uppercase pr-1.5 animate-list-header"
             >
-              ARCHIVOS {visibleFilesCount}
+              DIRECTORIOS {visibleFoldersCount}
             </span>
           </>
         )}

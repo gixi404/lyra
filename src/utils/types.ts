@@ -32,9 +32,9 @@ declare global {
     __TAURI_INTERNALS__?: unknown;
     __TAURI__?: unknown;
     __lastTypingTime?: number;
-    __lyraDebug?: unknown;
   }
 }
+
 
 export type {
   Timer,

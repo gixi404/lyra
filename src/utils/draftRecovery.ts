@@ -153,6 +153,25 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
     dateTag,
   } = params;
 
+  if (diskDraft && draft && !isContentEquivalent(diskDraft.content, draft.content)) {
+    // Neither storage's revision is comparable with the other's. Rescue the
+    // other candidate before selecting the one with the later write time.
+    const preferLocal = draft.updatedAt >= diskDraft.updatedAt;
+    const selected = preferLocal ? draft : diskDraft;
+    const other = preferLocal ? diskDraft : draft;
+    try {
+      const rescueName = await writeUniqueRecoveryFile(fileName, other.content, saveFile, fileExists, dateTag);
+      if (!isContentEquivalent(await readFile(rescueName), other.content)) {
+        throw new Error(`Recovery copy could not be verified: ${rescueName}`);
+      }
+      onConflictCreated?.(rescueName);
+      return { action: "use_draft", contentToLoad: selected.content, conflictFileName: rescueName, draftCleared: false };
+    } catch (error) {
+      onConflictError?.(error);
+      return { action: "conflict_failed", contentToLoad: selected.content, draftCleared: false };
+    }
+  }
+
   // 0. Candidatos: respaldo en disco (con revisión) o legacy localStorage.
   // Si hay disco, manda por revisión; si no, queda el legacy con updatedAt.
   const hasDiskDraft = Boolean(diskDraft);
@@ -181,15 +200,8 @@ export async function reconcileDraftState(params: ReconcileDraftParams): Promise
 
   // 3. Respaldo con revisión: obsoleto (crash tras guardado canónico) o canónico avanzado.
   if (hasDiskDraft && diskDraft) {
-    // Borrador ya guardado canónicamente y luego interrumpido antes de limpiar.
-    if (diskDraft.revision <= diskDraft.lastSavedRevision) {
-      clearDraft(fileName);
-      return {
-        action: "use_disk",
-        contentToLoad: diskContent,
-        draftCleared: true,
-      };
-    }
+    // Older payloads may compare disk-draft and editor revisions from unrelated
+    // counters. Only equal content above can prove a draft is redundant.
     // El canónico cambió respecto de la base del borrador: nunca auto-aplicar.
     // Ir a rescate por copia verificada (paso 5).
     const isLegacyDraft = diskDraft.eolMetadata === undefined;

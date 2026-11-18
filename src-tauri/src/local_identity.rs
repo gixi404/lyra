@@ -10,6 +10,18 @@ use serde::{Deserialize, Serialize};
 const DIR: &str = ".lyra_local_identity";
 const REGISTRY: &str = "registry.json";
 
+#[cfg(test)]
+thread_local! { static SAVE_BEFORE_EXCHANGE: std::cell::RefCell<Option<fn(&Path)>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(test)]
+thread_local! { static SAVE_RESCUE_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+fn before_exchange(_target: &Path) {
+    #[cfg(test)]
+    SAVE_BEFORE_EXCHANGE.with(|hook| {
+        if let Some(run) = hook.borrow_mut().take() { run(_target); }
+    });
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct NoteIdentity { id: String, anchor: String }
 
@@ -32,6 +44,20 @@ struct SaveJournal {
     old_anchor: String,
     old_physical: String,
     new_physical: String,
+    #[serde(default)]
+    expected_old_hash: Option<String>,
+}
+
+pub(crate) fn content_sha256(content: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(content))
+}
+
+fn hash_regular(path: &Path) -> Result<String, String> {
+    let mut file = open_regular(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|e| format!("Cannot read note version: {e}"))?;
+    Ok(content_sha256(&bytes))
 }
 
 impl Default for Registry {
@@ -124,6 +150,37 @@ fn open_regular(path: &Path) -> Result<File, String> {
     Ok(file)
 }
 
+pub(crate) fn physical_id_at_path(path: &Path) -> Result<String, String> {
+    physical_id(&open_regular(path)?)
+}
+
+pub(crate) fn registered_note_id(base: &Path, name: &str) -> Result<Option<String>, String> {
+    Ok(read_registry(base)?.notes.get(name).map(|note| note.id.clone()))
+}
+
+pub(crate) fn verified_note_id(base: &Path, name: &str) -> Result<Option<String>, String> {
+    let registry = read_registry(base)?;
+    let Some(note) = registry.notes.get(name) else { return Ok(None) };
+    let path = crate::gdrive::sync::resolve_safe_path(base, name)?;
+    let anchor = metadata_dir(base)?.join(&note.anchor);
+    Ok(same_physical(&path, &anchor)?.then(|| note.id.clone()))
+}
+
+pub(crate) fn retire_deleted_note_if_id(base: &Path, name: &str, expected_id: &str) -> Result<(), String> {
+    let mut registry = read_registry(base)?;
+    let Some(note) = registry.notes.get(name) else { return Ok(()); };
+    if note.id != expected_id { return Ok(()); }
+    let anchor = metadata_dir(base)?.join(&note.anchor);
+    registry.notes.remove(name);
+    registry.retired.insert(name.to_string(), expected_id.to_string());
+    write_registry(base, &registry)?;
+    match fs::remove_file(anchor) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Cannot clear deleted note anchor: {error}")),
+    }
+}
+
 pub(crate) fn same_physical(a: &Path, b: &Path) -> Result<bool, String> {
     let first = open_regular(a)?;
     let second = open_regular(b)?;
@@ -134,16 +191,20 @@ fn journal_path(base: &Path) -> Result<PathBuf, String> { Ok(metadata_dir(base)?
 
 fn read_journal(base: &Path) -> Result<Option<SaveJournal>, String> {
     match fs::read(journal_path(base)?) {
-        Ok(raw) => {
-            let journal: SaveJournal = serde_json::from_slice(&raw).map_err(|e| format!("Invalid local save journal: {e}"))?;
-            if journal.version != 1 || journal.id.is_empty() || journal.temp.contains('/') || journal.backup.contains('/') || journal.new_anchor.contains('/') || journal.old_anchor.contains('/') {
-                return Err("Invalid local save journal fields".into());
-            }
-            Ok(Some(journal))
-        }
+        Ok(raw) => parse_save_journal(&raw).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("Cannot read local save journal: {error}")),
     }
+}
+
+fn parse_save_journal(raw: &[u8]) -> Result<SaveJournal, String> {
+    let journal: SaveJournal = serde_json::from_slice(raw).map_err(|e| format!("Invalid local save journal: {e}"))?;
+    if journal.version != 1 || journal.id.is_empty() || journal.temp.contains('/') || journal.backup.contains('/')
+        || journal.new_anchor.contains('/') || journal.old_anchor.contains('/') || journal.temp.contains('\\')
+        || journal.backup.contains('\\') || journal.new_anchor.contains('\\') || journal.old_anchor.contains('\\') {
+        return Err("Invalid local save journal fields".into());
+    }
+    Ok(journal)
 }
 
 fn write_journal(base: &Path, journal: &SaveJournal) -> Result<(), String> {
@@ -177,7 +238,7 @@ fn exchange(temp: &Path, target: &Path, backup: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn recover_save(base: &Path) -> Result<(), String> {
+fn recover_save_inner(base: &Path) -> Result<(), String> {
     let Some(journal) = read_journal(base)? else { return Ok(()); };
     let target = crate::gdrive::sync::resolve_safe_path(base, &journal.name)?;
     let mut registry = read_registry(base)?;
@@ -202,6 +263,11 @@ pub(crate) fn recover_save(base: &Path) -> Result<(), String> {
         return Ok(());
     }
     if target_is_old && temp.exists() && same_physical(&temp, &new_anchor)? {
+        let expected_hash = journal.expected_old_hash.as_ref().ok_or("Legacy save journal lacks a verifiable content version; manual recovery required")?;
+        if hash_regular(&old_anchor)? != *expected_hash {
+            return Err("Note content changed externally during save; pending edit and physical content were retained".into());
+        }
+        before_exchange(&target);
         #[cfg(target_os = "linux")]
         exchange(&temp, &target)?;
         #[cfg(windows)]
@@ -217,6 +283,16 @@ pub(crate) fn recover_save(base: &Path) -> Result<(), String> {
     if !displaced.exists() || !same_physical(displaced, &old_anchor)? {
         return Err("Displaced file identity is ambiguous; backup and draft were retained".into());
     }
+    let expected_hash = journal.expected_old_hash.as_ref().ok_or("Legacy save journal lacks a verifiable content version; backup retained for manual recovery")?;
+    if hash_regular(displaced)? != *expected_hash {
+        // The old file changed after the pre-exchange check. Restore it to
+        // the public path and keep the new editor bytes in the staging file.
+        #[cfg(target_os = "linux")]
+        exchange(&temp, &target)?;
+        #[cfg(windows)]
+        exchange(&backup, &target, &temp)?;
+        return Err("Note changed during save; external content restored and editor bytes retained for recovery".into());
+    }
     if !same_physical(&target, &new_anchor)? {
         return Err("Final note identity verification failed; backup and draft were retained".into());
     }
@@ -228,9 +304,133 @@ pub(crate) fn recover_save(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn copy_rescue(source: &Path, destination: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if SAVE_RESCUE_FAILURE.with(std::cell::Cell::get) {
+        return Err("Injected rescue storage failure".into());
+    }
+    let before = hash_regular(source)?;
+    if destination.exists() {
+        if hash_regular(destination)? == before { return Ok(()); }
+        return Err("Recovery copy differs from its source; both versions were retained".into());
+    }
+    let mut input = open_regular(source)?;
+    let temp = destination.with_file_name(format!(".lyra_recovery_copy_{:032x}.tmp", rand::random::<u128>()));
+    let mut output = OpenOptions::new().write(true).create_new(true).open(&temp)
+        .map_err(|e| format!("Cannot create independent recovery copy: {e}"))?;
+    std::io::copy(&mut input, &mut output).map_err(|e| format!("Cannot copy recoverable save version: {e}"))?;
+    output.sync_all().map_err(|e| format!("Cannot persist recovery copy: {e}"))?;
+    if hash_regular(source)? != before || hash_regular(&temp)? != before {
+        return Err("Recoverable save version changed while copying; both files retained".into());
+    }
+    fs::hard_link(&temp, destination).map_err(|e| format!("Cannot publish recovery copy exclusively: {e}"))?;
+    fs::remove_file(&temp).map_err(|e| format!("Recovery copy published but temporary link remains: {e}"))?;
+    Ok(())
+}
+
+fn collect_staged(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let meta = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if meta.file_type().is_dir() && !meta.file_type().is_symlink() && name != DIR {
+            collect_staged(&entry.path(), out)?;
+        } else if meta.file_type().is_file() && name.starts_with(".lyra_save_")
+            && (name.ends_with(".tmp") || name.ends_with(".bak")) {
+            out.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn expose_save_conflict(base: &Path, conflict: &Path, nonce: &str) -> Result<(), String> {
+    let journal = fs::read(conflict).ok().and_then(|raw| parse_save_journal(&raw).ok());
+    if let Some(journal) = &journal {
+        let target = crate::gdrive::sync::resolve_safe_path(base, &journal.name)?;
+        let parent = target.parent().ok_or("Invalid save parent")?;
+        let dir = metadata_dir(base)?;
+        for (label, source) in [
+            ("editor", parent.join(&journal.temp)),
+            ("backup", parent.join(&journal.backup)),
+            ("old", dir.join(&journal.old_anchor)),
+            ("new", dir.join(&journal.new_anchor)),
+        ] {
+            if !source.exists() { continue; }
+            open_regular(&source)?;
+            copy_rescue(&source, &base.join(format!("Lyra recovered save {nonce} {label}.md")))?;
+        }
+    } else {
+        let mut staged = Vec::new();
+        collect_staged(base, &mut staged)?;
+        for (index, source) in staged.iter().enumerate() {
+            copy_rescue(source, &base.join(format!("Lyra recovered save {nonce} orphan {index}.md")))?;
+        }
+    }
+    Ok(())
+}
+
+fn quarantine_save_conflict(base: &Path) -> Result<(), String> {
+    let journal_path = journal_path(base)?;
+    if !journal_path.exists() { return Ok(()); }
+    let nonce = format!("{:032x}", rand::random::<u128>());
+    let conflict = metadata_dir(base)?.join(format!("save-conflict-{nonce}.json"));
+    fs::rename(&journal_path, &conflict).map_err(|e| format!("Cannot isolate conflicting save journal: {e}"))?;
+    expose_save_conflict(base, &conflict, &nonce)
+}
+
+pub(crate) fn recover_save(base: &Path) -> Result<(), String> {
+    match recover_save_inner(base) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if let Err(quarantine_error) = quarantine_save_conflict(base) {
+                return Err(format!("{error}; save journal retained or isolated, rescue copy pending: {quarantine_error}"));
+            }
+            Err(format!("{error}; recoverable versions were retained and the conflict was isolated"))
+        }
+    }
+}
+
+pub(crate) fn pending_save_conflicts(base: &Path) -> Result<Vec<String>, String> {
+    let mut conflicts = Vec::new();
+    for entry in fs::read_dir(metadata_dir(base)?).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("save-conflict-") && name.ends_with(".json") {
+            let nonce = name.trim_start_matches("save-conflict-").trim_end_matches(".json");
+            let _ = expose_save_conflict(base, &entry.path(), nonce);
+            conflicts.push(name);
+        }
+    }
+    conflicts.sort();
+    Ok(conflicts)
+}
+
+pub(crate) fn save_conflict_for_note(base: &Path, name: &str) -> Result<bool, String> {
+    for entry in fs::read_dir(metadata_dir(base)?).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        if !file_name.starts_with("save-conflict-") || !file_name.ends_with(".json") { continue; }
+        if fs::read(entry.path()).ok().and_then(|raw| parse_save_journal(&raw).ok())
+            .is_some_and(|journal| journal.name == name) { return Ok(true); }
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
 pub(crate) fn save_note(base: &Path, name: &str, expected_id: &str, content: &[u8]) -> Result<i64, String> {
+    let expected_hash = hash_regular(&base.join(name))?;
+    save_note_versioned(base, name, expected_id, &expected_hash, content)
+}
+
+pub(crate) fn save_note_versioned(base: &Path, name: &str, expected_id: &str, expected_hash: &str, content: &[u8]) -> Result<i64, String> {
     recover_save(base)?;
+    if save_conflict_for_note(base, name)? {
+        return Err("This note has a pending save conflict; its versions must be recovered before saving".into());
+    }
     let target = verify_note(base, name, expected_id)?;
+    if hash_regular(&target)? != expected_hash {
+        return Err("Note content changed externally; save refused and draft retained".into());
+    }
     let dir = metadata_dir(base)?;
     let nonce = format!("{:032x}", rand::random::<u128>());
     let temp_name = format!(".lyra_save_{nonce}.tmp");
@@ -246,7 +446,7 @@ pub(crate) fn save_note(base: &Path, name: &str, expected_id: &str, content: &[u
     let old_anchor = dir.join(&old_anchor_name);
     let old_physical = physical_id(&open_regular(&old_anchor)?)?;
     let new_physical = physical_id(&open_regular(&new_anchor)?)?;
-    let journal = SaveJournal { version: 1, name: name.into(), id: expected_id.into(), temp: temp_name, backup: backup_name, new_anchor: new_anchor_name, old_anchor: old_anchor_name, old_physical, new_physical };
+    let journal = SaveJournal { version: 1, name: name.into(), id: expected_id.into(), temp: temp_name, backup: backup_name, new_anchor: new_anchor_name, old_anchor: old_anchor_name, old_physical, new_physical, expected_old_hash: Some(expected_hash.to_string()) };
     write_journal(base, &journal)?;
     recover_save(base)?;
     let modified = fs::metadata(&target).ok().and_then(|meta| meta.modified().ok())
@@ -364,6 +564,81 @@ mod tests {
     }
 
     #[test]
+    fn versioned_save_rejects_external_in_place_change_and_keeps_both_versions() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, original) = open_note(base, "one.md").unwrap();
+        let expected = content_sha256(original.as_bytes());
+        let before = physical_id_at_path(&base.join("one.md")).unwrap();
+        fs::write(base.join("one.md"), b"external").unwrap();
+        assert_eq!(physical_id_at_path(&base.join("one.md")).unwrap(), before);
+        assert!(save_note_versioned(base, "one.md", &id, &expected, b"editor").is_err());
+        assert_eq!(fs::read(base.join("one.md")).unwrap(), b"external");
+        assert_eq!(open_note(base, "one.md").unwrap().1, "external");
+        assert!(save_note_versioned(base, "one.md", &id, &content_sha256(b"external"), b"editor").is_ok());
+        assert_eq!(fs::read(base.join("one.md")).unwrap(), b"editor");
+    }
+
+    #[test]
+    fn versioned_save_restores_external_write_at_last_exchange_window() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, original) = open_note(base, "one.md").unwrap();
+        SAVE_BEFORE_EXCHANGE.with(|hook| *hook.borrow_mut() = Some(|path| {
+            fs::write(path, b"external").unwrap();
+        }));
+        let result = save_note_versioned(base, "one.md", &id, &content_sha256(original.as_bytes()), b"editor");
+        assert!(result.is_err());
+        assert_eq!(fs::read(base.join("one.md")).unwrap(), b"external");
+        assert!(read_journal(base).unwrap().is_none());
+        assert_eq!(pending_save_conflicts(base).unwrap().len(), 1);
+        let rescue = fs::read_dir(base).unwrap().filter_map(Result::ok)
+            .find(|entry| entry.file_name().to_string_lossy().contains("recovered save")
+                && fs::read(entry.path()).ok().as_deref() == Some(b"editor"))
+            .expect("editor content must remain visible for recovery");
+        assert_eq!(fs::read(rescue.path()).unwrap(), b"editor");
+        let conflict = pending_save_conflicts(base).unwrap().remove(0);
+        let journal: SaveJournal = serde_json::from_slice(&fs::read(metadata_dir(base).unwrap().join(conflict)).unwrap()).unwrap();
+        fs::write(base.join(journal.temp), b"later external edit").unwrap();
+        assert_eq!(fs::read(rescue.path()).unwrap(), b"editor", "rescue must not share a mutable inode with staging");
+        fs::write(base.join("two.md"), b"second").unwrap();
+        let (second_id, second) = open_note(base, "two.md").unwrap();
+        save_note_versioned(base, "two.md", &second_id, &content_sha256(second.as_bytes()), b"saved").unwrap();
+        assert_eq!(fs::read(base.join("two.md")).unwrap(), b"saved");
+    }
+
+    #[test]
+    fn failed_rescue_copy_isolates_conflict_and_retries_without_blocking_other_notes() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, original) = open_note(base, "one.md").unwrap();
+        SAVE_BEFORE_EXCHANGE.with(|hook| *hook.borrow_mut() = Some(|path| fs::write(path, b"external").unwrap()));
+        SAVE_RESCUE_FAILURE.with(|failure| failure.set(true));
+        let result = save_note_versioned(base, "one.md", &id, &content_sha256(original.as_bytes()), b"pending editor");
+        assert!(result.is_err());
+        assert!(read_journal(base).unwrap().is_none());
+        assert!(save_conflict_for_note(base, "one.md").unwrap());
+        assert_eq!(fs::read(base.join("one.md")).unwrap(), b"external");
+        let conflict_name = fs::read_dir(metadata_dir(base).unwrap()).unwrap().filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .find(|name| name.starts_with("save-conflict-")).unwrap();
+        let journal: SaveJournal = serde_json::from_slice(&fs::read(metadata_dir(base).unwrap().join(&conflict_name)).unwrap()).unwrap();
+        assert_eq!(fs::read(base.join(&journal.temp)).unwrap(), b"pending editor");
+        assert!(save_note_versioned(base, "one.md", &id, &content_sha256(b"external"), b"overwrite").is_err());
+        fs::write(base.join("two.md"), b"second").unwrap();
+        let (other_id, other_content) = open_note(base, "two.md").unwrap();
+        save_note_versioned(base, "two.md", &other_id, &content_sha256(other_content.as_bytes()), b"saved").unwrap();
+        assert_eq!(fs::read(base.join("two.md")).unwrap(), b"saved");
+        assert_eq!(fs::read(base.join(&journal.temp)).unwrap(), b"pending editor");
+        SAVE_RESCUE_FAILURE.with(|failure| failure.set(false));
+        assert_eq!(pending_save_conflicts(base).unwrap(), [conflict_name]);
+        assert!(fs::read_dir(base).unwrap().filter_map(Result::ok).any(|entry|
+            entry.file_name().to_string_lossy().contains("recovered save")
+                && fs::read(entry.path()).ok().as_deref() == Some(b"pending editor")));
+        assert!(save_conflict_for_note(base, "one.md").unwrap());
+    }
+
+    #[test]
     fn reused_path_and_external_rename_refuse_pending_save() {
         let dir = fixture();
         let base = dir.path();
@@ -374,6 +649,97 @@ mod tests {
         assert_eq!(fs::read_to_string(base.join("one.md")).unwrap(), "replacement");
         assert_eq!(fs::read_to_string(base.join("moved.md")).unwrap(), "original");
         assert!(open_note(base, "one.md").is_err());
+    }
+
+    #[test]
+    fn metadata_identity_rejects_replacement_even_with_identical_bytes() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, _) = open_note(base, "one.md").unwrap();
+        assert_eq!(verified_note_id(base, "one.md").unwrap(), Some(id));
+        fs::rename(base.join("one.md"), base.join("old.md")).unwrap();
+        fs::write(base.join("one.md"), "original").unwrap();
+        assert_eq!(verified_note_id(base, "one.md").unwrap(), None);
+    }
+
+    #[test]
+    fn malformed_save_journal_preserves_staged_bytes_and_does_not_block_other_notes() {
+        let dir = fixture();
+        let base = dir.path();
+        fs::write(base.join(".lyra_save_incomplete.tmp"), b"pending editor text").unwrap();
+        fs::write(journal_path(base).unwrap(), b"{broken").unwrap();
+        assert!(recover_save(base).is_err());
+        assert_eq!(pending_save_conflicts(base).unwrap().len(), 1);
+        assert!(read_journal(base).unwrap().is_none());
+        assert_eq!(fs::read(base.join(".lyra_save_incomplete.tmp")).unwrap(), b"pending editor text");
+        assert!(fs::read_dir(base).unwrap().filter_map(Result::ok).any(|entry|
+            entry.file_name().to_string_lossy().contains("recovered save")
+                && fs::read(entry.path()).ok().as_deref() == Some(b"pending editor text")));
+        assert!(recover_save(base).is_ok());
+        let (id, text) = open_note(base, "one.md").unwrap();
+        save_note_versioned(base, "one.md", &id, &content_sha256(text.as_bytes()), b"new content").unwrap();
+    }
+
+    #[test]
+    fn scenario_b_external_content_and_persisted_editor_draft_survive_restart() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, opened) = open_note(base, "one.md").unwrap();
+        let draft_id = "abcdef1234567890";
+        crate::drafts::save_draft_file(base, draft_id, r#"{"content":"editor B"}"#).unwrap();
+        fs::write(base.join("one.md"), b"external C").unwrap();
+        assert!(save_note_versioned(base, "one.md", &id, &content_sha256(opened.as_bytes()), b"editor B").is_err());
+        assert_eq!(fs::read(base.join("one.md")).unwrap(), b"external C");
+        assert!(crate::drafts::read_draft_file(base, draft_id).unwrap().unwrap().contains("editor B"));
+        assert_eq!(open_note(base, "one.md").unwrap().1, "external C");
+        assert!(crate::drafts::read_draft_file(base, draft_id).unwrap().unwrap().contains("editor B"));
+    }
+
+    #[test]
+    fn legacy_save_journal_without_physical_hash_is_quarantined_with_visible_editor_copy() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, _) = open_note(base, "one.md").unwrap();
+        let old_anchor_name = read_registry(base).unwrap().notes["one.md"].anchor.clone();
+        let old_anchor = metadata_dir(base).unwrap().join(&old_anchor_name);
+        let temp_name = ".lyra_save_legacy.tmp";
+        let temp = base.join(temp_name);
+        fs::write(&temp, b"legacy pending editor").unwrap();
+        let new_anchor_name = format!("{id}.legacy.new");
+        let new_anchor = metadata_dir(base).unwrap().join(&new_anchor_name);
+        fs::hard_link(&temp, &new_anchor).unwrap();
+        write_journal(base, &SaveJournal {
+            version: 1, name: "one.md".into(), id,
+            temp: temp_name.into(), backup: ".lyra_save_legacy.bak".into(),
+            new_anchor: new_anchor_name, old_anchor: old_anchor_name,
+            old_physical: physical_id_at_path(&old_anchor).unwrap(),
+            new_physical: physical_id_at_path(&new_anchor).unwrap(),
+            expected_old_hash: None,
+        }).unwrap();
+        assert!(recover_save(base).is_err());
+        assert_eq!(fs::read(base.join("one.md")).unwrap(), b"original");
+        assert_eq!(pending_save_conflicts(base).unwrap().len(), 1);
+        assert!(fs::read_dir(base).unwrap().filter_map(Result::ok).any(|entry|
+            entry.file_name().to_string_lossy().contains("recovered save")
+                && fs::read(entry.path()).ok().as_deref() == Some(b"legacy pending editor")));
+    }
+
+    #[test]
+    fn scenario_c_external_move_during_pending_save_preserves_both_versions_and_identity() {
+        let dir = fixture();
+        let base = dir.path();
+        let (id, original) = open_note(base, "one.md").unwrap();
+        SAVE_BEFORE_EXCHANGE.with(|hook| *hook.borrow_mut() = Some(|path| {
+            fs::rename(path, path.with_file_name("moved.md")).unwrap();
+        }));
+        assert!(save_note_versioned(base, "one.md", &id, &content_sha256(original.as_bytes()), b"pending editor").is_err());
+        assert!(!base.join("one.md").exists());
+        assert_eq!(fs::read(base.join("moved.md")).unwrap(), b"original");
+        assert!(fs::read_dir(base).unwrap().filter_map(Result::ok).any(|entry|
+            entry.file_name().to_string_lossy().contains("recovered save")
+                && fs::read(entry.path()).ok().as_deref() == Some(b"pending editor")));
+        remap_notes(base, &[("one.md".into(), "moved.md".into())]).unwrap();
+        assert_eq!(verified_note_id(base, "moved.md").unwrap(), Some(id));
     }
 
     #[test]
@@ -390,7 +756,8 @@ mod tests {
         let journal = SaveJournal { version: 1, name: "one.md".into(), id: id.clone(), temp: temp_name.into(),
             backup: ".lyra_save_fixture.bak".into(), new_anchor: new_anchor_name.clone(), old_anchor: old_anchor_name.clone(),
             old_physical: physical_id(&open_regular(&identity_dir.join(old_anchor_name)).unwrap()).unwrap(),
-            new_physical: physical_id(&open_regular(&identity_dir.join(new_anchor_name)).unwrap()).unwrap() };
+            new_physical: physical_id(&open_regular(&identity_dir.join(new_anchor_name)).unwrap()).unwrap(),
+            expected_old_hash: Some(content_sha256(b"original")) };
         write_journal(base, &journal).unwrap();
         recover_save(base).unwrap();
         recover_save(base).unwrap();

@@ -10,7 +10,7 @@ import { verifyMainFolder } from "../utils/helpers.ts";
 import type { Component } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
 import { clearVisibleName, pruneVisibleNameMetadata, removeVisibleNamesForPath } from "../utils/visibleNames.ts";
-import { getFolderColors, getFolderIcons, setFolderColor, setFolderIcon } from "../utils/folderAppearance.ts";
+import { getFolderIconColors, getFolderIcons, getFolderTextColors, setFolderIcon, setFolderIconColor, setFolderTextColor } from "../utils/folderAppearance.ts";
 import { pruneExplorerKeys } from "../utils/explorerKeys.ts";
 import {
   applyListScroll,
@@ -29,6 +29,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { recoverPendingLocalMove } from "../utils/pathOperations.ts";
 import { notification } from "../utils/helpers.ts";
 import { consumeCreatedNoteIntent, getCreatedNoteIntent } from "../utils/createdNoteIntent.ts";
+import { archiveMetadataForReplacement, hasMetadataBinding, refreshMetadataIdentities } from "../utils/metadataIdentity.ts";
+import { initStartupPreferences } from "../utils/persistentPreferences.ts";
 
 function List(): Component {
   const { getFilesWithStats } = useFile(),
@@ -292,10 +294,15 @@ function List(): Component {
         if (!disposed) notification("error", `Un movimiento local necesita recuperación: ${String(error)}. Los borradores se conservaron.`);
       }
       if (disposed) return;
+      void invoke<string[]>("pending_save_conflicts").then(conflicts => {
+        if (!disposed && conflicts.length > 0) notification("error", "Hay guardados que requieren recuperación. El journal y los temporales se conservaron; las copias visibles se crearán al disponer de espacio y permisos.");
+      }).catch(() => undefined);
+      if (!fileStore.getState().isInitialized) await initStartupPreferences();
+      if (disposed) return;
       cleanupInit = startLocalFirstListInitialization(
         getFilesWithStats,
         verifyMainFolder,
-        ({ files: filesList, stats, folders, warnings }) => {
+        async ({ files: filesList, stats, folders, warnings }) => {
           const applyGen = fileStore.getState().listingGeneration;
           const currentState = fileStore.getState();
           const hasExistingData = shouldPreserveExplorerDataOnInit(currentState);
@@ -320,9 +327,12 @@ function List(): Component {
               }
               for (const path of folders) {
                 if (!prev.folders.has(path) && prev.everSeenFolders.has(path)) {
+                  if (hasMetadataBinding("folder", path)) continue;
+                  archiveMetadataForReplacement("folder", path);
                   // Apariencia/nombre visible no verificables sin continuidad inequívoca tras desaparición.
                   try { removeVisibleNamesForPath(path, "folder", false); } catch { /* ignorar */ }
-                  try { if (getFolderColors()[path]) setFolderColor(path, undefined); } catch { /* ignorar */ }
+                  try { if (getFolderTextColors()[path]) setFolderTextColor(path, undefined); } catch { /* ignorar */ }
+                  try { if (getFolderIconColors()[path]) setFolderIconColor(path, undefined); } catch { /* ignorar */ }
                   try { if (getFolderIcons()[path]) setFolderIcon(path, undefined); } catch { /* ignorar */ }
                 }
               }
@@ -342,9 +352,29 @@ function List(): Component {
           } catch { /* metadatos corruptos/ausentes no deben bloquear el listado */ }
           try { pruneVisibleNameMetadata(filesList, folders); } catch { /* metadatos corruptos/ausentes no deben bloquear el listado */ }
           try { pruneExplorerKeys(filesList, folders); } catch { /* no bloquear */ }
-          setFilesWithStats(filesList, stats);
-          setFolders(folders);
-          setFolderListingWarnings(warnings ?? []);
+          if (!hasExistingData) {
+            await refreshMetadataIdentities(filesList, folders);
+            if (disposed || fileStore.getState().listingGeneration !== applyGen) return;
+            let archivedFolders: string[] = [];
+            let folderArchiveError: string | null = null;
+            try {
+              archivedFolders = await invoke<string[]>("list_archived_folders");
+            } catch (error) {
+              logger.error("Could not read archived folders", error);
+              folderArchiveError = String(error);
+            }
+            if (disposed || fileStore.getState().listingGeneration !== applyGen) return;
+            fileStore.setState({
+              files: filesList, statsMap: stats, folders, isInitialized: true,
+              folderListingWarnings: warnings ?? [], archivedFolders, folderArchiveError, folderArchiveLoaded: true,
+            });
+            return;
+          } else {
+            void refreshMetadataIdentities(filesList, folders);
+            setFilesWithStats(filesList, stats);
+            setFolders(folders);
+            setFolderListingWarnings(warnings ?? []);
+          }
           void invoke<string[]>("list_archived_folders").then(archived => {
             if (disposed || fileStore.getState().listingGeneration !== applyGen) return;
             if (hasExistingData) {
@@ -403,8 +433,11 @@ function List(): Component {
               }
               for (const path of listing.folders) {
                 if (!prev.folders.has(path) && prev.everSeenFolders.has(path)) {
+                  if (hasMetadataBinding("folder", path)) continue;
+                  archiveMetadataForReplacement("folder", path);
                   try { removeVisibleNamesForPath(path, "folder", false); } catch { /* ignorar */ }
-                  try { if (getFolderColors()[path]) setFolderColor(path, undefined); } catch { /* ignorar */ }
+                  try { if (getFolderTextColors()[path]) setFolderTextColor(path, undefined); } catch { /* ignorar */ }
+                  try { if (getFolderIconColors()[path]) setFolderIconColor(path, undefined); } catch { /* ignorar */ }
                   try { if (getFolderIcons()[path]) setFolderIcon(path, undefined); } catch { /* ignorar */ }
                 }
               }
@@ -424,6 +457,7 @@ function List(): Component {
           } catch { /* ignorar */ }
           try { pruneVisibleNameMetadata(listing.files, listing.folders); } catch { /* metadatos corruptos/ausentes no deben bloquear el listado */ }
           try { pruneExplorerKeys(listing.files, listing.folders); } catch { /* no bloquear */ }
+          void refreshMetadataIdentities(listing.files, listing.folders);
           setFilesWithStats(listing.files, listing.stats);
           setFolders(listing.folders);
         } else {
@@ -446,6 +480,7 @@ function List(): Component {
           } catch { /* ignorar */ }
           try { pruneVisibleNameMetadata(listing.files, listing.folders); } catch { /* ignorar */ }
           try { pruneExplorerKeys(listing.files, listing.folders); } catch { /* no bloquear */ }
+          void refreshMetadataIdentities(listing.files, listing.folders);
         }
         setFolderListingWarnings(listing.warnings ?? []);
         const archived = await invoke<string[]>("list_archived_folders");

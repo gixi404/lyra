@@ -4,8 +4,6 @@ import { twMerge } from "tailwind-merge";
 import usePreferences from "../hooks/usePreferences.ts";
 import useStorage from "../hooks/useStorage.ts";
 import SearchReplaceModal, { type SearchState } from "./SearchReplaceModal.tsx";
-// Descomentar para activar el HUD de debug en pantalla:
-// import EditorDebugHUD from "./EditorDebugHUD.tsx";
 import { editorDebug } from "../utils/editorDebug.ts";
 import { navigation, themes } from "../utils/helpers.ts";
 import { PAGES } from "../utils/consts.ts";
@@ -1112,13 +1110,6 @@ function TinyEditor({
         onThumbPointerMove={handleThumbPointerMove}
         onThumbPointerUp={handleThumbPointerUp}
       />
-
-      {/* Descomentar para activar el HUD visual de debug en pantalla: */}
-      {/* <EditorDebugHUD
-        startIdx={effectiveStart}
-        endIdx={effectiveEnd}
-        textareaRef={textareaRef}
-      /> */}
     </div>
   );
 }

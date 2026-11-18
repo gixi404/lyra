@@ -3,6 +3,7 @@ import { displayFolderName, displayNoteName, getVisibleSegment, physicalPathFrom
 import { fileStore } from "../store/fileStore.ts";
 import { configStore } from "../store/configStore.ts";
 import { scheduleSavePersistentPreferences } from "./persistentPreferences.ts";
+import { bindMetadataWithFeedback, prepareMetadataWrite } from "./metadataIdentity.ts";
 
 export interface VisibleNameValidation {
   ok: boolean;
@@ -114,6 +115,7 @@ export function resolveRenamedFolderPhysicalPath(visibleInput: string, currentPh
 }
 
 export function commitVisibleName(physicalPath: string, kind: "file" | "folder", visibleSegment: string): void {
+  prepareMetadataWrite(kind, physicalPath);
   const physicalSeg = getFileBaseName(physicalPath);
   if (visibleSegment === physicalSeg) {
     // drop override if any
@@ -130,6 +132,7 @@ export function commitVisibleName(physicalPath: string, kind: "file" | "folder",
     } catch { /* ignore */ }
   } else {
     setVisibleNameForPath(physicalPath, kind, visibleSegment);
+    bindMetadataWithFeedback(kind, physicalPath);
   }
   configStore.getState().bumpPrefTick();
   scheduleSavePersistentPreferences();

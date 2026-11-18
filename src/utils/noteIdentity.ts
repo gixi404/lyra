@@ -1,11 +1,20 @@
 import { remapNoteEOL } from "./eol.ts";
 
-interface OpenedIdentity { id: string; firstSeen: boolean; pathReused: boolean }
+interface OpenedIdentity { id: string; firstSeen: boolean; pathReused: boolean; physicalHash?: string }
 const openedIdentities = new Map<string, OpenedIdentity>();
 const pendingDraftConflicts = new Set<string>();
 
-export function rememberNoteIdentity(path: string, identity: string, firstSeen = false, pathReused = false): void {
-  openedIdentities.set(path, { id: identity, firstSeen, pathReused });
+export function rememberNoteIdentity(path: string, identity: string, firstSeen = false, pathReused = false, physicalHash?: string): void {
+  openedIdentities.set(path, { id: identity, firstSeen, pathReused, physicalHash });
+}
+
+export function getOpenedNotePhysicalHash(path: string): string | undefined {
+  return openedIdentities.get(path)?.physicalHash;
+}
+
+export function confirmNotePhysicalHash(path: string, identity: string, physicalHash: string): void {
+  const opened = openedIdentities.get(path);
+  if (opened?.id === identity) opened.physicalHash = physicalHash;
 }
 
 export function getOpenedNoteIdentity(path: string): string | undefined {

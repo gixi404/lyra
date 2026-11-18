@@ -76,3 +76,10 @@ export const searchStore = create<SearchStoreState>(set => ({
     });
   },
 }));
+
+export function hydrateSortOptionFromStorage(): void {
+  const sortOption = getInitialSortOption();
+  const current = searchStore.getState();
+  if (current.sortOption === sortOption) return;
+  searchStore.setState({ sortOption, sortOptions: [sortOption], order: sortOption !== "za" });
+}

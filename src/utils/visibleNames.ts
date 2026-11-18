@@ -1,4 +1,5 @@
 import { getFileBaseName, HIDDEN_NOTE_EXTENSIONS, SUPPORTED_NOTE_EXTENSIONS, hasSupportedNoteExtension } from "./noteName.ts";
+import { archiveMetadataForReplacement, metadataMatches } from "./metadataIdentity.ts";
 
 export type VisibleNameKind = "file" | "folder";
 
@@ -32,10 +33,11 @@ function writeMap(kind: VisibleNameKind, map: VisibleNameMap): void {
 }
 
 export function getVisibleNameMap(kind: VisibleNameKind): VisibleNameMap {
-  return readMap(kind);
+  return Object.fromEntries(Object.entries(readMap(kind)).filter(([path]) => metadataMatches(kind, path)));
 }
 
 export function getVisibleSegment(physicalPath: string, kind: VisibleNameKind): string | undefined {
+  if (!metadataMatches(kind, physicalPath)) return undefined;
   const v = readMap(kind)[physicalPath];
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
@@ -62,6 +64,7 @@ export function clearVisibleSegment(physicalPath: string, kind: VisibleNameKind)
 }
 
 export function clearVisibleName(physicalPath: string, kind: VisibleNameKind): void {
+  archiveMetadataForReplacement(kind, physicalPath);
   clearVisibleSegment(physicalPath, kind);
 }
 
@@ -153,10 +156,7 @@ export function pruneVisibleNameMetadata(existingFiles: readonly string[], exist
     const next: VisibleNameMap = {};
     const keepSet = kind === "file" ? fileSet : folderSet;
     for (const [p, v] of Object.entries(map)) {
-      if (!keepSet.has(p)) {
-        changed = true;
-        continue;
-      }
+      if (!keepSet.has(p)) { next[p] = v; continue; }
       const physSeg = getFileBaseName(p);
       if (v === physSeg) {
         changed = true;

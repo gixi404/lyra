@@ -7,7 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { configStore } from "../store/configStore.ts";
 import { fileStore } from "../store/fileStore.ts";
 import useStorage from "../hooks/useStorage.ts";
-import { expandAncestorsForNote, expandParentPath, readFolderExpandedState } from "../utils/folderTree.ts";
+import { expandParentPath, readFolderExpandedState } from "../utils/folderTree.ts";
 import { PAGES } from "../utils/consts.ts";
 import { searchStore } from "../store/searchStore.ts";
 import { twMerge } from "tailwind-merge";
@@ -28,10 +28,10 @@ import { commitVisibleName, resolveNewFolderPhysicalPath, resolveNewNotePhysical
 import { displayNoteLabel, displayNoteName } from "../utils/visibleNames.ts";
 import { getScrollPos, setListScroll } from "../utils/listScroll.ts";
 import { setCreatedNoteIntent } from "../utils/createdNoteIntent.ts";
-import { getFileDirectory } from "../utils/noteName.ts";
 import type { Component, File } from "../utils/types.ts";
 import { useShallow } from "zustand/react/shallow";
 import { scrollDebug, snapshotScrollState } from "../utils/scrollDebug.ts";
+import { transitionToEditor } from "../utils/editorRouteTransition.ts";
 
 interface ArchiveIconProps {
   size?: number;
@@ -200,25 +200,23 @@ function Form(): Component {
   async function fileManagement(file: File, visibleSegment: string): Promise<void> {
     try {
       setListScroll(getScrollPos("active"), "active");
+      const editorReady = Promise.allSettled([import("../pages/FileContent.tsx"), import("./TinyEditor.tsx")]);
       const displayName: string = await createFile(file.name, file.content);
       // Confirmar nombre visible tras la creación física/identidad para que persista exactamente
       // (la detección de reutilización no debe eliminar el nombre visible recién asignado).
       commitVisibleName(displayName, "file", visibleSegment);
-      const noteDir = getFileDirectory(displayName);
-      const nextExpanded = expandAncestorsForNote(readFolderExpandedState(window.localStorage), noteDir);
-      setItem("folderExpanded", JSON.stringify(nextExpanded));
       setCreatedNoteIntent(displayName, "active");
       scrollDebug("Form.create.setCreatedNoteIntent", {
         fileName: displayName,
         view: "active",
-        noteDir,
         scrollBeforeNavigate: getScrollPos("active"),
         storedScroll: getScrollPos("active"),
       });
-      snapshotScrollState("Form.create.beforeNavigate", { fileName: displayName, noteDir });
+      snapshotScrollState("Form.create.beforeNavigate", { fileName: displayName });
       const nextFile: File = { ...file, name: displayName };
       setSelectedFile(nextFile);
-      goTo(PAGES.file);
+      await editorReady;
+      await transitionToEditor(() => goTo(PAGES.file));
     } catch {
       notification("error", `No se pudo crear ${displayNoteLabel(file.name)}`);
     }

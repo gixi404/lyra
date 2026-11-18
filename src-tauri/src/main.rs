@@ -24,33 +24,8 @@ fn get_pending_open_files(state: tauri::State<'_, PendingOpenFiles>) -> Vec<Stri
     files
 }
 
-// Diagnóstico temporal de scroll (lista principal). Eliminar tras resolver el incidente.
-#[tauri::command]
-fn scroll_debug_clear() -> Result<(), String> {
-    use std::io::Write;
-    let path = "/tmp/lyra-scroll-debug.log";
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|e| format!("No se pudo limpiar {path}: {e}"))?;
-    writeln!(file, "=== lyra scroll debug start ===").map_err(|e| e.to_string())?;
-    Ok(())
-}
+// Instrumentación temporal de scroll eliminada: sin comandos IPC ni escritura en /tmp.
 
-#[tauri::command]
-fn scroll_debug_append(line: String) -> Result<(), String> {
-    use std::io::Write;
-    let path = "/tmp/lyra-scroll-debug.log";
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("No se pudo escribir {path}: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| e.to_string())?;
-    Ok(())
-}
 
 #[tauri::command]
 async fn import_external_files(
@@ -62,7 +37,7 @@ async fn import_external_files(
         .document_dir()
         .map_err(|e| format!("No se pudo resolver Documentos: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    let account = gdrive::auth::verify_current_account(&app).ok();
+    let account = if gdrive::REMOTE_SYNC_ENABLED { gdrive::auth::verify_current_account(&app).ok() } else { None };
     let account_key = account.as_ref().map(|a| a.account_key.as_str());
 
     Ok(importer::import_paths(&lyra_dir, &paths, account_key).await)
@@ -222,6 +197,7 @@ async fn list_note_files_with_stats(app: tauri::AppHandle) -> Result<NoteListing
     }
     {
         let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+        gdrive::recover_local_delete_at(&dir)?;
         local_identity::recover_save(&dir)?;
         folders::recover_move_at(&dir)?;
     }
@@ -1013,6 +989,7 @@ async fn create_note_in_dir(
     account_key: Option<&str>,
 ) -> Result<(), String> {
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    gdrive::recover_local_delete_at(lyra_dir)?;
     ensure_existing_note_destination(lyra_dir, file_name)?;
     folders::ensure_active_parent_at(lyra_dir, file_name)?;
     gdrive::sync::ensure_safe_parent_hierarchy(lyra_dir, file_name)?;
@@ -1029,7 +1006,7 @@ async fn create_note(
 ) -> Result<(), String> {
     let doc_dir = app.path().document_dir().map_err(|e| format!("Cannot resolve Documents: {e}"))?;
     let lyra_dir = doc_dir.join("lyra");
-    let account = gdrive::auth::verify_current_account(&app).ok();
+    let account = if gdrive::REMOTE_SYNC_ENABLED { gdrive::auth::verify_current_account(&app).ok() } else { None };
     create_note_in_dir(
         &lyra_dir,
         &file_name,
@@ -1059,12 +1036,22 @@ async fn create_internal_welcome(app: tauri::AppHandle, content: String) -> Resu
 }
 
 #[tauri::command]
+async fn was_welcome_deleted(app: tauri::AppHandle) -> Result<bool, String> {
+    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    gdrive::recover_local_delete_at(&lyra_dir)?;
+    if lyra_dir.join("¡Bienvenid@ a Lyra!.txt").exists() { return Ok(false); }
+    gdrive::provenance::was_deleted_name(&lyra_dir, "¡Bienvenid@ a Lyra!.txt")
+}
+
+#[tauri::command]
 async fn save_note_atomic(
     app: tauri::AppHandle,
     file_name: String,
     content: String,
     expected_identity: String,
-) -> Result<i64, String> {
+    expected_physical_hash: String,
+) -> Result<SaveNoteResult, String> {
     let doc_dir = app
         .path()
         .document_dir()
@@ -1073,12 +1060,10 @@ async fn save_note_atomic(
     // Coordinación exclusiva por archivo para mitigar condiciones de carrera TOCTOU
     // con descargas o reemplazos concurrentes del motor de Google Drive.
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    gdrive::recover_local_delete_at(&lyra_dir)?;
     let mtime = gdrive::sync::get_file_lock_coordinator().with_file_lock(&file_name, || {
         local_identity::verify_note(&lyra_dir, &file_name, &expected_identity)?;
-        // If the file was replaced externally, its old permissions are retired
-        // before writing any new Lyra content into it.
-        gdrive::provenance::invalidate_changed_note(&lyra_dir, &file_name)?;
-        let mtime = local_identity::save_note(&lyra_dir, &file_name, &expected_identity, content.as_bytes())?;
+        let mtime = local_identity::save_note_versioned(&lyra_dir, &file_name, &expected_identity, &expected_physical_hash, content.as_bytes())?;
 
         if let Err(_e) = gdrive::provenance::record_local_write(&lyra_dir, &file_name, None, false) {
             #[cfg(debug_assertions)]
@@ -1087,33 +1072,68 @@ async fn save_note_atomic(
         Ok::<i64, String>(mtime)
     })?;
 
-    Ok(mtime)
+    Ok(SaveNoteResult { mtime, physical_hash: local_identity::content_sha256(content.as_bytes()) })
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OpenedNote { identity: String, content: String, first_seen: bool, path_reused: bool, save_unavailable: Option<String> }
+struct SaveNoteResult { mtime: i64, physical_hash: String }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenedNote { identity: String, content: String, physical_hash: String, first_seen: bool, path_reused: bool, save_unavailable: Option<String> }
 
 #[tauri::command]
 async fn open_note_identity(app: tauri::AppHandle, file_name: String) -> Result<OpenedNote, String> {
     let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
     let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    gdrive::recover_local_delete_at(&lyra_dir)?;
     let _ = folders::recover_move_at(&lyra_dir);
     if let Err(error) = local_identity::recover_save(&lyra_dir) {
         let content = local_identity::read_unverified(&lyra_dir, &file_name)?;
-        return Ok(OpenedNote { identity: String::new(), content, first_seen: true, path_reused: true, save_unavailable: Some(error) });
+        return Ok(OpenedNote { identity: String::new(), physical_hash: local_identity::content_sha256(content.as_bytes()), content, first_seen: true, path_reused: true, save_unavailable: Some(error) });
+    }
+    if local_identity::save_conflict_for_note(&lyra_dir, &file_name)? {
+        let content = local_identity::read_unverified(&lyra_dir, &file_name)?;
+        return Ok(OpenedNote { identity: String::new(), physical_hash: local_identity::content_sha256(content.as_bytes()),
+            content, first_seen: false, path_reused: false,
+            save_unavailable: Some("A previous save conflict requires recovery; the physical note and pending versions were retained".into()) });
     }
     let status = local_identity::registration_status(&lyra_dir, &file_name);
     match local_identity::open_note(&lyra_dir, &file_name) {
         Ok((identity, content)) => {
             let (first_seen, path_reused) = status.unwrap_or((false, false));
-            Ok(OpenedNote { identity, content, first_seen, path_reused, save_unavailable: None })
+            Ok(OpenedNote { identity, physical_hash: local_identity::content_sha256(content.as_bytes()), content, first_seen, path_reused, save_unavailable: None })
         }
         Err(error) => {
             let content = local_identity::read_unverified(&lyra_dir, &file_name)?;
-            Ok(OpenedNote { identity: String::new(), content, first_seen: true, path_reused: true, save_unavailable: Some(error) })
+            Ok(OpenedNote { identity: String::new(), physical_hash: local_identity::content_sha256(content.as_bytes()), content, first_seen: true, path_reused: true, save_unavailable: Some(error) })
         }
     }
+}
+
+#[tauri::command]
+async fn metadata_identity(app: tauri::AppHandle, kind: String, path: String, create: bool, legacy: bool) -> Result<Option<String>, String> {
+    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    match kind.as_str() {
+        "file" => {
+            if create {
+                if legacy && local_identity::registration_status(&lyra_dir, &path)?.1 { return Ok(None); }
+                local_identity::open_note(&lyra_dir, &path).map(|(id, _)| Some(id))
+            }
+            else { local_identity::verified_note_id(&lyra_dir, &path) }
+        }
+        "folder" => folders::verified_folder_id(&lyra_dir, &path, create),
+        _ => Err("Invalid metadata identity kind".into()),
+    }
+}
+
+#[tauri::command]
+async fn pending_save_conflicts(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let lyra_dir = app.path().document_dir().map_err(|e| e.to_string())?.join("lyra");
+    let _guard = gdrive::sync::MANIFEST_LOCK.lock().await;
+    local_identity::pending_save_conflicts(&lyra_dir)
 }
 
 #[tauri::command]
@@ -1323,6 +1343,8 @@ fn main() {
             is_start_minimized,
             save_note_atomic,
             open_note_identity,
+            metadata_identity,
+            pending_save_conflicts,
             remap_note_identity,
             save_draft_file,
             read_draft_file,
@@ -1333,8 +1355,13 @@ fn main() {
             folders::folder_info,
             folders::list_archived_folders,
             folders::set_folder_archived,
+            folders::is_folder_explicitly_archived,
+            folders::delete_archived_folder_permanently,
+            folders::filter_existing_relative_paths,
             folders::move_folder_local,
             folders::move_note_local,
+            folders::recover_archived_folder_to,
+            folders::recover_archived_note_to,
             folders::recover_folder_move,
             folders::local_move_status,
             folders::pending_local_move,
@@ -1346,8 +1373,6 @@ fn main() {
             apply_native_update,
             create_internal_welcome,
             check_and_drain_recovered_notes,
-            scroll_debug_clear,
-            scroll_debug_append,
             gdrive::get_backend_build_info,
             gdrive::gdrive_login,
             gdrive::gdrive_logout,
@@ -1359,6 +1384,7 @@ fn main() {
             gdrive::gdrive_get_pending_authorizations,
             gdrive::gdrive_manage_local_notes,
             gdrive::gdrive_is_internal_welcome,
+            was_welcome_deleted,
             gdrive::gdrive_authorize_pending,
             gdrive::gdrive_decline_pending,
             gdrive::gdrive_note_renamed,

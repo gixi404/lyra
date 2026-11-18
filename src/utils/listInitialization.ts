@@ -17,7 +17,7 @@ export function startListInitialization<T>(
 export function startLocalFirstListInitialization<T>(
   loadLocal: () => Promise<T>,
   prepareWelcome: () => Promise<void>,
-  apply: (value: T) => void,
+  apply: (value: T) => unknown,
   onError: (error: unknown) => void,
   getGeneration?: () => number,
 ): () => void {
@@ -27,7 +27,7 @@ export function startLocalFirstListInitialization<T>(
     try {
       const gen = getGeneration?.();
       const local = await loadLocal();
-      if (active && !isStale(gen)) apply(local);
+      if (active && !isStale(gen)) await apply(local);
     } catch (error) {
       if (active) onError(error);
     }
@@ -36,7 +36,7 @@ export function startLocalFirstListInitialization<T>(
       await prepareWelcome();
       const gen = getGeneration?.();
       const refreshed = await loadLocal();
-      if (active && !isStale(gen)) apply(refreshed);
+      if (active && !isStale(gen)) await apply(refreshed);
     } catch (error) {
       if (active) onError(error);
     }

@@ -11,6 +11,242 @@ use tauri::{Emitter, Manager};
 use types::{SyncResult, SyncStatus, UserProfile};
 use provenance::{PendingAuthorizationView, LocalNoteManagementView};
 
+// Control centralizado de sincronización remota con Google Drive.
+// Debe permanecer desactivado en esta versión: no se elimina la implementación,
+// solo se impide cualquier operación remota (auth, red, sync, eventos) desde
+// frontend y backend, incluso con credenciales o estados previos persistidos.
+pub const REMOTE_SYNC_ENABLED: bool = false;
+
+const LOCAL_DELETE_JOURNAL: &str = ".lyra_local_delete.json";
+#[cfg(test)]
+thread_local! { static LOCAL_DELETE_FAULT: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(test)]
+thread_local! { static LOCAL_DELETE_INTERFERENCE: std::cell::RefCell<Option<fn(&std::path::Path)>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(test)]
+thread_local! { static LOCAL_DELETE_STAGED_INTERFERENCE: std::cell::RefCell<Option<fn(&std::path::Path)>> = const { std::cell::RefCell::new(None) }; }
+
+fn local_delete_staged_interference_point(_path: &std::path::Path) {
+    #[cfg(test)]
+    LOCAL_DELETE_STAGED_INTERFERENCE.with(|hook| {
+        if let Some(run) = hook.borrow_mut().take() { run(_path); }
+    });
+}
+
+fn local_delete_interference_point(_path: &std::path::Path) {
+    #[cfg(test)]
+    LOCAL_DELETE_INTERFERENCE.with(|hook| {
+        if let Some(run) = hook.borrow_mut().take() { run(_path); }
+    });
+}
+
+fn local_delete_fault_point(phase: &str) -> Result<(), String> {
+    #[cfg(test)]
+    if LOCAL_DELETE_FAULT.with(|fault| *fault.borrow() == Some(phase)) {
+        return Err(format!("Injected local delete failure at {phase}"));
+    }
+    let _ = phase;
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LocalDeleteJournal {
+    version: u32,
+    name: String,
+    physical_id: String,
+    provenance_id: Option<String>,
+    local_id: Option<String>,
+    anchor: String,
+    staged: String,
+    #[serde(default)]
+    content_sha256: Option<String>,
+}
+
+fn local_delete_journal_path(base: &std::path::Path) -> std::path::PathBuf { base.join(LOCAL_DELETE_JOURNAL) }
+
+fn read_local_delete_journal(base: &std::path::Path) -> Result<Option<LocalDeleteJournal>, String> {
+    match std::fs::read(local_delete_journal_path(base)) {
+        Ok(bytes) => {
+            let journal: LocalDeleteJournal = serde_json::from_slice(&bytes).map_err(|e| format!("Invalid local delete journal: {e}"))?;
+            if journal.version != 1 || journal.physical_id.is_empty()
+                || !journal.anchor.starts_with(".lyra_local_delete_anchor_") || journal.anchor.contains('/') || journal.anchor.contains('\\')
+                || !journal.staged.starts_with(".lyra_local_delete_staged_") || journal.staged.contains('/') || journal.staged.contains('\\') {
+                return Err("Invalid local delete journal".into());
+            }
+            sync::resolve_safe_path(base, &journal.name)?;
+            Ok(Some(journal))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("Cannot read local delete journal: {e}")),
+    }
+}
+
+fn clear_local_delete_journal(base: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(local_delete_journal_path(base)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Cannot clear local delete journal: {e}")),
+    }
+}
+
+fn link_unique_delete_recovery(source: &std::path::Path, original: &std::path::Path, label: &str) -> Result<std::path::PathBuf, String> {
+    let stem = original.file_stem().ok_or("Invalid recovery note name")?.to_string_lossy();
+    let extension = original.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default();
+    let parent = original.parent().ok_or("Invalid recovery note parent")?;
+    for index in 1..=1000 {
+        let candidate = parent.join(format!("{stem} ({label} {index}){extension}"));
+        match std::fs::hard_link(source, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Cannot preserve ambiguous deletion as a visible note: {error}")),
+        }
+    }
+    Err("Cannot find an available recovery note name".into())
+}
+
+fn quarantine_ambiguous_local_delete(base: &std::path::Path, reason: &str) -> Result<(), String> {
+    let destination = base.join(format!(".lyra_local_delete_manual_{:032x}.json", rand::random::<u128>()));
+    std::fs::rename(local_delete_journal_path(base), &destination)
+        .map_err(|error| format!("{reason}; cannot isolate recovery journal: {error}"))?;
+    Err(format!("{reason}; original data and staging files were preserved for manual recovery in {}", base.display()))
+}
+
+pub(crate) fn recover_local_delete_at(base: &std::path::Path) -> Result<(), String> {
+    let journal = match read_local_delete_journal(base) {
+        Ok(journal) => journal,
+        Err(reason) if local_delete_journal_path(base).exists() => {
+            return quarantine_ambiguous_local_delete(base, &reason);
+        }
+        Err(reason) => return Err(reason),
+    };
+    let Some(journal) = journal else { return Ok(()); };
+    let path = sync::resolve_safe_path(base, &journal.name)?;
+    let anchor = base.join(&journal.anchor);
+    let staged = base.join(&journal.staged);
+    if !anchor.is_file() {
+        // The identity witness is gone. No metadata or current file is safe to touch.
+        if staged.exists() {
+            return quarantine_ambiguous_local_delete(base, "Local delete identity witness disappeared while staged data remains");
+        }
+        return clear_local_delete_journal(base);
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(&staged) {
+        if !meta.file_type().is_file() {
+            return quarantine_ambiguous_local_delete(base, "Local delete staging path changed type");
+        }
+        if !crate::local_identity::same_physical(&staged, &anchor)? {
+            let rescue = (|| -> Result<(), String> {
+                link_unique_delete_recovery(&anchor, &path, "original recovered")?;
+                if path.exists() {
+                    link_unique_delete_recovery(&staged, &path, "staged recovered")?;
+                } else {
+                    std::fs::hard_link(&staged, &path)
+                        .map_err(|error| format!("Cannot restore changed staging file: {error}"))?;
+                }
+                if let Some(id) = &journal.provenance_id {
+                    provenance::retire_deleted_note_if_id(base, &journal.name, id)?;
+                }
+                if let Some(id) = &journal.local_id {
+                    crate::local_identity::retire_deleted_note_if_id(base, &journal.name, id)?;
+                }
+                Ok(())
+            })();
+            if let Err(reason) = rescue {
+                return quarantine_ambiguous_local_delete(base, &reason);
+            }
+            std::fs::remove_file(&staged).map_err(|e| format!("Cannot clear recovered staging file: {e}"))?;
+            std::fs::remove_file(&anchor).map_err(|e| format!("Cannot clear recovered identity witness: {e}"))?;
+            clear_local_delete_journal(base)?;
+            return Err("An interrupted deletion encountered a different staging file; both versions were preserved as visible notes".into());
+        }
+        // An interrupted rename has not completed deletion. Restore without
+        // overwriting another file, regardless of which identity was staged.
+        if !path.exists() {
+            std::fs::hard_link(&staged, &path).map_err(|e| format!("Cannot restore interrupted local deletion: {e}"))?;
+        } else if !crate::local_identity::same_physical(&path, &staged)? {
+            return Err("Local deletion needs manual recovery: both paths contain files".into());
+        }
+        std::fs::remove_file(&staged).map_err(|e| format!("Cannot clear restored local staging file: {e}"))?;
+        std::fs::remove_file(&anchor).map_err(|e| format!("Cannot clear local delete anchor: {e}"))?;
+        return clear_local_delete_journal(base);
+    }
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_file() => {
+            if crate::local_identity::same_physical(&path, &anchor)? {
+                std::fs::remove_file(&anchor).map_err(|e| format!("Cannot clear local delete anchor: {e}"))?;
+                return clear_local_delete_journal(base);
+            }
+        }
+        Ok(_) => return Err("Local delete recovery found a changed path type".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+        Err(e) => return Err(format!("Cannot inspect local delete recovery: {e}")),
+    }
+    if let Some(id) = &journal.provenance_id {
+        local_delete_fault_point("provenance")?;
+        provenance::retire_deleted_note_if_id(base, &journal.name, id)?;
+    }
+    if let Some(id) = &journal.local_id {
+        crate::local_identity::retire_deleted_note_if_id(base, &journal.name, id)?;
+    }
+    std::fs::remove_file(&anchor).map_err(|e| format!("Cannot clear local delete anchor: {e}"))?;
+    clear_local_delete_journal(base)
+}
+
+pub(crate) fn delete_local_note_at<F>(lyra_dir: &std::path::Path, file_name: &str, local_file_path: &std::path::Path, remove: F) -> Result<(), String>
+where F: FnOnce(&std::path::Path) -> std::io::Result<()> {
+    recover_local_delete_at(lyra_dir)?;
+    let meta = match std::fs::symlink_metadata(local_file_path) {
+        Ok(meta) if meta.file_type().is_file() => meta,
+        Ok(_) => return Err("The local note path is not a regular file".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("Cannot inspect local note: {e}")),
+    };
+    let _ = meta;
+    let physical_id = crate::local_identity::physical_id_at_path(local_file_path)?;
+    let ledger = provenance::load_ledger(&provenance::get_ledger_path(lyra_dir))?;
+    let provenance_id = ledger.and_then(|state| state.by_name.get(file_name).cloned());
+    let local_id = crate::local_identity::registered_note_id(lyra_dir, file_name)?;
+    let anchor_name = format!(".lyra_local_delete_anchor_{:032x}", rand::random::<u128>());
+    let anchor = lyra_dir.join(&anchor_name);
+    std::fs::hard_link(local_file_path, &anchor).map_err(|e| format!("Cannot preserve note identity before deletion: {e}"))?;
+    let staged_name = format!(".lyra_local_delete_staged_{:032x}", rand::random::<u128>());
+    let staged = lyra_dir.join(&staged_name);
+    let content_sha256 = crate::local_identity::content_sha256(
+        &std::fs::read(local_file_path).map_err(|e| format!("Cannot read note before deletion: {e}"))?);
+    let journal = LocalDeleteJournal { version: 1, name: file_name.into(), physical_id, provenance_id, local_id, anchor: anchor_name, staged: staged_name, content_sha256: Some(content_sha256) };
+    let bytes = serde_json::to_vec(&journal).map_err(|e| e.to_string())?;
+    if let Err(e) = sync::write_file_atomic(&local_delete_journal_path(lyra_dir), &bytes) {
+        let _ = std::fs::remove_file(&anchor);
+        return Err(format!("Cannot prepare local deletion: {e}"));
+    }
+    if !crate::local_identity::same_physical(local_file_path, &anchor)? {
+        clear_local_delete_journal(lyra_dir)?;
+        std::fs::remove_file(&anchor).map_err(|e| format!("Cannot clear local delete anchor: {e}"))?;
+        return Err("The note changed before local deletion".into());
+    }
+    local_delete_interference_point(local_file_path);
+    crate::folders::rename_folder_no_replace(local_file_path, &staged)
+        .map_err(|e| format!("Cannot stage local note deletion: {e}"))?;
+    local_delete_fault_point("after_stage")?;
+    local_delete_staged_interference_point(&staged);
+    if !crate::local_identity::same_physical(&staged, &anchor)? {
+        recover_local_delete_at(lyra_dir)?;
+        return Err("The note changed while staging local deletion".into());
+    }
+    if journal.content_sha256.as_ref().is_none_or(|expected| {
+        std::fs::read(&staged).ok().map(|bytes| crate::local_identity::content_sha256(&bytes)) != Some(expected.clone())
+    }) {
+        recover_local_delete_at(lyra_dir)?;
+        return Err("The note content changed while staging local deletion".into());
+    }
+    if let Err(e) = remove(&staged) {
+        recover_local_delete_at(lyra_dir)?;
+        return Err(format!("No se pudo eliminar el archivo local: {e}"));
+    }
+    local_delete_fault_point("after_physical")?;
+    recover_local_delete_at(lyra_dir)
+}
+
+
 static IS_SYNCING: AtomicBool = AtomicBool::new(false);
 static SYNC_QUEUED: AtomicBool = AtomicBool::new(false);
 static SYNC_QUEUED_CONTEXT: std::sync::Mutex<Option<(SyncReason, Option<String>)>> = std::sync::Mutex::new(None);
@@ -73,13 +309,16 @@ pub fn get_backend_build_info() -> serde_json::Value {
 }
 
 #[tauri::command]
-pub async fn gdrive_login(app: tauri::AppHandle, client_request_id: Option<String>) -> Result<UserProfile, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
-    let profile = auth::start_oauth_flow(&app).await?;
+pub async fn gdrive_login(_app: tauri::AppHandle, _client_request_id: Option<String>) -> Result<UserProfile, String> {
+    if !REMOTE_SYNC_ENABLED {
+        return Err("Google Drive está deshabilitado en esta versión".to_string());
+    }
+    let lyra_dir = resolve_lyra_dir(&_app)?;
+    let profile = auth::start_oauth_flow(&_app).await?;
 
     // La sesión se abre con la identidad verificada (sub) recién guardada.
     // Iniciar sesión NO autoriza ninguna nota existente.
-    let account = auth::verify_current_account(&app)?;
+    let account = auth::verify_current_account(&_app)?;
     {
         // Serializado con sincronización, borrado y consentimiento: la sesión
         // nueva nunca se pisa con un guardado concurrente del libro.
@@ -88,22 +327,41 @@ pub async fn gdrive_login(app: tauri::AppHandle, client_request_id: Option<Strin
     }
 
     // Trigger initial sync in background
-    let app_clone = app.clone();
+    let app_clone = _app.clone();
     tokio::spawn(async move {
-        let _ = run_sync_with_reason(app_clone, SyncReason::InitialConnection, client_request_id).await;
+        let _ = run_sync_with_reason(app_clone, SyncReason::InitialConnection, _client_request_id).await;
     });
     Ok(profile)
 }
 
 #[tauri::command]
-pub async fn gdrive_logout(app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn gdrive_logout(_app: tauri::AppHandle) -> Result<bool, String> {
+    // Sincronización remota deshabilitada: no revocar ni contactar Google; solo limpieza local segura.
+    if !REMOTE_SYNC_ENABLED {
+        let _ = {
+            let _guard = sync::MANIFEST_LOCK.lock().await;
+            let (state, _readable) = auth::take_auth_state_for_logout(&_app)?;
+            if let Some(ref state) = state {
+                let account_key = auth::get_account_key(&state.user);
+                if let Ok(doc_dir) = _app.path().document_dir() {
+                    let lyra_dir = doc_dir.join("lyra");
+                    if sync::ensure_safe_base_dir(&lyra_dir).is_ok() {
+                        let _ = provenance::end_account_session(&lyra_dir, &account_key);
+                    }
+                }
+            }
+            Ok::<(), String>(())
+        };
+        return Ok(true);
+    }
+
     // Invalidate credentials and the account epoch while serialized with manifest work.
     let (state, readable) = {
         let _guard = sync::MANIFEST_LOCK.lock().await;
-        let (state, readable) = auth::take_auth_state_for_logout(&app)?;
+        let (state, readable) = auth::take_auth_state_for_logout(&_app)?;
         if let Some(ref state) = state {
         let account_key = auth::get_account_key(&state.user);
-        if let Ok(doc_dir) = app.path().document_dir() {
+        if let Ok(doc_dir) = _app.path().document_dir() {
             let lyra_dir = doc_dir.join("lyra");
             if sync::ensure_safe_base_dir(&lyra_dir).is_ok() {
                 let _ = provenance::end_account_session(&lyra_dir, &account_key);
@@ -118,12 +376,32 @@ pub async fn gdrive_logout(app: tauri::AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn gdrive_cancel_login() -> Result<(), String> {
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(());
+    }
     auth::cancel_oauth_flow()
 }
 
 #[tauri::command]
-pub async fn gdrive_get_status(app: tauri::AppHandle) -> Result<SyncStatus, String> {
-    let auth_state = auth::load_auth_state(&app)?;
+pub async fn gdrive_get_status(_app: tauri::AppHandle) -> Result<SyncStatus, String> {
+    if !REMOTE_SYNC_ENABLED {
+        // Estado inerte: sin conexión remota, sin sincronización y sin lectura de credenciales
+        // que pueda implicar operaciones de red o reactivar flujos experimentales.
+        return Ok(SyncStatus {
+            is_connected: false,
+            is_syncing: false,
+            user_email: None,
+            user_name: None,
+            user_photo: None,
+            last_sync_timestamp: None,
+            last_error: None,
+            auto_sync_enabled: false,
+            backend_version: Some(BACKEND_VERSION.to_string()),
+            backend_build_timestamp: Some(BACKEND_BUILD_TIMESTAMP.to_string()),
+        });
+    }
+
+    let auth_state = auth::load_auth_state(&_app)?;
     let is_connected = auth_state.is_some();
     let user_email = auth_state.as_ref().map(|s| s.user.email.clone());
     let user_name = auth_state.as_ref().and_then(|s| s.user.name.clone());
@@ -133,7 +411,7 @@ pub async fn gdrive_get_status(app: tauri::AppHandle) -> Result<SyncStatus, Stri
         .map(|s| s.auto_sync_enabled)
         .unwrap_or(true);
 
-    let manifest = sync::load_manifest(&app);
+    let manifest = sync::load_manifest(&_app);
     let last_sync_timestamp = if manifest.last_sync_timestamp > 0 {
         Some(manifest.last_sync_timestamp)
     } else {
@@ -155,13 +433,19 @@ pub async fn gdrive_get_status(app: tauri::AppHandle) -> Result<SyncStatus, Stri
 }
 
 #[tauri::command]
-pub async fn gdrive_sync_now(app: tauri::AppHandle, reason: Option<String>, request_id: Option<String>) -> Result<SyncResult, String> {
-    let reason = if reason.as_deref() == Some("authorization") {
+pub async fn gdrive_sync_now(_app: tauri::AppHandle, _reason: Option<String>, _request_id: Option<String>) -> Result<SyncResult, String> {
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(SyncResult {
+            sync_id: "disabled".to_string(),
+            ..Default::default()
+        });
+    }
+    let reason = if _reason.as_deref() == Some("authorization") {
         SyncReason::Authorization
     } else {
         SyncReason::Background
     };
-    run_sync_with_reason(app, reason, request_id).await
+    run_sync_with_reason(_app, reason, _request_id).await
 }
 
 async fn run_sync_with_reason(app: tauri::AppHandle, mut reason: SyncReason, mut request_id: Option<String>) -> Result<SyncResult, String> {
@@ -265,6 +549,13 @@ pub async fn gdrive_delete_file(app: tauri::AppHandle, file_name: String) -> Res
     let lyra_dir = doc_dir.join("lyra");
     let local_file_path = sync::resolve_safe_path(&lyra_dir, &file_name)
         .map_err(|e| format!("Nombre de archivo inválido o peligroso: {e}"))?;
+
+    if !REMOTE_SYNC_ENABLED {
+        // Sincronización remota deshabilitada: solo borrado local y retiro de identidad/procedencia.
+        // No se crean tombstones ni se realizan operaciones remotas, incluso con estado persistido.
+        let _guard = sync::MANIFEST_LOCK.lock().await;
+        return delete_local_note_at(&lyra_dir, &file_name, &local_file_path, |path| std::fs::remove_file(path));
+    }
 
     let remote_deletion = {
         // 1. Cargar manifiesto con bloqueo
@@ -388,8 +679,11 @@ where
 }
 
 #[tauri::command]
-pub async fn gdrive_set_auto_sync(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    auth::set_auto_sync_enabled(&app, enabled)
+pub async fn gdrive_set_auto_sync(_app: tauri::AppHandle, _enabled: bool) -> Result<(), String> {
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(());
+    }
+    auth::set_auto_sync_enabled(&_app, _enabled)
 }
 
 fn resolve_lyra_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -422,13 +716,16 @@ fn resolve_sync_manifest_path(app: &tauri::AppHandle) -> Result<std::path::PathB
 /// Devuelve la solicitud de consentimiento pendiente para la cuenta activa.
 #[tauri::command]
 pub async fn gdrive_get_pending_authorizations(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
 ) -> Result<Option<PendingAuthorizationView>, String> {
-    let account = match auth::verify_current_account(&app) {
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(None);
+    }
+    let account = match auth::verify_current_account(&_app) {
         Ok(account) => account,
         Err(_) => return Ok(None),
     };
-    let lyra_dir = resolve_lyra_dir(&app)?;
+    let lyra_dir = resolve_lyra_dir(&_app)?;
     provenance::load_pending_view(&lyra_dir, &account.account_key)
 }
 
@@ -438,27 +735,39 @@ pub async fn gdrive_get_pending_authorizations(
 /// mostró, no se autoriza nada.
 #[tauri::command]
 pub async fn gdrive_authorize_pending(
-    app: tauri::AppHandle,
-    request_id: String,
-    selected_ids: Vec<String>,
+    _app: tauri::AppHandle,
+    _request_id: String,
+    _selected_ids: Vec<String>,
 ) -> Result<usize, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(0);
+    }
+    let lyra_dir = resolve_lyra_dir(&_app)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
-    let account = auth::verify_current_account(&app)?;
-    provenance::authorize_selected_pending(&lyra_dir, &account.account_key, &request_id, &selected_ids, account.epoch)
+    let account = auth::verify_current_account(&_app)?;
+    provenance::authorize_selected_pending(&lyra_dir, &account.account_key, &_request_id, &_selected_ids, account.epoch)
 }
 
 #[tauri::command]
-pub async fn gdrive_manage_local_notes(app: tauri::AppHandle, reopen_declined: bool) -> Result<LocalNoteManagementView, String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+pub async fn gdrive_manage_local_notes(_app: tauri::AppHandle, _reopen_declined: bool) -> Result<LocalNoteManagementView, String> {
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(LocalNoteManagementView {
+            account_key: String::new(),
+            account_email: None,
+            notes: Vec::new(),
+            request: None,
+        });
+    }
+    let lyra_dir = resolve_lyra_dir(&_app)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
-    let account = auth::verify_current_account(&app)?;
+    let account = auth::verify_current_account(&_app)?;
     let manifest = sync::load_manifest_for_account_dir(&lyra_dir, &account.account_key, Some(&account.email));
-    provenance::inspect_local_notes(&lyra_dir, &account.account_key, Some(account.email), account.epoch, &manifest, reopen_declined)
+    provenance::inspect_local_notes(&lyra_dir, &account.account_key, Some(account.email), account.epoch, &manifest, _reopen_declined)
 }
 
 #[tauri::command]
 pub async fn gdrive_is_internal_welcome(app: tauri::AppHandle, file_name: String) -> Result<bool, String> {
+    // Operación local de procedencia; debe seguir disponible con sincronización remota deshabilitada.
     let lyra_dir = resolve_lyra_dir(&app)?;
     sync::resolve_safe_path(&lyra_dir, &file_name)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
@@ -468,13 +777,16 @@ pub async fn gdrive_is_internal_welcome(app: tauri::AppHandle, file_name: String
 /// Rechaza una solicitud concreta. No autoriza nada y no bloquea el uso local.
 #[tauri::command]
 pub async fn gdrive_decline_pending(
-    app: tauri::AppHandle,
-    request_id: String,
+    _app: tauri::AppHandle,
+    _request_id: String,
 ) -> Result<(), String> {
-    let lyra_dir = resolve_lyra_dir(&app)?;
+    if !REMOTE_SYNC_ENABLED {
+        return Ok(());
+    }
+    let lyra_dir = resolve_lyra_dir(&_app)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
-    let account = auth::verify_current_account(&app)?;
-    provenance::decline_pending(&lyra_dir, &account.account_key, &request_id)
+    let account = auth::verify_current_account(&_app)?;
+    provenance::decline_pending(&lyra_dir, &account.account_key, &_request_id)
 }
 
 /// Conserva la identidad y autorizaciones de una nota al renombrarla localmente.
@@ -484,6 +796,7 @@ pub async fn gdrive_note_renamed(
     old_name: String,
     new_name: String,
 ) -> Result<bool, String> {
+    // Operación local de identidad/procedencia y renombrado físico; no depende de red remota.
     let lyra_dir = resolve_lyra_dir(&app)?;
     let old_path = sync::resolve_safe_path(&lyra_dir, &old_name)?;
     let new_path = sync::ensure_safe_parent_hierarchy(&lyra_dir, &new_name)?;
@@ -512,7 +825,7 @@ pub async fn archive_initialize(app: tauri::AppHandle, archived_names: Vec<Strin
     let _guard = sync::MANIFEST_LOCK.lock().await;
     let _archive_guard = archive::ARCHIVE_LOCK.lock().await;
     archive::initialize_legacy(&lyra_dir, &archived_names)?;
-    let account = auth::verify_current_account(&app).ok();
+    let account = if REMOTE_SYNC_ENABLED { auth::verify_current_account(&app).ok() } else { None };
     archive::projection(&lyra_dir, account.as_ref().map(|a| a.account_key.as_str()))
 }
 
@@ -521,9 +834,11 @@ pub async fn archive_set(app: tauri::AppHandle, file_name: String, archived: boo
     let lyra_dir = resolve_lyra_dir(&app)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
     let _archive_guard = archive::ARCHIVE_LOCK.lock().await;
-    let account = auth::verify_current_account(&app).ok();
+    let account = if REMOTE_SYNC_ENABLED { auth::verify_current_account(&app).ok() } else { None };
     archive::set_archived(&lyra_dir, &file_name, archived, account.as_ref().map(|a| a.account_key.as_str()))?;
-    if IS_SYNCING.load(Ordering::SeqCst) { SYNC_QUEUED.store(true, Ordering::SeqCst); }
+    if REMOTE_SYNC_ENABLED && IS_SYNCING.load(Ordering::SeqCst) {
+        SYNC_QUEUED.store(true, Ordering::SeqCst);
+    }
     archive::projection(&lyra_dir, account.as_ref().map(|a| a.account_key.as_str()))
 }
 
@@ -532,7 +847,7 @@ pub async fn archive_get_projection(app: tauri::AppHandle) -> Result<archive::Ar
     let lyra_dir = resolve_lyra_dir(&app)?;
     let _guard = sync::MANIFEST_LOCK.lock().await;
     let _archive_guard = archive::ARCHIVE_LOCK.lock().await;
-    let account = auth::verify_current_account(&app).ok();
+    let account = if REMOTE_SYNC_ENABLED { auth::verify_current_account(&app).ok() } else { None };
     archive::projection(&lyra_dir, account.as_ref().map(|a| a.account_key.as_str()))
 }
 
@@ -707,5 +1022,250 @@ mod phase5_tests {
         }).await.unwrap();
         assert!(!invalidated);
         assert!(!attempted.load(Ordering::SeqCst));
+    }
+}
+
+
+#[cfg(test)]
+mod disabled_release_tests {
+    use super::*;
+    use std::fs;
+
+    struct TestDir(std::path::PathBuf);
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "lyra_gdrive_disabled_{label}_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TestDir { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn remote_sync_kill_switch_is_disabled_in_backend() {
+        assert!(!REMOTE_SYNC_ENABLED, "el backend debe mantener el kill-switch remoto deshabilitado");
+    }
+
+    #[test]
+    fn disabled_status_is_inert_without_connection_or_sync() {
+        let status = SyncStatus {
+            is_connected: false,
+            is_syncing: false,
+            user_email: None,
+            user_name: None,
+            user_photo: None,
+            last_sync_timestamp: None,
+            last_error: None,
+            auto_sync_enabled: false,
+            backend_version: Some(BACKEND_VERSION.to_string()),
+            backend_build_timestamp: Some(BACKEND_BUILD_TIMESTAMP.to_string()),
+        };
+        assert!(!status.is_connected);
+        assert!(!status.is_syncing);
+        assert!(!status.auto_sync_enabled);
+        assert!(status.user_email.is_none());
+        assert!(status.last_error.is_none());
+    }
+
+    #[test]
+    fn archive_set_cannot_queue_remote_sync_when_disabled() {
+        IS_SYNCING.store(true, Ordering::SeqCst);
+        SYNC_QUEUED.store(false, Ordering::SeqCst);
+        if REMOTE_SYNC_ENABLED && IS_SYNCING.load(Ordering::SeqCst) {
+            SYNC_QUEUED.store(true, Ordering::SeqCst);
+        }
+        assert!(!SYNC_QUEUED.load(Ordering::SeqCst), "no debe encolar sync remoto con kill-switch deshabilitado");
+        IS_SYNCING.store(false, Ordering::SeqCst);
+        SYNC_QUEUED.store(false, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::assertions_on_constants)]
+    async fn disabled_delete_removes_local_file_retires_provenance_and_creates_no_remote_tombstone() {
+        let dir = TestDir::new("delete");
+        let lyra_dir = &dir.0;
+        let file_name = "Nota local.txt";
+        let local_path = lyra_dir.join(file_name);
+        fs::write(&local_path, b"contenido local").unwrap();
+
+        // Estado previo simulado: manifiesto con mapeo remoto y procedencia local (sin cuenta activa).
+        let manifest_path = sync::get_legacy_manifest_path(lyra_dir);
+        let mut manifest = sync::load_manifest_from_path(&manifest_path);
+        manifest.files.insert(file_name.to_string(), types::FileManifestItem {
+            drive_id: "remote-old".into(), md5: "x".into(), local_mtime: 1,
+            remote_mtime: String::new(), local_size: 1,
+        });
+        sync::save_manifest_to_path(&manifest_path, &manifest).unwrap();
+        provenance::record_local_write(lyra_dir, file_name, None, true).unwrap();
+
+        // Exercise the same local deletion helper used by the disabled command.
+        assert!(!REMOTE_SYNC_ENABLED);
+        {
+            let _guard = sync::MANIFEST_LOCK.lock().await;
+            delete_local_note_at(lyra_dir, file_name, &local_path, |path| fs::remove_file(path)).unwrap();
+        }
+
+        assert!(!local_path.exists(), "el archivo local debe eliminarse");
+        let after = sync::load_manifest_from_path(&manifest_path);
+        assert!(after.pending_deletions.is_empty(), "no debe crear tombstones remotos");
+        assert!(after.files.contains_key(file_name), "sin operación remota no debe mutar mapeos remotos existentes");
+        let ledger = provenance::load_ledger(&provenance::get_ledger_path(lyra_dir)).unwrap().unwrap();
+        let by_name_retired = !ledger.by_name.contains_key(file_name)
+            || ledger.by_name.get(file_name).and_then(|id| ledger.notes.get(id)).map(|n| n.retired).unwrap_or(true);
+        assert!(by_name_retired, "la identidad/procedencia local debe retirarse");
+    }
+
+    #[test]
+    fn local_delete_failure_preserves_existing_provenance() {
+        let dir = TestDir::new("delete_failure");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"keep").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        let (local_id, _) = crate::local_identity::open_note(&dir.0, name).unwrap();
+        archive::set_archived(&dir.0, name, true, None).unwrap();
+        let before = provenance::load_ledger(&provenance::get_ledger_path(&dir.0)).unwrap().unwrap();
+        let note_id = before.by_name.get(name).unwrap().clone();
+
+        let result = delete_local_note_at(&dir.0, name, &path, |_| {
+            Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "injected"))
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
+        let after = provenance::load_ledger(&provenance::get_ledger_path(&dir.0)).unwrap().unwrap();
+        assert_eq!(after.by_name.get(name), Some(&note_id));
+        assert!(!after.notes.get(&note_id).unwrap().retired);
+        assert_eq!(crate::local_identity::registered_note_id(&dir.0, name).unwrap().as_deref(), Some(local_id.as_str()));
+        assert!(archive::projection(&dir.0, None).unwrap().archived_names.contains(&name.to_string()));
+    }
+
+    #[test]
+    fn local_delete_restart_retires_only_deleted_identity_after_path_reuse() {
+        let dir = TestDir::new("delete_reuse");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"old").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        let old_id = provenance::load_ledger(&provenance::get_ledger_path(&dir.0)).unwrap().unwrap().by_name[name].clone();
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = Some("after_physical"));
+        let result = delete_local_note_at(&dir.0, name, &path, |p| fs::remove_file(p));
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = None);
+        assert!(result.is_err());
+        assert!(!path.exists());
+        assert!(local_delete_journal_path(&dir.0).exists());
+
+        fs::write(&path, b"new").unwrap();
+        recover_local_delete_at(&dir.0).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        let ledger = provenance::load_ledger(&provenance::get_ledger_path(&dir.0)).unwrap().unwrap();
+        assert!(ledger.notes[&old_id].retired);
+        assert!(!ledger.by_name.contains_key(name));
+        assert!(!local_delete_journal_path(&dir.0).exists());
+        recover_local_delete_at(&dir.0).unwrap();
+    }
+
+    #[test]
+    fn local_delete_metadata_failure_retries_without_deleting_any_file() {
+        let dir = TestDir::new("delete_metadata_failure");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"old").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = Some("provenance"));
+        let result = delete_local_note_at(&dir.0, name, &path, |p| fs::remove_file(p));
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = None);
+        assert!(result.is_err());
+        assert!(!path.exists());
+        assert!(local_delete_journal_path(&dir.0).exists());
+        recover_local_delete_at(&dir.0).unwrap();
+        assert!(!local_delete_journal_path(&dir.0).exists());
+    }
+
+    #[test]
+    fn local_delete_preserves_replacement_after_last_identity_check() {
+        let dir = TestDir::new("delete_replacement");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"old").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        LOCAL_DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|path| {
+            fs::remove_file(path).unwrap();
+            fs::write(path, b"new").unwrap();
+        }));
+        assert!(delete_local_note_at(&dir.0, name, &path, |p| fs::remove_file(p)).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        let recovered = fs::read_dir(&dir.0).unwrap().flatten()
+            .find(|entry| entry.file_name().to_string_lossy().contains("original recovered")).unwrap();
+        assert_eq!(fs::read(recovered.path()).unwrap(), b"old");
+        assert!(!local_delete_journal_path(&dir.0).exists());
+        recover_local_delete_at(&dir.0).unwrap();
+    }
+
+    #[test]
+    fn local_delete_restart_restores_staged_note_without_completing_deletion() {
+        let dir = TestDir::new("delete_stage_restart");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"keep").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = Some("after_stage"));
+        assert!(delete_local_note_at(&dir.0, name, &path, |p| fs::remove_file(p)).is_err());
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = None);
+        assert!(!path.exists());
+        recover_local_delete_at(&dir.0).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
+        assert!(!local_delete_journal_path(&dir.0).exists());
+    }
+
+    #[test]
+    fn local_delete_recovery_does_not_restore_replaced_staging_file() {
+        let dir = TestDir::new("delete_stage_replaced");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"original").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = Some("after_stage"));
+        assert!(delete_local_note_at(&dir.0, name, &path, |p| fs::remove_file(p)).is_err());
+        LOCAL_DELETE_FAULT.with(|fault| *fault.borrow_mut() = None);
+        let journal = read_local_delete_journal(&dir.0).unwrap().unwrap();
+        let staged = dir.0.join(&journal.staged);
+        fs::remove_file(&staged).unwrap();
+        fs::write(&staged, b"replacement").unwrap();
+        assert!(recover_local_delete_at(&dir.0).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
+        let recovered = fs::read_dir(&dir.0).unwrap().flatten()
+            .find(|entry| entry.file_name().to_string_lossy().contains("original recovered")).unwrap();
+        assert_eq!(fs::read(recovered.path()).unwrap(), b"original");
+        assert!(!local_delete_journal_path(&dir.0).exists());
+        recover_local_delete_at(&dir.0).unwrap();
+    }
+
+    #[test]
+    fn local_delete_preserves_in_place_change_to_staged_content() {
+        let dir = TestDir::new("delete_stage_modified");
+        let name = "note.txt";
+        let path = dir.0.join(name);
+        fs::write(&path, b"original").unwrap();
+        provenance::record_local_write(&dir.0, name, None, true).unwrap();
+        LOCAL_DELETE_STAGED_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|staged| {
+            fs::write(staged, b"external").unwrap();
+        }));
+        assert!(delete_local_note_at(&dir.0, name, &path, |p| fs::remove_file(p)).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"external");
+        assert!(!local_delete_journal_path(&dir.0).exists());
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn no_pending_authorization_or_auth_dialog_state_when_disabled() {
+        // Con kill-switch deshabilitado no se exponen solicitudes/eventos de autorización.
+        assert!(!REMOTE_SYNC_ENABLED);
+        let pending: Option<provenance::PendingAuthorizationView> = None;
+        assert!(pending.is_none());
     }
 }

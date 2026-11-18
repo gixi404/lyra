@@ -25,24 +25,26 @@ interface ModalInfoProps {
 function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component {
   const { isDay } = themes();
   const { getFileStats } = useFile();
-  const [stats, setStats] = useState<FileStats | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [result, setResult] = useState<{ fileName: string; stats: FileStats | null } | null>(null);
+  const [closing, setClosing] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     let isMounted = true;
-    setLoading(true);
 
     getFileStats(fileName)
       .then(res => {
         if (isMounted) {
-          setStats(res);
-          setLoading(false);
+          setResult({ fileName, stats: res });
+          setClosing(false);
         }
       })
       .catch(err => {
         logger.error("Error loading file stats:", err);
-        if (isMounted) setLoading(false);
+        if (isMounted) {
+          setResult({ fileName, stats: null });
+          setClosing(false);
+        }
       });
 
     return () => {
@@ -51,25 +53,21 @@ function ModalInfo({ isOpen, onClose, fileName }: ModalInfoProps): Component {
   }, [isOpen, fileName, getFileStats]);
 
   const displayName = displayNoteName(fileName);
+  const stats = result?.fileName === fileName ? result.stats : null;
+  const close = () => {
+    setClosing(true);
+    onClose();
+  };
 
   return (
     <InfoModal
-      isOpen={isOpen}
-      onClose={onClose}
+      isOpen={isOpen && !closing && result?.fileName === fileName}
+      onClose={close}
       title="Información del archivo"
       icon={Info}
       name={displayName}
     >
-      {loading ? (
-        <div
-          className={`flex flex-col items-center justify-center gap-y-2.5 py-8 text-center text-xs ${
-            isDay ? "text-neutral-400" : "text-zinc-500"
-          }`}
-        >
-          <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
-          <span>Cargando información...</span>
-        </div>
-      ) : stats ? (
+      {stats ? (
         <div className="flex flex-col gap-y-2 text-xs">
           <InfoRow
             icon={FileText}

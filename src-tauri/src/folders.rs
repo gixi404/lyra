@@ -11,6 +11,25 @@ const FOLDER_ID_FILE: &str = ".lyra_folder_id.json";
 
 #[cfg(test)]
 thread_local! { static MOVE_FAULT: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(test)]
+thread_local! { static DELETE_INTERFERENCE: std::cell::RefCell<Option<fn(&Path)>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(test)]
+thread_local! { static DELETE_METADATA_FAULT: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) }; }
+
+fn delete_interference_point(_target: &Path) {
+    #[cfg(test)]
+    DELETE_INTERFERENCE.with(|hook| {
+        if let Some(run) = hook.borrow_mut().take() { run(_target); }
+    });
+}
+
+fn delete_metadata_fault_point() -> Result<(), String> {
+    #[cfg(test)]
+    if DELETE_METADATA_FAULT.with(|fault| fault.replace(false)) {
+        return Err("Injected interruption after physical folder deletion".into());
+    }
+    Ok(())
+}
 
 fn fault_point(phase: &str) -> Result<(), String> {
     #[cfg(test)]
@@ -42,7 +61,61 @@ struct MoveJournal {
     folder_id: Option<String>,
     #[serde(default)]
     phase: MovePhase,
+    /// Recovery move: clear explicit folder archive by identity after the move is finalized.
+    #[serde(default)]
+    recovery_clear_folder_archive: bool,
+    /// Recovery move: clear individual note archive state for this note after the move is finalized.
+    #[serde(default)]
+    recovery_clear_note_archive: bool,
 }
+
+const DELETE_JOURNAL_FILE: &str = ".lyra_folder_delete.json";
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum DeletePhase { #[default] Prepared, Deleting }
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+struct DeleteScopeEntry {
+    rel: String,
+    kind: String, // "file" | "dir"
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    mtime_ms: i64,
+    /// Hash del contenido para verificar identidad inequívoca de archivos confirmados.
+    /// Ausente en journals antiguos: la recuperación debe ser conservadora.
+    #[serde(default)]
+    content_sha256: Option<String>,
+    #[serde(default)]
+    physical_id: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct DeleteJournal {
+    path: String,
+    /// Folder marker id of the target when deletion was authorized.
+    #[serde(default)]
+    folder_id: Option<String>,
+    #[serde(default)]
+    phase: DeletePhase,
+    #[serde(default)]
+    expected_total_files: u64,
+    #[serde(default)]
+    expected_total_folders: u64,
+    /// Canonical fingerprint of confirmed scope (paths + metadata) to detect content changes.
+    #[serde(default)]
+    scope_fingerprint: String,
+    /// Confirmed physical scope entries (relative to lyra root). Recovery may only delete these.
+    #[serde(default)]
+    scope_entries: Vec<DeleteScopeEntry>,
+    #[serde(default)]
+    provenance_ids: BTreeMap<String, String>,
+    #[serde(default)]
+    folder_ids: std::collections::BTreeSet<String>,
+}
+
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 struct FolderState {
@@ -111,8 +184,9 @@ fn archived_paths(base: &Path) -> Result<Vec<String>, String> {
     for old_path in &state.archived {
         let Some(id) = state.identities.get(old_path) else { continue; };
         if !seen_ids.insert(id.clone()) { continue; }
-        let current = found.get(id).ok_or("Archived folder identity is missing; no other folder was archived")?;
-        paths.push(current.clone());
+        // Retain the persisted identity, but do not make unrelated local
+        // operations fail while its physical folder is absent after a crash.
+        if let Some(current) = found.get(id) { paths.push(current.clone()); }
     }
     paths.sort();
     paths.dedup();
@@ -203,6 +277,8 @@ pub struct FolderInfo {
     total_bytes: u64,
     created_at: Option<u128>,
     modified_at: Option<u128>,
+    #[serde(default)]
+    scope_fingerprint: String,
 }
 
 fn state_path(base: &Path) -> PathBuf { base.join(STATE_FILE) }
@@ -241,6 +317,31 @@ fn read_move_journal(base: &Path) -> Result<Option<MoveJournal>, String> {
     }
 }
 
+fn delete_journal_path(base: &Path) -> PathBuf { base.join(DELETE_JOURNAL_FILE) }
+
+fn write_delete_journal(base: &Path, journal: &DeleteJournal) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(journal).map_err(|e| e.to_string())?;
+    crate::gdrive::sync::write_file_atomic(&delete_journal_path(base), &bytes)
+        .map_err(|e| format!("Cannot prepare folder deletion: {e}"))
+}
+
+fn read_delete_journal(base: &Path) -> Result<Option<DeleteJournal>, String> {
+    match std::fs::read(delete_journal_path(base)) {
+        Ok(raw) => serde_json::from_slice(&raw).map(Some).map_err(|e| format!("Invalid folder delete journal: {e}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Cannot read folder delete journal: {error}")),
+    }
+}
+
+fn remove_delete_journal(base: &Path) -> Result<(), String> {
+    match std::fs::remove_file(delete_journal_path(base)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Cannot clear folder delete journal: {error}")),
+    }
+}
+
+
 fn apply_provenance_changes(base: &Path, notes: &[PathChange]) -> Result<(), String> {
     let ledger_path = crate::gdrive::provenance::get_ledger_path(base);
     let Some(mut ledger) = crate::gdrive::provenance::load_ledger(&ledger_path)? else { return Ok(()); };
@@ -266,6 +367,32 @@ fn apply_provenance_changes(base: &Path, notes: &[PathChange]) -> Result<(), Str
     Ok(())
 }
 
+fn clear_recovery_archive_state(base: &Path, journal: &MoveJournal) -> Result<(), String> {
+    if journal.recovery_clear_folder_archive && journal.is_folder {
+        if let Some(id) = journal.folder_id.as_deref() {
+            let mut state = read_state(base)?;
+            if state.version == 1 && !state.archived.is_empty() {
+                return Err("Legacy archived folders require identity resolution; recovery archive state was not cleared".into());
+            }
+            state.version = 2;
+            normalize_folder_state(base, &mut state)?;
+            state.archived.retain(|path| state.identities.get(path) != Some(&id.to_string()));
+            state.identities.retain(|_, value| value != id);
+            state.archived.sort();
+            state.archived.dedup();
+            normalize_folder_state(base, &mut state)?;
+            write_state(base, &state)?;
+        }
+    }
+    if journal.recovery_clear_note_archive && !journal.is_folder {
+        if let Some(note) = journal.notes.first() {
+            // Clear individual note archive state after the note is already at its active destination.
+            crate::gdrive::archive::set_archived(base, &note.new_path, false, None)?;
+        }
+    }
+    Ok(())
+}
+
 fn finish_move_at(base: &Path, journal: &MoveJournal) -> Result<(), String> {
     if journal.is_folder {
         let expected = journal.folder_id.as_deref().ok_or("Folder move has no stable identity")?;
@@ -283,6 +410,8 @@ fn finish_move_at(base: &Path, journal: &MoveJournal) -> Result<(), String> {
     // both copies remain available. A conflict leaves the journal pending.
     fault_point("drafts")?;
     reconcile_disk_drafts(base, &journal.notes, true)?;
+    fault_point("recovery_archive")?;
+    clear_recovery_archive_state(base, journal)?;
     fault_point("frontend")?;
     write_move_journal(base, &MoveJournal { phase: MovePhase::AwaitingFrontend, ..journal.clone() })
 }
@@ -329,7 +458,7 @@ fn reconcile_disk_drafts(base: &Path, notes: &[PathChange], finalize: bool) -> R
 }
 
 #[cfg(target_os = "linux")]
-fn rename_folder_no_replace(source: &Path, destination: &Path) -> Result<(), String> {
+pub(crate) fn rename_folder_no_replace(source: &Path, destination: &Path) -> Result<(), String> {
     use std::os::fd::AsRawFd;
     use std::ffi::CString;
     let parent = std::fs::File::open(source.parent().ok_or("Invalid source parent")?).map_err(|e| e.to_string())?;
@@ -342,7 +471,7 @@ fn rename_folder_no_replace(source: &Path, destination: &Path) -> Result<(), Str
 }
 
 #[cfg(windows)]
-fn rename_folder_no_replace(source: &Path, destination: &Path) -> Result<(), String> {
+pub(crate) fn rename_folder_no_replace(source: &Path, destination: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     let wide = |path: &Path| path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
@@ -354,11 +483,13 @@ fn rename_folder_no_replace(source: &Path, destination: &Path) -> Result<(), Str
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn rename_folder_no_replace(_source: &Path, _destination: &Path) -> Result<(), String> {
+pub(crate) fn rename_folder_no_replace(_source: &Path, _destination: &Path) -> Result<(), String> {
     Err("No-replace folder move is unavailable on this platform".into())
 }
 
 pub(crate) fn recover_move_at(base: &Path) -> Result<(), String> {
+    // Pending folder deletions must be reconciled before/independently of moves.
+    recover_pending_folder_delete_at(base)?;
     let Some(journal) = read_move_journal(base)? else { return Ok(()); };
     if journal.phase == MovePhase::AwaitingFrontend || journal.phase == MovePhase::Aborted { return Ok(()); }
     let source = if journal.is_folder { folder_path(base, &journal.source)? }
@@ -401,6 +532,20 @@ fn validate_move_state(base: &Path, source: &str, destination: &str, allow_archi
     Ok(())
 }
 
+/// Recovery moves (A): relocate an archived element to an active destination.
+/// Source may be inside or be an archived path, but destination must be fully active.
+fn validate_recovery_move_state(base: &Path, source: &str, destination: &str, allow_archived_descendants_in_source: bool) -> Result<(), String> {
+    if archived_paths(base)?.iter().any(|path| {
+        let destination_archived = destination == path || destination.starts_with(&format!("{path}/"));
+        let archived_inside_source = path.starts_with(&format!("{source}/"));
+        // Source can be archived (explicit/inherited) for recovery, destination cannot.
+        destination_archived || (archived_inside_source && !allow_archived_descendants_in_source)
+    }) {
+        return Err("El destino de recuperación debe ser una ubicación activa".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn ensure_active_parent_at(base: &Path, file_name: &str) -> Result<(), String> {
     if archived_paths(base)?.iter().any(|path| file_name.starts_with(&format!("{path}/"))) {
         return Err("Restaura la carpeta padre antes de crear una nota".into());
@@ -429,6 +574,493 @@ fn collect_folder_notes(base: &Path, relative: &str) -> Result<Vec<PathChange>, 
     Ok(notes)
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderDeleteCounts {
+    direct_files: u64,
+    total_files: u64,
+    direct_folders: u64,
+    total_folders: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFolderResult {
+    deleted_files: Vec<String>,
+    deleted_folders: Vec<String>,
+    counts: FolderDeleteCounts,
+}
+
+fn collect_supported_note_paths(base: &Path, root: &Path) -> Result<Vec<String>, String> {
+    let mut notes = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| format!("Cannot inspect folder for deletion: {e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if kind.is_symlink() { return Err("No se pueden eliminar carpetas que contienen enlaces simbólicos".into()); }
+            if name == FOLDER_ID_FILE { continue; }
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if kind.is_file() && crate::gdrive::sync::has_supported_extension(&name) {
+                let rel = entry.path().strip_prefix(base).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+                notes.push(rel);
+            }
+        }
+    }
+    notes.sort();
+    notes.dedup();
+    Ok(notes)
+}
+
+fn collect_folder_paths(base: &Path, root: &Path) -> Result<Vec<String>, String> {
+    let mut folders = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| format!("Cannot inspect folder for deletion: {e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if kind.is_symlink() { return Err("No se pueden eliminar carpetas que contienen enlaces simbólicos".into()); }
+            if name == FOLDER_ID_FILE { continue; }
+            if kind.is_dir() {
+                let rel = entry.path().strip_prefix(base).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+                folders.push(rel.clone());
+                stack.push(entry.path());
+            }
+        }
+    }
+    folders.sort();
+    folders.dedup();
+    Ok(folders)
+}
+
+/// Remove archive state entries whose paths are inside the deleted subtree.
+/// `known_removed_ids` should contain identities of folders actually deleted by this operation.
+/// This must not remove state for a different folder that later reused the same path.
+fn cleanup_folder_archive_state(base: &Path, folder_paths: &[String], known_removed_ids: &std::collections::BTreeSet<String>) -> Result<(), String> {
+    let mut state = read_state(base)?;
+    if state.version == 1 && !state.archived.is_empty() {
+        // Best effort: cannot normalize legacy state; avoid destructive changes.
+        return Ok(());
+    }
+    state.version = 2;
+    let _ = normalize_folder_state(base, &mut state);
+
+    if !known_removed_ids.is_empty() {
+        state.archived.retain(|p| !state.identities.get(p).is_some_and(|id| known_removed_ids.contains(id)));
+        state.identities.retain(|_, id| !known_removed_ids.contains(id));
+    }
+
+    // Drop stale keys under deleted subtree only when the path no longer exists on disk.
+    for root in folder_paths {
+        let prefix = format!("{root}/");
+        let should_drop = |p: &String| {
+            if p != root && !p.starts_with(&prefix) { return false; }
+            match folder_path(base, p) {
+                Ok(pb) => !pb.exists(),
+                Err(_) => true,
+            }
+        };
+        state.archived.retain(|p| !should_drop(p));
+        state.identities.retain(|p, _| !should_drop(p));
+    }
+
+    state.archived.sort();
+    state.archived.dedup();
+    let _ = normalize_folder_state(base, &mut state);
+    write_state(base, &state)
+}
+
+fn is_effectively_archived_path(base: &Path, relative_path: &str) -> Result<bool, String> {
+    Ok(archived_paths(base)?.iter().any(|p| relative_path == *p || relative_path.starts_with(&format!("{p}/"))))
+}
+
+fn folder_identity_if_present(target: &Path) -> Option<String> {
+    let path = target.join(FOLDER_ID_FILE);
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if !meta.file_type().is_file() { return None; }
+    let raw = std::fs::read(&path).ok()?;
+    let marker: FolderMarker = serde_json::from_slice(&raw).ok()?;
+    if marker.version != 1 || marker.id.len() != 32 || !marker.id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(marker.id)
+}
+
+pub(crate) fn verified_folder_id(base: &Path, relative_path: &str, create: bool) -> Result<Option<String>, String> {
+    if relative_path.is_empty() { return Ok(Some("lyra-root".into())); }
+    let folder = folder_path(base, relative_path)?;
+    if !folder.is_dir() { return Err("Folder does not exist".into()); }
+    let id = if create { Some(folder_marker(&folder)?) } else { folder_identity_if_present(&folder) };
+    let Some(id) = id else { return Ok(None) };
+    let marker = std::fs::symlink_metadata(folder.join(FOLDER_ID_FILE)).map_err(|e| e.to_string())?;
+    let physical = delete_physical_id(&marker).ok_or("Folder marker has no verifiable physical identity")?;
+    Ok(Some(format!("{id}:{physical}")))
+}
+
+fn metadata_mtime_ms(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn delete_physical_id(meta: &std::fs::Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    Some(format!("{}:{}", meta.dev(), meta.ino()))
+}
+
+#[cfg(windows)]
+fn delete_physical_id(meta: &std::fs::Metadata) -> Option<String> {
+    use std::os::windows::fs::MetadataExt;
+    Some(format!("{}:{}", meta.volume_serial_number()?, meta.file_index()?))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn delete_physical_id(_meta: &std::fs::Metadata) -> Option<String> { None }
+
+fn collect_delete_scope(base: &Path, root: &Path, root_rel: &str) -> Result<(FolderDeleteCounts, Vec<DeleteScopeEntry>), String> {
+    let root_meta = std::fs::symlink_metadata(root).map_err(|e| format!("Cannot inspect deletion root: {e}"))?;
+    if !root_meta.file_type().is_dir() { return Err("Deletion root is not a physical directory".into()); }
+    let mut counts = FolderDeleteCounts { direct_files: 0, total_files: 0, direct_folders: 0, total_folders: 0 };
+    let mut entries: Vec<DeleteScopeEntry> = Vec::new();
+    fn walk(
+        base: &Path,
+        root_rel: &str,
+        dir: &Path,
+        depth: usize,
+        counts: &mut FolderDeleteCounts,
+        entries: &mut Vec<DeleteScopeEntry>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(dir).map_err(|e| format!("Cannot inspect folder: {e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = entry.path();
+            let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            let ft = meta.file_type();
+            if ft.is_symlink() { return Err("No se pueden eliminar carpetas que contienen enlaces simbólicos".into()); }
+            let rel = path.strip_prefix(base).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+            if name == FOLDER_ID_FILE {
+                if !ft.is_file() { return Err("Folder marker is not a regular file".into()); }
+                let bytes = std::fs::read(&path).map_err(|e| format!("Cannot read folder marker: {e}"))?;
+                use sha2::{Digest, Sha256};
+                entries.push(DeleteScopeEntry { rel, kind: "marker".into(), size: meta.len(), mtime_ms: metadata_mtime_ms(&meta), content_sha256: Some(format!("{:x}", Sha256::digest(&bytes))), physical_id: delete_physical_id(&meta) });
+                continue;
+            }
+            if !(rel == root_rel || rel.starts_with(&format!("{root_rel}/"))) {
+                continue;
+            }
+            if ft.is_dir() {
+                counts.total_folders += 1;
+                if depth == 0 { counts.direct_folders += 1; }
+                entries.push(DeleteScopeEntry { rel: rel.clone(), kind: "dir".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&meta) });
+                walk(base, root_rel, &path, depth + 1, counts, entries)?;
+            } else if ft.is_file() {
+                counts.total_files += 1;
+                if depth == 0 { counts.direct_files += 1; }
+                let bytes = std::fs::read(&path).map_err(|e| format!("Cannot read file for deletion scope: {e}"))?;
+                let hash = {
+                    use sha2::{Digest, Sha256};
+                    format!("{:x}", Sha256::digest(&bytes))
+                };
+                entries.push(DeleteScopeEntry { rel, kind: "file".into(), size: meta.len(), mtime_ms: metadata_mtime_ms(&meta), content_sha256: Some(hash), physical_id: delete_physical_id(&meta) });
+            }
+        }
+        Ok(())
+    }
+    walk(base, root_rel, root, 0, &mut counts, &mut entries)?;
+    // include root dir itself as scope entry (for constrained cleanup/removal decisions)
+    if let Ok(meta) = std::fs::symlink_metadata(root) {
+        entries.push(DeleteScopeEntry { rel: root_rel.to_string(), kind: "dir".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&meta) });
+    }
+    let mut ancestor = std::path::Path::new(root_rel).parent();
+    while let Some(dir) = ancestor {
+        if dir.as_os_str().is_empty() { break; }
+        let meta = std::fs::symlink_metadata(base.join(dir)).map_err(|e| format!("Cannot inspect deletion ancestor: {e}"))?;
+        if !meta.file_type().is_dir() { return Err("Deletion ancestor is not a physical directory".into()); }
+        entries.push(DeleteScopeEntry { rel: dir.to_string_lossy().replace('\\', "/"), kind: "ancestor".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&meta) });
+        ancestor = dir.parent();
+    }
+    entries.sort();
+    entries.dedup();
+    Ok((counts, entries))
+}
+
+fn delete_scope_fingerprint(entries: &[DeleteScopeEntry]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for e in entries {
+        hasher.update(e.rel.as_bytes());
+        hasher.update([0]);
+        hasher.update(e.kind.as_bytes());
+        hasher.update([0]);
+        hasher.update(e.size.to_le_bytes());
+        hasher.update(e.mtime_ms.to_le_bytes());
+        hasher.update([0]);
+        if let Some(hash) = &e.content_sha256 {
+            hasher.update(hash.as_bytes());
+        }
+        if let Some(id) = &e.physical_id {
+            hasher.update(id.as_bytes());
+        }
+        hasher.update([0xff]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn scope_entry_for<'a>(entries: &'a [DeleteScopeEntry], rel: &str, kind: &str) -> Option<&'a DeleteScopeEntry> {
+    entries.iter().find(|e| e.rel == rel && e.kind == kind)
+}
+
+fn scope_file_matches(expected: &DeleteScopeEntry, path: &Path, meta: &std::fs::Metadata) -> bool {
+    if expected.physical_id.is_none() || delete_physical_id(meta) != expected.physical_id ||
+        meta.len() != expected.size || metadata_mtime_ms(meta) != expected.mtime_ms {
+        return false;
+    }
+    match &expected.content_sha256 {
+        Some(hash) => {
+            let Ok(bytes) = std::fs::read(path) else { return false; };
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(&bytes)) == *hash
+        }
+        // Journal antiguo sin hash: no verificable de forma inequívoca.
+        None => false,
+    }
+}
+
+fn scope_dir_matches(expected: &DeleteScopeEntry, path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else { return false; };
+    meta.file_type().is_dir() && expected.physical_id.is_some() && delete_physical_id(&meta) == expected.physical_id
+}
+
+fn scope_ancestors_match(base: &Path, rel: &str, scope_entries: &[DeleteScopeEntry]) -> bool {
+    let mut parent = std::path::Path::new(rel).parent();
+    while let Some(dir) = parent {
+        if dir.as_os_str().is_empty() { break; }
+        let key = dir.to_string_lossy().replace('\\', "/");
+        let Some(expected) = scope_entry_for(scope_entries, &key, "dir")
+            .or_else(|| scope_entry_for(scope_entries, &key, "ancestor")) else { return false; };
+        if !scope_dir_matches(expected, &base.join(dir)) { return false; }
+        parent = dir.parent();
+    }
+    true
+}
+
+fn remove_tree_entries_in_scope(target: &Path, base: &Path, scope_entries: &[DeleteScopeEntry]) -> Result<(), String> {
+    // Remove files/subdirs that are part of confirmed scope, deepest first.
+    // Internal Lyra markers inside in-scope dirs are cleaned to allow directory removal.
+    let mut dirs: Vec<String> = scope_entries.iter().filter(|e| e.kind == "dir").map(|e| e.rel.clone()).collect();
+    dirs.sort_by(|a,b| b.len().cmp(&a.len()).then(b.cmp(a)));
+    let mut files: Vec<String> = scope_entries.iter().filter(|e| e.kind == "file").map(|e| e.rel.clone()).collect();
+    files.sort();
+
+    for rel in files {
+        let expected = scope_entry_for(scope_entries, &rel, "file").ok_or("Missing confirmed file scope")?;
+        if !scope_ancestors_match(base, &rel, scope_entries) {
+            return Err("A confirmed parent folder changed during deletion".into());
+        }
+        let pth = base.join(&rel);
+        match std::fs::symlink_metadata(&pth) {
+            Ok(m) if m.file_type().is_file() => {
+                if !scope_file_matches(expected, &pth, &m) {
+                    return Err("The confirmed file changed during deletion".into());
+                }
+                std::fs::remove_file(&pth).map_err(|e| format!("Cannot remove confirmed file: {e}"))?;
+            }
+            Ok(m) if m.file_type().is_symlink() => { return Err("No se pueden eliminar carpetas que contienen enlaces simbólicos".into()); }
+            Ok(_) => return Err("The confirmed file changed type during deletion".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("The confirmed file disappeared during deletion".into()),
+            Err(e) => return Err(format!("Cannot inspect file during deletion: {e}")),
+        }
+    }
+
+    for rel in dirs {
+        let pth = base.join(&rel);
+        if !scope_ancestors_match(base, &rel, scope_entries) {
+            return Err("A confirmed parent folder changed during deletion".into());
+        }
+        let expected = scope_entry_for(scope_entries, &rel, "dir").ok_or("Missing confirmed folder scope")?;
+        if !scope_dir_matches(expected, &pth) { return Err("The confirmed folder changed during deletion".into()); }
+        for entry in std::fs::read_dir(&pth).map_err(|e| format!("Cannot inspect confirmed folder: {e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.file_name() != FOLDER_ID_FILE {
+                return Err("Confirmed folder contains new or changed content".into());
+            }
+        }
+        let marker = pth.join(FOLDER_ID_FILE);
+        let marker_rel = format!("{rel}/{FOLDER_ID_FILE}");
+        match std::fs::symlink_metadata(&marker) {
+            Ok(m) if m.file_type().is_file() => {
+                let expected_marker = scope_entry_for(scope_entries, &marker_rel, "marker")
+                    .ok_or("A new folder marker appeared during deletion")?;
+                if !scope_file_matches(expected_marker, &marker, &m) {
+                    return Err("The confirmed folder marker changed during deletion".into());
+                }
+                std::fs::remove_file(&marker).map_err(|e| format!("Cannot remove folder marker: {e}"))?;
+            }
+            Ok(m) if m.file_type().is_symlink() => return Err("No se pueden eliminar carpetas que contienen enlaces simbólicos".into()),
+            Ok(_) => return Err("The folder marker changed type during deletion".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if scope_entry_for(scope_entries, &marker_rel, "marker").is_some() {
+                    return Err("The confirmed folder marker disappeared during deletion".into());
+                }
+            },
+            Err(e) => return Err(format!("Cannot inspect folder marker: {e}")),
+        }
+        match std::fs::remove_dir(&pth) {
+            Ok(()) => {},
+            Err(e) => return Err(format!("Cannot remove confirmed folder without deleting new content: {e}")),
+        }
+    }
+    if target.exists() { return Err("Confirmed folder still contains content".into()); }
+    Ok(())
+}
+
+
+pub(crate) fn recover_pending_folder_delete_at(base: &Path) -> Result<(), String> {
+    let journal = match read_delete_journal(base) {
+        Ok(journal) => journal,
+        Err(error) if delete_journal_path(base).exists() => {
+            // Preserve malformed evidence without letting it trigger deletion or
+            // indefinitely block unrelated local operations.
+            let quarantined = base.join(format!("{DELETE_JOURNAL_FILE}.invalid.{:032x}", rand::random::<u128>()));
+            std::fs::rename(delete_journal_path(base), quarantined)
+                .map_err(|e| format!("Cannot quarantine invalid delete journal ({error}): {e}"))?;
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(journal) = journal else { return Ok(()); };
+    if journal.path.is_empty() { let _ = remove_delete_journal(base); return Ok(()); }
+    // A marker, path, timestamp or content hash in a journal cannot establish
+    // that the object currently at this path is the one the user deleted.
+    // Recovery never resumes a destructive operation without a new confirmation.
+    // Only IDs captured before physical deletion may be retired. The path may
+    // now hold a different note or folder, so path-only cleanup is forbidden.
+    if journal.phase == DeletePhase::Deleting {
+        for (note, id) in &journal.provenance_ids {
+            let original_still_at_path = scope_entry_for(&journal.scope_entries, note, "file")
+                .and_then(|expected| std::fs::symlink_metadata(base.join(note)).ok()
+                    .map(|meta| meta.file_type().is_file() && expected.physical_id.is_some()
+                        && delete_physical_id(&meta) == expected.physical_id))
+                .unwrap_or(false);
+            if !original_still_at_path {
+                crate::gdrive::provenance::retire_deleted_note_if_id(base, note, id)?;
+            }
+        }
+        if !journal.folder_ids.is_empty() {
+            let found = scan_folder_markers(base)?;
+            let removed_ids = journal.folder_ids.difference(&found.keys().cloned().collect()).cloned().collect();
+            cleanup_folder_archive_state(base, std::slice::from_ref(&journal.path), &removed_ids)?;
+        }
+    }
+    remove_delete_journal(base)
+}
+
+fn delete_archived_folder_permanently_at(base: &Path, relative_path: &str, expected: Option<DeleteFolderExpected>) -> Result<DeleteFolderResult, String> {
+    crate::local_identity::recover_save(base)?;
+    recover_move_at(base)?;
+    recover_pending_folder_delete_at(base)?;
+    if relative_path.is_empty() { return Err("The Lyra root cannot be deleted".into()); }
+    let target = folder_path(base, relative_path)?;
+    if !target.is_dir() { return Err("Folder does not exist".into()); }
+    if !is_effectively_archived_path(base, relative_path)? {
+        return Err("Only archived folders can be permanently deleted here".into());
+    }
+
+    let (counts, scope_entries) = collect_delete_scope(base, &target, relative_path)?;
+    let scope_fingerprint = delete_scope_fingerprint(&scope_entries);
+    if let Some(exp) = expected {
+        if counts.total_files != exp.total_files || counts.total_folders != exp.total_folders {
+            return Err("El contenido de la carpeta cambió. Revisa la información y vuelve a intentarlo.".into());
+        }
+        if let Some(expected_fp) = exp.scope_fingerprint.as_ref() {
+            if !expected_fp.is_empty() && expected_fp != &scope_fingerprint {
+                return Err("El contenido de la carpeta cambió. Revisa la información y vuelve a intentarlo.".into());
+            }
+        }
+    }
+
+    let folder_id = folder_identity_if_present(&target);
+    let mut deleted_folders = collect_folder_paths(base, &target)?;
+    deleted_folders.push(relative_path.to_string());
+    deleted_folders.sort();
+    deleted_folders.dedup();
+    let note_paths = collect_supported_note_paths(base, &target)?;
+    let provenance_ids: BTreeMap<String, String> = crate::gdrive::provenance::load_ledger(
+        &crate::gdrive::provenance::get_ledger_path(base)
+    )?.map(|ledger| note_paths.iter().filter_map(|name| {
+        ledger.by_name.get(name).map(|id| (name.clone(), id.clone()))
+    }).collect()).unwrap_or_default();
+
+    let mut known_removed_ids = std::collections::BTreeSet::new();
+    if let Some(id) = folder_id.clone() { known_removed_ids.insert(id); }
+    for path in &deleted_folders {
+        if let Ok(p) = folder_path(base, path) {
+            if let Some(id) = folder_identity_if_present(&p) { known_removed_ids.insert(id); }
+        }
+    }
+
+    let journal = DeleteJournal {
+        path: relative_path.to_string(),
+        folder_id: folder_id.clone(),
+        phase: DeletePhase::Prepared,
+        expected_total_files: counts.total_files,
+        expected_total_folders: counts.total_folders,
+        scope_fingerprint: scope_fingerprint.clone(),
+        scope_entries: scope_entries.clone(),
+        provenance_ids: provenance_ids.clone(),
+        folder_ids: known_removed_ids.clone(),
+    };
+    write_delete_journal(base, &journal)?;
+
+    write_delete_journal(base, &DeleteJournal { phase: DeletePhase::Deleting, ..journal.clone() })?;
+
+    delete_interference_point(&target);
+    remove_tree_entries_in_scope(&target, base, &scope_entries)?;
+    if target.exists() {
+        remove_delete_journal(base)?;
+        return Err("El contenido de la carpeta cambió durante la eliminación. Revisa la información y vuelve a intentarlo.".into());
+    }
+
+    delete_metadata_fault_point()?;
+    for note in &note_paths {
+        if let Some(id) = provenance_ids.get(note) {
+            crate::gdrive::provenance::retire_deleted_note_if_id(base, note, id)?;
+        }
+    }
+    cleanup_folder_archive_state(base, &deleted_folders, &known_removed_ids)?;
+    remove_delete_journal(base)?;
+
+    Ok(DeleteFolderResult { deleted_files: note_paths, deleted_folders, counts })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFolderExpected {
+    pub total_files: u64,
+    pub total_folders: u64,
+    #[serde(default)]
+    pub scope_fingerprint: Option<String>,
+}
+
+#[tauri::command]
+pub async fn delete_archived_folder_permanently(
+    app: tauri::AppHandle,
+    relative_path: String,
+    expected: Option<DeleteFolderExpected>,
+) -> Result<DeleteFolderResult, String> {
+    let base = base_dir(&app)?;
+    let _guard = crate::gdrive::sync::MANIFEST_LOCK.lock().await;
+    let _archive_guard = crate::gdrive::archive::ARCHIVE_LOCK.lock().await;
+    delete_archived_folder_permanently_at(&base, &relative_path, expected)
+}
+
+
 #[tauri::command]
 pub async fn move_folder_local(app: tauri::AppHandle, source_path: String, destination_path: String, expected_notes: Vec<String>) -> Result<Vec<PathChange>, String> {
     let base = base_dir(&app)?;
@@ -436,7 +1068,7 @@ pub async fn move_folder_local(app: tauri::AppHandle, source_path: String, desti
     move_folder_at(&base, &source_path, &destination_path, Some(&expected_notes))
 }
 
-fn move_folder_at(base: &Path, source_path: &str, destination_path: &str, expected_notes: Option<&[String]>) -> Result<Vec<PathChange>, String> {
+fn move_folder_at_inner(base: &Path, source_path: &str, destination_path: &str, expected_notes: Option<&[String]>, recovery: bool) -> Result<Vec<PathChange>, String> {
     crate::local_identity::recover_save(base)?;
     recover_move_at(base)?;
     if read_move_journal(base)?.is_some() { return Err("Un movimiento anterior necesita recuperación en la interfaz antes de realizar otro".into()); }
@@ -454,7 +1086,11 @@ fn move_folder_at(base: &Path, source_path: &str, destination_path: &str, expect
     if destination.exists() { return Err("El destino ya existe".into()); }
     if !destination.parent().is_some_and(Path::is_dir) { return Err("La carpeta de destino no existe".into()); }
     let folder_id = folder_marker(&source)?;
-    validate_move_state(base, source_path, destination_path, true)?;
+    if recovery {
+        validate_recovery_move_state(base, source_path, destination_path, true)?;
+    } else {
+        validate_move_state(base, source_path, destination_path, true)?;
+    }
     let mut notes = collect_folder_notes(base, source_path)?;
     if let Some(expected) = expected_notes {
         let mut expected = expected.to_vec();
@@ -467,7 +1103,22 @@ fn move_folder_at(base: &Path, source_path: &str, destination_path: &str, expect
         note.new_path = format!("{}{}", destination_path, &note.old_path[source_path.len()..]);
     }
     ensure_notes_not_bound(base, &notes)?;
-    let journal = MoveJournal { source: source_path.into(), destination: destination_path.into(), is_folder: true, notes: notes.clone(), folder_id: Some(folder_id), phase: MovePhase::Prepared };
+    let recovery_clear_folder_archive = recovery && {
+        // Clear explicit archive of the moved folder identity if present.
+        let state = read_state(base)?;
+        if state.version == 1 && !state.archived.is_empty() { false }
+        else { state.identities.values().any(|id| id == &folder_id) && state.archived.iter().any(|p| state.identities.get(p) == Some(&folder_id)) }
+    };
+    let journal = MoveJournal {
+        source: source_path.into(),
+        destination: destination_path.into(),
+        is_folder: true,
+        notes: notes.clone(),
+        folder_id: Some(folder_id),
+        phase: MovePhase::Prepared,
+        recovery_clear_folder_archive,
+        recovery_clear_note_archive: false,
+    };
     write_move_journal(base, &journal)?;
     fault_point("prepared")?;
     if let Err(error) = rename_folder_no_replace(&source, &destination) {
@@ -481,6 +1132,10 @@ fn move_folder_at(base: &Path, source_path: &str, destination_path: &str, expect
     Ok(notes)
 }
 
+fn move_folder_at(base: &Path, source_path: &str, destination_path: &str, expected_notes: Option<&[String]>) -> Result<Vec<PathChange>, String> {
+    move_folder_at_inner(base, source_path, destination_path, expected_notes, false)
+}
+
 #[tauri::command]
 pub async fn move_note_local(app: tauri::AppHandle, source_path: String, destination_path: String) -> Result<Vec<PathChange>, String> {
     let base = base_dir(&app)?;
@@ -488,7 +1143,23 @@ pub async fn move_note_local(app: tauri::AppHandle, source_path: String, destina
     move_note_at(&base, &source_path, &destination_path)
 }
 
-fn move_note_at(base: &Path, source_path: &str, destination_path: &str) -> Result<Vec<PathChange>, String> {
+#[tauri::command]
+pub async fn recover_archived_folder_to(app: tauri::AppHandle, source_path: String, destination_path: String) -> Result<Vec<PathChange>, String> {
+    let base = base_dir(&app)?;
+    let _guard = crate::gdrive::sync::MANIFEST_LOCK.lock().await;
+    let _archive_guard = crate::gdrive::archive::ARCHIVE_LOCK.lock().await;
+    move_folder_at_inner(&base, &source_path, &destination_path, None, true)
+}
+
+#[tauri::command]
+pub async fn recover_archived_note_to(app: tauri::AppHandle, source_path: String, destination_path: String) -> Result<Vec<PathChange>, String> {
+    let base = base_dir(&app)?;
+    let _guard = crate::gdrive::sync::MANIFEST_LOCK.lock().await;
+    let _archive_guard = crate::gdrive::archive::ARCHIVE_LOCK.lock().await;
+    move_note_at_inner(&base, &source_path, &destination_path, true)
+}
+
+fn move_note_at_inner(base: &Path, source_path: &str, destination_path: &str, recovery: bool) -> Result<Vec<PathChange>, String> {
     crate::local_identity::recover_save(base)?;
     recover_move_at(base)?;
     if read_move_journal(base)?.is_some() { return Err("Un movimiento anterior necesita recuperación en la interfaz antes de realizar otro".into()); }
@@ -498,11 +1169,30 @@ fn move_note_at(base: &Path, source_path: &str, destination_path: &str) -> Resul
     if !source.is_file() { return Err("Source note does not exist".into()); }
     if destination.exists() { return Err("El destino ya existe".into()); }
     if !destination.parent().is_some_and(Path::is_dir) { return Err("La carpeta de destino no existe".into()); }
-    validate_move_state(base, source_path, destination_path, false)?;
+    if recovery {
+        validate_recovery_move_state(base, source_path, destination_path, false)?;
+    } else {
+        validate_move_state(base, source_path, destination_path, false)?;
+    }
     let notes = vec![PathChange { old_path: source_path.into(), new_path: destination_path.into() }];
     ensure_notes_not_bound(base, &notes)?;
     crate::local_identity::open_note(base, source_path)?;
-    let journal = MoveJournal { source: source_path.into(), destination: destination_path.into(), is_folder: false, notes: notes.clone(), folder_id: None, phase: MovePhase::Prepared };
+    let recovery_clear_note_archive = recovery && {
+        // If the note is individually archived in projection, clear it after relocation.
+        crate::gdrive::archive::projection(base, None)
+            .map(|p| p.archived_names.iter().any(|n| n == source_path))
+            .unwrap_or(false)
+    };
+    let journal = MoveJournal {
+        source: source_path.into(),
+        destination: destination_path.into(),
+        is_folder: false,
+        notes: notes.clone(),
+        folder_id: None,
+        phase: MovePhase::Prepared,
+        recovery_clear_folder_archive: false,
+        recovery_clear_note_archive,
+    };
     write_move_journal(base, &journal)?;
     fault_point("prepared")?;
     if let Err(error) = rename_folder_no_replace(&source, &destination) {
@@ -514,6 +1204,10 @@ fn move_note_at(base: &Path, source_path: &str, destination_path: &str) -> Resul
     write_move_journal(base, &journal)?;
     finish_move_at(base, &journal)?;
     Ok(notes)
+}
+
+fn move_note_at(base: &Path, source_path: &str, destination_path: &str) -> Result<Vec<PathChange>, String> {
+    move_note_at_inner(base, source_path, destination_path, false)
 }
 
 #[tauri::command]
@@ -670,15 +1364,17 @@ fn folder_info_at(target: &Path, relative_path: &str) -> Result<FolderInfo, Stri
         location: target.to_string_lossy().to_string(), direct_files: 0, total_files: 0,
         direct_folders: 0, total_folders: 0, total_bytes: 0,
         created_at: timestamp(metadata.created()), modified_at: timestamp(metadata.modified()),
+        scope_fingerprint: String::new(),
     };
     let mut stack = vec![(target.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| format!("Cannot inspect folder: {e}"))? {
             let entry = entry.map_err(|e| e.to_string())?;
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') { continue; }
             let kind = entry.file_type().map_err(|e| e.to_string())?;
             if kind.is_symlink() { continue; }
+            // Exclude only Lyra-internal marker from user-facing count; include hidden/unsupported files.
+            if name == FOLDER_ID_FILE { continue; }
             if kind.is_dir() {
                 info.total_folders += 1;
                 if depth == 0 { info.direct_folders += 1; }
@@ -694,12 +1390,22 @@ fn folder_info_at(target: &Path, relative_path: &str) -> Result<FolderInfo, Stri
             }
         }
     }
+
+    // Confirmed deletion scope fingerprint (paths+size+mtime, excludes marker). Empty for virtual root.
+    if !relative_path.is_empty() {
+        if let Some(base) = target.ancestors().nth(relative_path.split('/').filter(|s| !s.is_empty()).count()) {
+            if let Ok((_counts, entries)) = collect_delete_scope(base, target, relative_path) {
+                info.scope_fingerprint = delete_scope_fingerprint(&entries);
+            }
+        }
+    }
     Ok(info)
 }
 
 #[tauri::command]
 pub async fn list_archived_folders(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let base = base_dir(&app)?;
+    let _ = recover_pending_folder_delete_at(&base);
     archived_paths(&base)
 }
 
@@ -707,7 +1413,24 @@ pub async fn list_archived_folders(app: tauri::AppHandle) -> Result<Vec<String>,
 pub async fn set_folder_archived(app: tauri::AppHandle, relative_path: String, archived: bool) -> Result<Vec<String>, String> {
     let base = base_dir(&app)?;
     let _guard = crate::gdrive::sync::MANIFEST_LOCK.lock().await;
+    let _ = recover_pending_folder_delete_at(&base);
     set_folder_archived_at(&base, &relative_path, archived)
+}
+
+#[tauri::command]
+pub async fn is_folder_explicitly_archived(app: tauri::AppHandle, relative_path: String) -> Result<bool, String> {
+    let base = base_dir(&app)?;
+    let _ = recover_pending_folder_delete_at(&base);
+    let target = folder_path(&base, &relative_path)?;
+    if !target.is_dir() { return Ok(false); }
+    let mut state = read_state(&base)?;
+    if state.version == 1 && !state.archived.is_empty() {
+        return Err("Legacy archived folders require identity resolution before use".into());
+    }
+    state.version = 2;
+    normalize_folder_state(&base, &mut state)?;
+    let id = folder_marker(&target)?;
+    Ok(state.archived.iter().any(|p| state.identities.get(p) == Some(&id)))
 }
 
 fn set_folder_archived_at(base: &Path, relative_path: &str, archived: bool) -> Result<Vec<String>, String> {
@@ -770,6 +1493,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scenario_f_local_workflow_never_touches_remote_auth_credentials_or_network() {
+        use crate::gdrive::{archive, auth, client, credential_store, provenance, sync};
+        auth::AUTH_ACCESS_COUNT.with(|count| count.set(0));
+        credential_store::CREDENTIAL_ACCESS_COUNT.with(|count| count.set(0));
+        client::NETWORK_ACCESS_COUNT.with(|count| count.set(0));
+
+        let fixture = tempfile::tempdir().unwrap();
+        let base = fixture.path();
+        let credential_fixture = base.join("legacy-credentials-fixture.json");
+        std::fs::write(&credential_fixture, br#"{"token":"fake-only"}"#).unwrap();
+        let credential_before = std::fs::read(&credential_fixture).unwrap();
+        let manifest_path = sync::get_legacy_manifest_path(base);
+        let manifest = sync::load_manifest_from_path(&manifest_path);
+        sync::save_manifest_to_path(&manifest_path, &manifest).unwrap();
+        let manifest_before = std::fs::read(&manifest_path).unwrap();
+
+        create_folder_at(base, "Work").unwrap();
+        provenance::create_local_note(base, "note.md", b"initial", None).unwrap();
+        let (id, opened) = crate::local_identity::open_note(base, "note.md").unwrap();
+        crate::local_identity::save_note_versioned(base, "note.md", &id,
+            &crate::local_identity::content_sha256(opened.as_bytes()), b"edited").unwrap();
+        provenance::record_local_write(base, "note.md", None, false).unwrap();
+        move_note_at(base, "note.md", "renamed.md").unwrap();
+        remove_move_journal(base).unwrap();
+        move_note_at(base, "renamed.md", "Work/renamed.md").unwrap();
+        remove_move_journal(base).unwrap();
+        assert_eq!(crate::local_identity::verified_note_id(base, "Work/renamed.md").unwrap(), Some(id.clone()));
+        archive::set_archived(base, "Work/renamed.md", true, None).unwrap();
+        assert_eq!(archive::projection(base, None).unwrap().archived_names, ["Work/renamed.md"]);
+        move_note_at_inner(base, "Work/renamed.md", "Work/recovered.md", true).unwrap();
+        remove_move_journal(base).unwrap();
+        assert!(archive::projection(base, None).unwrap().archived_names.is_empty());
+        assert_eq!(crate::local_identity::open_note(base, "Work/recovered.md").unwrap().1, "edited");
+        let path = base.join("Work/recovered.md");
+        crate::gdrive::delete_local_note_at(base, "Work/recovered.md", &path, |candidate| std::fs::remove_file(candidate)).unwrap();
+        assert!(!path.exists());
+
+        recover_move_at(base).unwrap();
+        crate::local_identity::recover_save(base).unwrap();
+        assert!(archive::projection(base, None).unwrap().archived_names.is_empty());
+        assert_eq!(std::fs::read(&credential_fixture).unwrap(), credential_before);
+        assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest_before);
+        assert!(sync::load_manifest_from_path(&manifest_path).pending_deletions.is_empty());
+        auth::AUTH_ACCESS_COUNT.with(|count| assert_eq!(count.get(), 0));
+        credential_store::CREDENTIAL_ACCESS_COUNT.with(|count| assert_eq!(count.get(), 0));
+        client::NETWORK_ACCESS_COUNT.with(|count| assert_eq!(count.get(), 0));
+    }
+
+    #[test]
     fn creates_nested_folders_only_under_existing_parents() {
         let base = std::env::temp_dir().join(format!("lyra_folders_{}", rand::random::<u64>()));
         std::fs::create_dir(&base).unwrap();
@@ -793,7 +1565,8 @@ mod tests {
         std::fs::write(base.join("A/B/two.txt"), "two!").unwrap();
         std::fs::write(base.join("A/B/.internal.md"), "hidden").unwrap();
         let info = folder_info_at(&base.join("A"), "A").unwrap();
-        assert_eq!((info.direct_files, info.total_files, info.direct_folders, info.total_folders, info.total_bytes), (1, 2, 1, 1, 7));
+        // Hidden/non-supported user files are included in physical content counts; only Lyra-internal markers are excluded.
+        assert_eq!((info.direct_files, info.total_files, info.direct_folders, info.total_folders, info.total_bytes), (1, 3, 1, 1, 13));
         assert!(set_folder_archived_at(&base, "", true).is_err());
         assert_eq!(set_folder_archived_at(&base, "A", true).unwrap(), ["A"]);
         assert!(create_folder_at(&base, "A/New").is_err());
@@ -837,7 +1610,7 @@ mod tests {
         std::fs::create_dir(&base).unwrap();
         create_folder_at(&base, "A").unwrap();
         std::fs::write(base.join("A/note.md"), "preserved").unwrap();
-        write_move_journal(&base, &MoveJournal { source: "A".into(), destination: "B".into(), is_folder: true, notes: vec![], folder_id: Some(folder_marker(&base.join("A")).unwrap()), phase: MovePhase::Prepared }).unwrap();
+        write_move_journal(&base, &MoveJournal { source: "A".into(), destination: "B".into(), is_folder: true, notes: vec![], folder_id: Some(folder_marker(&base.join("A")).unwrap()), phase: MovePhase::Prepared, recovery_clear_folder_archive: false, recovery_clear_note_archive: false }).unwrap();
         std::fs::create_dir(base.join("B")).unwrap();
         assert!(recover_move_at(&base).is_err());
         assert!(base.join("B").is_dir());
@@ -870,9 +1643,10 @@ mod tests {
         create_folder_at(base, "A/B").unwrap();
         std::fs::write(base.join("A/document.pdf"), b"abc").unwrap();
         std::fs::write(base.join("A/B/data.bin"), b"12345").unwrap();
-        std::fs::write(base.join("A/.lyra_hidden"), b"not-counted").unwrap();
+        std::fs::write(base.join("A/.lyra_hidden"), b"hidden!").unwrap();
         let info = folder_info_at(&base.join("A"), "A").unwrap();
-        assert_eq!((info.direct_files, info.total_files, info.total_bytes), (1, 2, 8));
+        // Hidden user files are included in physical counts; Lyra-internal markers (e.g. .lyra_folder_id.json) are excluded.
+        assert_eq!((info.direct_files, info.total_files, info.total_bytes), (2, 3, 15));
     }
 
     #[test]
@@ -903,7 +1677,7 @@ mod tests {
         let draft = serde_json::json!({"v":1,"noteName":"old.md","draftId":old_id,"content":"unsaved","revision":2,"baseHash":"base"});
         crate::drafts::save_draft_file(base, &old_id, &draft.to_string()).unwrap();
         let journal = MoveJournal { source: "old.md".into(), destination: "new.md".into(), is_folder: false,
-            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared };
+            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared, recovery_clear_folder_archive: false, recovery_clear_note_archive: false };
         write_move_journal(base, &journal).unwrap();
         std::fs::rename(base.join("old.md"), base.join("new.md")).unwrap();
         recover_move_at(base).unwrap();
@@ -987,7 +1761,7 @@ mod tests {
         std::fs::create_dir(&base).unwrap();
         std::fs::write(base.join("old.md"), "preserved").unwrap();
         write_move_journal(&base, &MoveJournal { source: "old.md".into(), destination: "new.md".into(), is_folder: false,
-            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared }).unwrap();
+            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared, recovery_clear_folder_archive: false, recovery_clear_note_archive: false }).unwrap();
         std::fs::hard_link(base.join("old.md"), base.join("new.md")).unwrap();
         recover_move_at(&base).unwrap();
         assert!(!base.join("old.md").exists());
@@ -1995,4 +2769,727 @@ mod tests {
         let after = std::fs::read(state_path(base)).unwrap();
         assert_eq!(after, before, "no debe escribirse ante marcador duplicado");
     }
+
+
+    #[test]
+    fn recovery_move_note_from_archived_ancestor_clears_individual_archive_and_preserves_content() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        create_folder_at(base, "A/B").unwrap();
+        std::fs::write(base.join("A/B/note.md"), "hola").unwrap();
+        // individual note archive
+        crate::gdrive::provenance::record_local_write(base, "A/B/note.md", None, true).unwrap();
+        crate::gdrive::archive::set_archived(base, "A/B/note.md", true, None).unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        assert!(archived_paths(base).unwrap().contains(&"A".to_string()));
+        assert!(crate::gdrive::archive::projection(base, None).unwrap().archived_names.contains(&"A/B/note.md".to_string()));
+
+        let moved = move_note_at_inner(base, "A/B/note.md", "note.md", true).unwrap();
+        assert_eq!(moved[0].old_path, "A/B/note.md");
+        assert_eq!(moved[0].new_path, "note.md");
+        assert_eq!(std::fs::read_to_string(base.join("note.md")).unwrap(), "hola");
+        assert!(!base.join("A/B/note.md").exists());
+        assert!(archived_paths(base).unwrap().contains(&"A".to_string()));
+        let projection = crate::gdrive::archive::projection(base, None).unwrap();
+        assert!(!projection.archived_names.iter().any(|n| n == "note.md" || n == "A/B/note.md"));
+        remove_move_journal(base).ok();
+    }
+
+    #[test]
+    fn recovery_move_folder_from_archived_ancestor_clears_explicit_folder_archive_and_preserves_descendants() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "Dev").unwrap();
+        create_folder_at(base, "Dev/Proj").unwrap();
+        create_folder_at(base, "Dev/Proj/Lyra").unwrap();
+        create_folder_at(base, "Dev/Proj/Keep").unwrap();
+        std::fs::write(base.join("Dev/Ideas.txt"), "i").unwrap();
+        std::fs::write(base.join("Dev/Proj/Doc.txt"), "d").unwrap();
+        std::fs::write(base.join("Dev/Proj/Lyra/Config.txt"), "c").unwrap();
+        std::fs::write(base.join("Dev/Proj/Lyra/Pend.txt"), "p").unwrap();
+        // explicit descendant folder archive to preserve
+        set_folder_archived_at(base, "Dev/Proj/Keep", true).unwrap();
+        set_folder_archived_at(base, "Dev", true).unwrap();
+
+        let moved = move_folder_at_inner(base, "Dev/Proj/Lyra", "Lyra", None, true).unwrap();
+        assert!(moved.iter().any(|c| c.old_path == "Dev/Proj/Lyra/Config.txt" && c.new_path == "Lyra/Config.txt"));
+        assert!(base.join("Lyra/Config.txt").exists());
+        assert!(base.join("Lyra/Pend.txt").exists());
+        assert!(!base.join("Dev/Proj/Lyra").exists());
+        let mut archived = archived_paths(base).unwrap();
+        archived.sort();
+        // Dev still archived, Keep still explicitly archived under Dev, moved Lyra not archived
+        assert!(archived.contains(&"Dev".to_string()));
+        assert!(archived.contains(&"Dev/Proj/Keep".to_string()));
+        assert!(!archived.iter().any(|p| p == "Lyra" || p.ends_with("/Lyra")));
+        // contents preserved
+        assert_eq!(std::fs::read_to_string(base.join("Lyra/Config.txt")).unwrap(), "c");
+        assert_eq!(std::fs::read_to_string(base.join("Dev/Ideas.txt")).unwrap(), "i");
+        assert_eq!(std::fs::read_to_string(base.join("Dev/Proj/Doc.txt")).unwrap(), "d");
+        remove_move_journal(base).ok();
+    }
+
+    #[test]
+    fn delete_archived_folder_permanently_removes_subtree_and_rejects_active_structural() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "ActiveParent").unwrap();
+        create_folder_at(base, "ActiveParent/ArchivedChild").unwrap();
+        create_folder_at(base, "ActiveParent/ArchivedChild/Sub").unwrap();
+        std::fs::write(base.join("ActiveParent/ArchivedChild/note.md"), "x").unwrap();
+        std::fs::write(base.join("ActiveParent/ArchivedChild/Sub/other.txt"), "y").unwrap();
+        set_folder_archived_at(base, "ActiveParent/ArchivedChild", true).unwrap();
+
+        // Structural active parent cannot be deleted via archived delete
+        assert!(delete_archived_folder_permanently_at(base, "ActiveParent", None).is_err());
+        assert!(base.join("ActiveParent").is_dir());
+
+        let result = delete_archived_folder_permanently_at(base, "ActiveParent/ArchivedChild", None).unwrap();
+        assert!(!base.join("ActiveParent/ArchivedChild").exists());
+        assert!(base.join("ActiveParent").is_dir());
+        assert_eq!(result.counts.total_files, 2);
+        assert_eq!(result.counts.total_folders, 1);
+        assert!(archived_paths(base).unwrap().is_empty() || !archived_paths(base).unwrap().iter().any(|p| p.starts_with("ActiveParent/ArchivedChild")));
+
+        // deleting inherited-archived descendant inside explicitly archived ancestor is allowed
+        create_folder_at(base, "A").unwrap();
+        create_folder_at(base, "A/B").unwrap();
+        std::fs::write(base.join("A/B/n.md"), "z").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        assert!(delete_archived_folder_permanently_at(base, "A/B", None).is_ok());
+        assert!(!base.join("A/B").exists());
+        assert!(base.join("A").is_dir());
+        assert_eq!(archived_paths(base).unwrap(), vec!["A".to_string()]);
+    }
+
+
+
+    #[test]
+    fn clear_recovery_archive_state_is_idempotent_for_note_and_folder_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        // Note recovery journal/idempotency
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n.md"), "x").unwrap();
+        crate::gdrive::provenance::record_local_write(base, "A/n.md", None, true).unwrap();
+        crate::gdrive::archive::set_archived(base, "A/n.md", true, None).unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        // simulate physical move already done to active destination
+        std::fs::rename(base.join("A/n.md"), base.join("n.md")).unwrap();
+        let note_journal = MoveJournal {
+            source: "A/n.md".into(), destination: "n.md".into(), is_folder: false,
+            notes: vec![PathChange { old_path: "A/n.md".into(), new_path: "n.md".into() }],
+            folder_id: None, phase: MovePhase::Physical,
+            recovery_clear_folder_archive: false, recovery_clear_note_archive: true,
+        };
+        clear_recovery_archive_state(base, &note_journal).unwrap();
+        clear_recovery_archive_state(base, &note_journal).unwrap();
+        let proj = crate::gdrive::archive::projection(base, None).unwrap();
+        assert!(!proj.archived_names.iter().any(|n| n == "n.md" || n == "A/n.md"));
+        assert_eq!(std::fs::read_to_string(base.join("n.md")).unwrap(), "x");
+
+        // Folder recovery journal/idempotency
+        create_folder_at(base, "B").unwrap();
+        let bid = folder_marker(&base.join("B")).unwrap();
+        set_folder_archived_at(base, "B", true).unwrap();
+        create_folder_at(base, "Dest").unwrap();
+        std::fs::rename(base.join("B"), base.join("Dest/B")).unwrap();
+        let folder_journal = MoveJournal {
+            source: "B".into(), destination: "Dest/B".into(), is_folder: true,
+            notes: vec![], folder_id: Some(bid), phase: MovePhase::Physical,
+            recovery_clear_folder_archive: true, recovery_clear_note_archive: false,
+        };
+        clear_recovery_archive_state(base, &folder_journal).unwrap();
+        clear_recovery_archive_state(base, &folder_journal).unwrap();
+        assert!(!archived_paths(base).unwrap().iter().any(|p| p == "B" || p == "Dest/B"));
+        assert!(base.join("Dest/B").is_dir());
+    }
+
+    #[test]
+    fn recovery_folder_move_preserves_explicit_archive_of_descendants() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "Parent").unwrap();
+        create_folder_at(base, "Parent/Child").unwrap();
+        create_folder_at(base, "Parent/Child/Explicit").unwrap();
+        std::fs::write(base.join("Parent/Child/f.txt"), "f").unwrap();
+        std::fs::write(base.join("Parent/Child/Explicit/e.txt"), "e").unwrap();
+        set_folder_archived_at(base, "Parent/Child/Explicit", true).unwrap();
+        set_folder_archived_at(base, "Parent", true).unwrap();
+        move_folder_at_inner(base, "Parent/Child", "Child", None, true).unwrap();
+        assert!(base.join("Child/f.txt").exists());
+        assert!(base.join("Child/Explicit/e.txt").exists());
+        let archived = archived_paths(base).unwrap();
+        assert!(archived.contains(&"Parent".to_string()));
+        assert!(archived.contains(&"Child/Explicit".to_string()), "explicit descendant must remain archived: {archived:?}");
+        assert!(!archived.contains(&"Child".to_string()));
+        remove_move_journal(base).ok();
+    }
+
+    #[test]
+    fn note_archive_projection_updates_after_recovery_move_and_stays_consistent() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "Arch").unwrap();
+        std::fs::write(base.join("Arch/a.md"), "a").unwrap();
+        std::fs::write(base.join("Arch/b.md"), "b").unwrap();
+        crate::gdrive::provenance::record_local_write(base, "Arch/a.md", None, true).unwrap();
+        crate::gdrive::provenance::record_local_write(base, "Arch/b.md", None, true).unwrap();
+        crate::gdrive::archive::set_archived(base, "Arch/a.md", true, None).unwrap();
+        crate::gdrive::archive::set_archived(base, "Arch/b.md", true, None).unwrap();
+        set_folder_archived_at(base, "Arch", true).unwrap();
+        // recover only a.md to root
+        move_note_at_inner(base, "Arch/a.md", "a.md", true).unwrap();
+        let proj = crate::gdrive::archive::projection(base, None).unwrap();
+        assert!(!proj.archived_names.iter().any(|n| n == "a.md" || n == "Arch/a.md"));
+        assert!(proj.archived_names.contains(&"Arch/b.md".to_string()));
+        assert_eq!(std::fs::read_to_string(base.join("a.md")).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(base.join("Arch/b.md")).unwrap(), "b");
+        remove_move_journal(base).ok();
+    }
+
+    #[test]
+    fn interruption_between_physical_move_and_archive_cleanup_recovers_safely() {
+        // Note recovery: physical rename done, journal at Physical with archive cleanup pending.
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n.md"), "content").unwrap();
+        crate::gdrive::provenance::record_local_write(base, "A/n.md", None, true).unwrap();
+        crate::gdrive::archive::set_archived(base, "A/n.md", true, None).unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        // simulate physical move completed
+        std::fs::rename(base.join("A/n.md"), base.join("n.md")).unwrap();
+        let journal = MoveJournal {
+            source: "A/n.md".into(), destination: "n.md".into(), is_folder: false,
+            notes: vec![PathChange { old_path: "A/n.md".into(), new_path: "n.md".into() }],
+            folder_id: None, phase: MovePhase::Physical,
+            recovery_clear_folder_archive: false, recovery_clear_note_archive: true,
+        };
+        write_move_journal(base, &journal).unwrap();
+        recover_move_at(base).unwrap();
+        recover_move_at(base).unwrap(); // idempotent
+        let proj = crate::gdrive::archive::projection(base, None).unwrap();
+        assert!(!proj.archived_names.iter().any(|n| n == "n.md" || n == "A/n.md"));
+        assert_eq!(std::fs::read_to_string(base.join("n.md")).unwrap(), "content");
+        assert!(!base.join("A/n.md").exists());
+        // journal should be awaiting frontend or cleared only on ack; ensure no duplication/loss
+        assert!(base.join("n.md").is_file());
+
+        // Folder recovery: physical rename done, explicit folder archive cleanup pending.
+        let root2 = tempfile::tempdir().unwrap();
+        let base2 = root2.path();
+        create_folder_at(base2, "Dev").unwrap();
+        create_folder_at(base2, "Dev/Sub").unwrap();
+        std::fs::write(base2.join("Dev/Sub/f.txt"), "f").unwrap();
+        set_folder_archived_at(base2, "Dev/Sub", true).unwrap();
+        set_folder_archived_at(base2, "Dev", true).unwrap();
+        let sub_id = folder_marker(&base2.join("Dev/Sub")).unwrap();
+        std::fs::rename(base2.join("Dev/Sub"), base2.join("Sub")).unwrap();
+        let fj = MoveJournal {
+            source: "Dev/Sub".into(), destination: "Sub".into(), is_folder: true,
+            notes: vec![PathChange { old_path: "Dev/Sub/f.txt".into(), new_path: "Sub/f.txt".into() }],
+            folder_id: Some(sub_id), phase: MovePhase::Physical,
+            recovery_clear_folder_archive: true, recovery_clear_note_archive: false,
+        };
+        write_move_journal(base2, &fj).unwrap();
+        recover_move_at(base2).unwrap();
+        recover_move_at(base2).unwrap();
+        assert!(base2.join("Sub/f.txt").is_file());
+        assert!(!base2.join("Dev/Sub").exists());
+        let archived = archived_paths(base2).unwrap();
+        assert!(archived.contains(&"Dev".to_string()));
+        assert!(!archived.iter().any(|p| p == "Sub" || p == "Dev/Sub"), "{archived:?}");
+    }
+
+    #[test]
+    fn normal_moves_keep_original_restrictions() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        create_folder_at(base, "Dest").unwrap();
+        std::fs::write(base.join("A/n.md"), "x").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        // normal folder move from archived source rejected
+        assert!(move_folder_at(base, "A", "Dest/A", None).is_err());
+        // normal note move from archived ancestor rejected
+        assert!(move_note_at(base, "A/n.md", "Dest/n.md").is_err());
+        assert!(base.join("A/n.md").is_file());
+
+        // destination inside archived folder rejected
+        let root2 = tempfile::tempdir().unwrap();
+        let base2 = root2.path();
+        create_folder_at(base2, "Src").unwrap();
+        create_folder_at(base2, "Arch").unwrap();
+        std::fs::write(base2.join("Src/n.md"), "y").unwrap();
+        set_folder_archived_at(base2, "Arch", true).unwrap();
+        assert!(move_folder_at(base2, "Src", "Arch/Src", None).is_err());
+        assert!(move_note_at(base2, "Src/n.md", "Arch/n.md").is_err());
+    }
+
+    #[test]
+    fn delete_interruption_and_path_reuse_are_reconciled_safely() {
+        // Interruption: delete journal present, target already physically removed -> recovery cleans state idempotently.
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n.md"), "x").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        let id = folder_marker(&base.join("A")).unwrap();
+        // simulate physical delete completed but journal/state cleanup pending
+        std::fs::remove_dir_all(base.join("A")).unwrap();
+        let dj = DeleteJournal { path: "A".into(), folder_id: Some(id.clone()), phase: DeletePhase::Deleting, expected_total_files: 1, expected_total_folders: 0, scope_fingerprint: String::new(), scope_entries: Vec::new(), provenance_ids: BTreeMap::new(), folder_ids: std::collections::BTreeSet::new() };
+        write_delete_journal(base, &dj).unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+        assert!(!base.join("A").exists());
+        assert!(read_delete_journal(base).unwrap().is_none());
+        assert!(!archived_paths(base).unwrap().iter().any(|p| p == "A"));
+
+        // Path reuse: old delete journal must not delete a new folder with different identity at same path.
+        let root2 = tempfile::tempdir().unwrap();
+        let base2 = root2.path();
+        create_folder_at(base2, "B").unwrap();
+        set_folder_archived_at(base2, "B", true).unwrap();
+        let old_id = folder_marker(&base2.join("B")).unwrap();
+        // complete legitimate deletion
+        delete_archived_folder_permanently_at(base2, "B", None).unwrap();
+        assert!(!base2.join("B").exists());
+        // create new folder reusing same path
+        create_folder_at(base2, "B").unwrap();
+        std::fs::write(base2.join("B/new.md"), "new").unwrap();
+        let new_id = folder_marker(&base2.join("B")).unwrap();
+        assert_ne!(old_id, new_id);
+        // stale journal for old identity/path must not delete new content
+        let stale = DeleteJournal { path: "B".into(), folder_id: Some(old_id), phase: DeletePhase::Deleting, expected_total_files: 0, expected_total_folders: 0, scope_fingerprint: String::new(), scope_entries: Vec::new(), provenance_ids: BTreeMap::new(), folder_ids: std::collections::BTreeSet::new() };
+        write_delete_journal(base2, &stale).unwrap();
+        recover_pending_folder_delete_at(base2).unwrap();
+        assert!(base2.join("B").is_dir(), "new folder must survive stale delete journal");
+        assert_eq!(std::fs::read_to_string(base2.join("B/new.md")).unwrap(), "new");
+        assert!(read_delete_journal(base2).unwrap().is_none());
+        // new folder remains active/not archived by stale state
+        assert!(!archived_paths(base2).unwrap().contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn delete_rejects_changed_content_between_confirmation_and_execution() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n.md"), "x").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        // content changes after "confirmation" counts (1 file, 0 folders)
+        std::fs::write(base.join("A/extra.md"), "y").unwrap();
+        let err = delete_archived_folder_permanently_at(base, "A", Some(DeleteFolderExpected { total_files: 1, total_folders: 0, scope_fingerprint: None })).unwrap_err();
+        assert!(err.contains("contenido de la carpeta cambió") || err.contains("Revisa"), "{err}");
+        assert!(base.join("A").is_dir());
+        assert!(base.join("A/n.md").exists());
+        assert!(base.join("A/extra.md").exists());
+    }
+
+    #[test]
+    fn delete_rejects_same_totals_when_confirmed_scope_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/a.md"), "one").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+
+        let (_counts, entries) = collect_delete_scope(base, &base.join("A"), "A").unwrap();
+        let fp = delete_scope_fingerprint(&entries);
+        // Substitute file content/identity while keeping totals (1 file, 0 folders).
+        std::fs::remove_file(base.join("A/a.md")).unwrap();
+        std::fs::write(base.join("A/b.md"), "two").unwrap();
+
+        let err = delete_archived_folder_permanently_at(
+            base,
+            "A",
+            Some(DeleteFolderExpected { total_files: 1, total_folders: 0, scope_fingerprint: Some(fp) }),
+        ).unwrap_err();
+        assert!(err.contains("contenido de la carpeta cambió") || err.contains("Revisa"), "{err}");
+        assert!(base.join("A").is_dir());
+        assert!(base.join("A/b.md").exists(), "unchanged unauthorized content must remain");
+    }
+
+    #[test]
+    fn delete_recovery_marker_removed_partial_deletion_preserves_remaining_content() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        create_folder_at(base, "A/Sub").unwrap();
+        std::fs::write(base.join("A/n1.md"), "x").unwrap();
+        std::fs::write(base.join("A/Sub/n2.md"), "y").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        let folder_id = folder_marker(&base.join("A")).unwrap();
+
+        let (_counts, scope_entries) = collect_delete_scope(base, &base.join("A"), "A").unwrap();
+        let scope_fingerprint = delete_scope_fingerprint(&scope_entries);
+        let journal = DeleteJournal {
+            path: "A".into(),
+            folder_id: Some(folder_id),
+            phase: DeletePhase::Deleting,
+            expected_total_files: 2,
+            expected_total_folders: 1,
+            scope_fingerprint,
+            scope_entries,
+            provenance_ids: BTreeMap::new(),
+            folder_ids: std::collections::BTreeSet::new(),
+        };
+        write_delete_journal(base, &journal).unwrap();
+        // interruption: marker removed and part of physical deletion already happened (remaining are in-scope)
+        let _ = std::fs::remove_file(base.join("A").join(FOLDER_ID_FILE));
+        let _ = std::fs::remove_file(base.join("A/n1.md"));
+
+        recover_pending_folder_delete_at(base).unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+
+        // A missing marker leaves identity unverifiable. Recovery must not
+        // continue deleting, even when the remaining bytes match the journal.
+        assert_eq!(std::fs::read(base.join("A/Sub/n2.md")).unwrap(), b"y");
+        assert!(read_delete_journal(base).unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_recovery_marker_removed_preserves_files_added_after_interruption() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n1.md"), "x").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        let folder_id = folder_marker(&base.join("A")).unwrap();
+
+        let (_counts, scope_entries) = collect_delete_scope(base, &base.join("A"), "A").unwrap();
+        let scope_fingerprint = delete_scope_fingerprint(&scope_entries);
+        let journal = DeleteJournal {
+            path: "A".into(),
+            folder_id: Some(folder_id),
+            phase: DeletePhase::Deleting,
+            expected_total_files: 1,
+            expected_total_folders: 0,
+            scope_fingerprint,
+            scope_entries,
+            provenance_ids: BTreeMap::new(),
+            folder_ids: std::collections::BTreeSet::new(),
+        };
+        write_delete_journal(base, &journal).unwrap();
+        // interruption: marker removed, then a new file is added (outside confirmed scope)
+        let _ = std::fs::remove_file(base.join("A").join(FOLDER_ID_FILE));
+        std::fs::write(base.join("A/new_after.md"), "nuevo").unwrap();
+
+        recover_pending_folder_delete_at(base).unwrap();
+
+        assert!(base.join("A/new_after.md").exists(), "file added after interruption must never be deleted");
+        assert_eq!(std::fs::read_to_string(base.join("A/new_after.md")).unwrap(), "nuevo");
+        assert!(read_delete_journal(base).unwrap().is_none(), "journal should be reconciled without destroying new content");
+    }
+
+    #[test]
+    fn delete_recovery_marker_removed_does_not_delete_reused_path_new_content() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        // original archived folder deleted legitimately, leaving a stale-style journal snapshot context
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/old.md"), "old").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        let old_id = folder_marker(&base.join("A")).unwrap();
+        let (_counts, old_scope) = collect_delete_scope(base, &base.join("A"), "A").unwrap();
+        let old_fp = delete_scope_fingerprint(&old_scope);
+        delete_archived_folder_permanently_at(base, "A", None).unwrap();
+
+        // new folder reuses same path with different identity/content
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/fresh.md"), "fresh").unwrap();
+        let new_id = folder_marker(&base.join("A")).unwrap();
+        assert_ne!(old_id, new_id);
+        // simulate stale journal from old deletion whose marker is absent now
+        let stale = DeleteJournal {
+            path: "A".into(),
+            folder_id: Some(old_id),
+            phase: DeletePhase::Deleting,
+            expected_total_files: 1,
+            expected_total_folders: 0,
+            scope_fingerprint: old_fp,
+            scope_entries: old_scope,
+            provenance_ids: BTreeMap::new(),
+            folder_ids: std::collections::BTreeSet::new(),
+        };
+        write_delete_journal(base, &stale).unwrap();
+
+        recover_pending_folder_delete_at(base).unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+
+        assert!(base.join("A").is_dir(), "reused folder must survive");
+        assert!(base.join("A/fresh.md").exists(), "new reused-path content must not be deleted");
+        assert_eq!(std::fs::read_to_string(base.join("A/fresh.md")).unwrap(), "fresh");
+        assert!(read_delete_journal(base).unwrap().is_none());
+    }
+
+
+    #[test]
+    fn interrupted_delete_recovery_preserves_replaced_folder_with_same_paths_sizes_and_timestamps() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "Victim").unwrap();
+        set_folder_archived_at(base, "Victim", true).unwrap();
+
+        let file1 = base.join("Victim/a.txt");
+        let file2 = base.join("Victim/b.txt");
+        std::fs::write(&file1, "SAME").unwrap(); // 4 bytes
+        std::fs::write(&file2, "DATA").unwrap(); // 4 bytes
+
+        // Timestamps deterministas e iguales para simular coincidencia exacta de huella por atributos.
+        let ts = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_700_000_000_000);
+        std::fs::OpenOptions::new().write(true).open(&file1).unwrap().set_modified(ts).unwrap();
+        std::fs::OpenOptions::new().write(true).open(&file2).unwrap().set_modified(ts).unwrap();
+
+        let folder_id = folder_marker(&base.join("Victim")).unwrap();
+        let (_counts, scope_entries) = collect_delete_scope(base, &base.join("Victim"), "Victim").unwrap();
+        let scope_fingerprint = delete_scope_fingerprint(&scope_entries);
+        let journal = DeleteJournal {
+            path: "Victim".into(),
+            folder_id: Some(folder_id),
+            phase: DeletePhase::Deleting,
+            expected_total_files: 2,
+            expected_total_folders: 0,
+            scope_fingerprint,
+            scope_entries,
+            provenance_ids: BTreeMap::new(),
+            folder_ids: std::collections::BTreeSet::new(),
+        };
+        write_delete_journal(base, &journal).unwrap();
+
+        // Interrupción: marcador de identidad eliminado.
+        std::fs::remove_file(base.join("Victim/.lyra_folder_id.json")).unwrap();
+        // Sustitución por otra carpeta/ruta reutilizada con mismos nombres, tamaños y timestamps, distinto contenido.
+        std::fs::remove_dir_all(base.join("Victim")).unwrap();
+        std::fs::create_dir(base.join("Victim")).unwrap();
+        std::fs::write(base.join("Victim/a.txt"), "OTRO").unwrap();
+        std::fs::write(base.join("Victim/b.txt"), "XXXX").unwrap();
+        std::fs::OpenOptions::new().write(true).open(base.join("Victim/a.txt")).unwrap().set_modified(ts).unwrap();
+        std::fs::OpenOptions::new().write(true).open(base.join("Victim/b.txt")).unwrap().set_modified(ts).unwrap();
+
+        recover_pending_folder_delete_at(base).unwrap();
+
+        assert!(base.join("Victim").is_dir(), "la carpeta sustituta debe conservarse");
+        assert_eq!(std::fs::read_to_string(base.join("Victim/a.txt")).unwrap(), "OTRO");
+        assert_eq!(std::fs::read_to_string(base.join("Victim/b.txt")).unwrap(), "XXXX");
+        assert!(read_delete_journal(base).unwrap().is_none(), "el journal debe retirarse sin reanudar borrado destructivo no verificable");
+    }
+
+    #[test]
+    fn delete_preserves_file_replaced_after_scope_validation_with_same_size_and_timestamp() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "Safe").unwrap();
+        set_folder_archived_at(base, "Safe", true).unwrap();
+        std::fs::write(base.join("Safe/n.md"), "AAAA").unwrap();
+        let ts = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_700_000_100_000);
+        std::fs::OpenOptions::new().write(true).open(base.join("Safe/n.md")).unwrap().set_modified(ts).unwrap();
+
+        let (counts, entries) = collect_delete_scope(base, &base.join("Safe"), "Safe").unwrap();
+        let fp = delete_scope_fingerprint(&entries);
+
+        // Sustitución tras validar huella/alcance y antes de la eliminación física del archivo.
+        std::fs::write(base.join("Safe/n.md"), "BBBB").unwrap();
+        std::fs::OpenOptions::new().write(true).open(base.join("Safe/n.md")).unwrap().set_modified(ts).unwrap();
+
+        // Simula ejecución con alcance ya confirmado: el archivo sustituido no debe eliminarse.
+        let result = delete_archived_folder_permanently_at(
+            base,
+            "Safe",
+            Some(DeleteFolderExpected { total_files: counts.total_files, total_folders: counts.total_folders, scope_fingerprint: Some(fp) }),
+        );
+        assert!(result.is_err(), "debe abortar conservadoramente si el contenido confirmado ya no es verificable");
+        assert!(base.join("Safe/n.md").exists(), "el archivo nuevo/sustituido debe conservarse");
+        assert_eq!(std::fs::read_to_string(base.join("Safe/n.md")).unwrap(), "BBBB");
+    }
+
+    #[test]
+    fn delete_recovery_does_not_remove_reused_unmarked_folder_with_identical_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n.md"), b"same").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        let id = folder_marker(&base.join("A")).unwrap();
+        let ts = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_700_000_100_000);
+        std::fs::OpenOptions::new().write(true).open(base.join("A/n.md")).unwrap().set_modified(ts).unwrap();
+        let (_, entries) = collect_delete_scope(base, &base.join("A"), "A").unwrap();
+        write_delete_journal(base, &DeleteJournal {
+            path: "A".into(), folder_id: Some(id), phase: DeletePhase::Deleting,
+            expected_total_files: 1, expected_total_folders: 0,
+            scope_fingerprint: delete_scope_fingerprint(&entries), scope_entries: entries,
+            provenance_ids: BTreeMap::new(), folder_ids: std::collections::BTreeSet::new(),
+        }).unwrap();
+        std::fs::remove_dir_all(base.join("A")).unwrap();
+        std::fs::create_dir(base.join("A")).unwrap();
+        std::fs::write(base.join("A/n.md"), b"same").unwrap();
+        std::fs::OpenOptions::new().write(true).open(base.join("A/n.md")).unwrap().set_modified(ts).unwrap();
+
+        recover_pending_folder_delete_at(base).unwrap();
+        assert_eq!(std::fs::read(base.join("A/n.md")).unwrap(), b"same");
+    }
+
+    #[test]
+    fn invalid_delete_journal_is_preserved_and_does_not_block_local_operations() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        std::fs::write(base.join(DELETE_JOURNAL_FILE), b"{truncated").unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+        assert!(!base.join(DELETE_JOURNAL_FILE).exists());
+        assert!(std::fs::read_dir(base).unwrap().any(|entry| {
+            entry.unwrap().file_name().to_string_lossy().starts_with(&format!("{DELETE_JOURNAL_FILE}.invalid."))
+        }));
+        create_folder_at(base, "StillUsable").unwrap();
+    }
+
+    #[test]
+    fn delete_recovery_finishes_metadata_only_after_physical_deletion() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/n.md"), b"old").unwrap();
+        crate::gdrive::provenance::record_local_write(base, "A/n.md", None, true).unwrap();
+        let note_id = crate::gdrive::provenance::load_ledger(&crate::gdrive::provenance::get_ledger_path(base))
+            .unwrap().unwrap().by_name["A/n.md"].clone();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_METADATA_FAULT.with(|fault| *fault.borrow_mut() = true);
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert!(!base.join("A").exists());
+        assert!(read_delete_journal(base).unwrap().is_some());
+
+        recover_pending_folder_delete_at(base).unwrap();
+        recover_pending_folder_delete_at(base).unwrap();
+        let ledger = crate::gdrive::provenance::load_ledger(&crate::gdrive::provenance::get_ledger_path(base))
+            .unwrap().unwrap();
+        assert!(!ledger.by_name.contains_key("A/n.md"));
+        assert!(ledger.notes[&note_id].retired);
+        assert!(read_delete_journal(base).unwrap().is_none());
+        assert!(archived_paths(base).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_stops_when_file_is_added_after_scope_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/old.md"), b"old").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|target| {
+            std::fs::write(target.join("new.md"), b"new").unwrap();
+        }));
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert_eq!(std::fs::read(base.join("A/new.md")).unwrap(), b"new");
+        assert!(base.join("A/.lyra_folder_id.json").is_file());
+        recover_pending_folder_delete_at(base).unwrap();
+        assert_eq!(std::fs::read(base.join("A/new.md")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn delete_stops_when_same_bytes_replace_confirmed_file() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/old.md"), b"same").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|target| {
+            let path = target.join("old.md");
+            let old_meta = std::fs::metadata(&path).unwrap();
+            let modified = old_meta.modified().unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::fs::write(&path, b"same").unwrap();
+            std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(modified).unwrap();
+        }));
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert_eq!(std::fs::read(base.join("A/old.md")).unwrap(), b"same");
+    }
+
+    #[test]
+    fn delete_stops_when_subfolder_is_added_after_scope_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|target| {
+            std::fs::create_dir(target.join("new")).unwrap();
+            std::fs::write(target.join("new/n.md"), b"keep").unwrap();
+        }));
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert_eq!(std::fs::read(base.join("A/new/n.md")).unwrap(), b"keep");
+        assert!(base.join("A/.lyra_folder_id.json").is_file());
+    }
+
+    #[test]
+    fn delete_stops_when_folder_marker_is_replaced_after_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|target| {
+            let marker = target.join(FOLDER_ID_FILE);
+            std::fs::remove_file(&marker).unwrap();
+            std::fs::write(&marker, br#"{"version":1,"id":"11111111111111111111111111111111"}"#).unwrap();
+        }));
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert!(base.join("A").is_dir());
+        assert_eq!(folder_identity_if_present(&base.join("A")).as_deref(), Some("11111111111111111111111111111111"));
+    }
+
+    #[test]
+    fn delete_stops_when_target_folder_is_replaced_after_scope_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        std::fs::write(base.join("A/old.md"), b"old").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|target| {
+            std::fs::rename(target, target.with_file_name("A-original")).unwrap();
+            std::fs::create_dir(target).unwrap();
+            std::fs::write(target.join("old.md"), b"new").unwrap();
+        }));
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert_eq!(std::fs::read(base.join("A/old.md")).unwrap(), b"new");
+        assert_eq!(std::fs::read(base.join("A-original/old.md")).unwrap(), b"old");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_stops_when_confirmed_subfolder_becomes_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        create_folder_at(base, "A").unwrap();
+        create_folder_at(base, "A/Sub").unwrap();
+        std::fs::write(base.join("A/Sub/n.md"), b"old").unwrap();
+        set_folder_archived_at(base, "A", true).unwrap();
+        DELETE_INTERFERENCE.with(|hook| *hook.borrow_mut() = Some(|target| {
+            let sub = target.join("Sub");
+            let moved = target.with_file_name("Sub-original");
+            std::fs::rename(&sub, &moved).unwrap();
+            std::os::unix::fs::symlink(&moved, &sub).unwrap();
+        }));
+        assert!(delete_archived_folder_permanently_at(base, "A", None).is_err());
+        assert_eq!(std::fs::read(base.join("Sub-original/n.md")).unwrap(), b"old");
+    }
+
+}
+
+
+#[tauri::command]
+pub async fn filter_existing_relative_paths(app: tauri::AppHandle, paths: Vec<String>) -> Result<Vec<String>, String> {
+    let base = base_dir(&app)?;
+    let mut existing = Vec::new();
+    for rel in paths {
+        if rel.is_empty() { continue; }
+        // Accept either folder or file path if it currently exists on disk.
+        let folder = folder_path(&base, &rel).map(|p| p.exists()).unwrap_or(false);
+        let file = crate::gdrive::sync::resolve_safe_path(&base, &rel).map(|p| p.exists()).unwrap_or(false);
+        if folder || file {
+            existing.push(rel);
+        }
+    }
+    existing.sort();
+    existing.dedup();
+    Ok(existing)
 }
