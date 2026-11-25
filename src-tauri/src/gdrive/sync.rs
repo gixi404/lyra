@@ -341,11 +341,7 @@ pub fn is_safe_filename(name: &str) -> bool {
     }
 
     // No debe haber componentes adicionales
-    if components.next().is_some() {
-        return false;
-    }
-
-    true
+    components.next().is_none()
 }
 
 /// Resuelve una ruta absoluta segura dentro de `base_dir` garantizando que no escape del directorio autorizado
@@ -5939,6 +5935,7 @@ mod tests {
         assert_eq!(std::fs::read(&destino).unwrap(), b"identico");
     }
 
+    #[cfg(unix)]
     #[test]
     fn m7_symlink_target_rejected() {
         let _fault = TEST_FAULT_LOCK.lock().unwrap();
@@ -5947,13 +5944,7 @@ mod tests {
         let outside_file = outside.path().join("outside.txt");
         std::fs::write(&outside_file, b"real").unwrap();
         let link = dir.path().join("nueva.txt");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside_file, &link).unwrap();
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&link, b"real").unwrap();
-            return;
-        }
         let err = write_file_atomic_exclusive(&link, b"evil").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         assert_eq!(std::fs::read(&outside_file).unwrap(), b"real");

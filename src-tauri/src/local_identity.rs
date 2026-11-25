@@ -130,7 +130,7 @@ fn physical_id(file: &File) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-fn physical_id(file: &File) -> Result<String, String> {
+pub(crate) fn physical_id(file: &File) -> Result<String, String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandleEx, FileIdInfo, FILE_ID_INFO};
     let mut info = FILE_ID_INFO::default();

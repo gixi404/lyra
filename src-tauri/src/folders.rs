@@ -697,8 +697,9 @@ pub(crate) fn verified_folder_id(base: &Path, relative_path: &str, create: bool)
     if !folder.is_dir() { return Err("Folder does not exist".into()); }
     let id = if create { Some(folder_marker(&folder)?) } else { folder_identity_if_present(&folder) };
     let Some(id) = id else { return Ok(None) };
-    let marker = std::fs::symlink_metadata(folder.join(FOLDER_ID_FILE)).map_err(|e| e.to_string())?;
-    let physical = delete_physical_id(&marker).ok_or("Folder marker has no verifiable physical identity")?;
+    let marker_path = folder.join(FOLDER_ID_FILE);
+    let marker = std::fs::symlink_metadata(&marker_path).map_err(|e| e.to_string())?;
+    let physical = delete_physical_id(&marker_path, &marker).ok_or("Folder marker has no verifiable physical identity")?;
     Ok(Some(format!("{id}:{physical}")))
 }
 
@@ -711,19 +712,35 @@ fn metadata_mtime_ms(meta: &std::fs::Metadata) -> i64 {
 }
 
 #[cfg(unix)]
-fn delete_physical_id(meta: &std::fs::Metadata) -> Option<String> {
+fn delete_physical_id(_path: &Path, meta: &std::fs::Metadata) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     Some(format!("{}:{}", meta.dev(), meta.ino()))
 }
 
 #[cfg(windows)]
-fn delete_physical_id(meta: &std::fs::Metadata) -> Option<String> {
-    use std::os::windows::fs::MetadataExt;
-    Some(format!("{}:{}", meta.volume_serial_number()?, meta.file_index()?))
+fn delete_physical_id(path: &Path, meta: &std::fs::Metadata) -> Option<String> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES,
+    };
+    let file = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    let opened = file.metadata().ok()?;
+    if opened.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || opened.file_type() != meta.file_type()
+        || opened.creation_time() != meta.creation_time()
+    {
+        return None;
+    }
+    crate::local_identity::physical_id(&file).ok()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn delete_physical_id(_meta: &std::fs::Metadata) -> Option<String> { None }
+fn delete_physical_id(_path: &Path, _meta: &std::fs::Metadata) -> Option<String> { None }
 
 fn collect_delete_scope(base: &Path, root: &Path, root_rel: &str) -> Result<(FolderDeleteCounts, Vec<DeleteScopeEntry>), String> {
     let root_meta = std::fs::symlink_metadata(root).map_err(|e| format!("Cannot inspect deletion root: {e}"))?;
@@ -750,7 +767,7 @@ fn collect_delete_scope(base: &Path, root: &Path, root_rel: &str) -> Result<(Fol
                 if !ft.is_file() { return Err("Folder marker is not a regular file".into()); }
                 let bytes = std::fs::read(&path).map_err(|e| format!("Cannot read folder marker: {e}"))?;
                 use sha2::{Digest, Sha256};
-                entries.push(DeleteScopeEntry { rel, kind: "marker".into(), size: meta.len(), mtime_ms: metadata_mtime_ms(&meta), content_sha256: Some(format!("{:x}", Sha256::digest(&bytes))), physical_id: delete_physical_id(&meta) });
+                entries.push(DeleteScopeEntry { rel, kind: "marker".into(), size: meta.len(), mtime_ms: metadata_mtime_ms(&meta), content_sha256: Some(format!("{:x}", Sha256::digest(&bytes))), physical_id: delete_physical_id(&path, &meta) });
                 continue;
             }
             if !(rel == root_rel || rel.starts_with(&format!("{root_rel}/"))) {
@@ -759,7 +776,7 @@ fn collect_delete_scope(base: &Path, root: &Path, root_rel: &str) -> Result<(Fol
             if ft.is_dir() {
                 counts.total_folders += 1;
                 if depth == 0 { counts.direct_folders += 1; }
-                entries.push(DeleteScopeEntry { rel: rel.clone(), kind: "dir".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&meta) });
+                entries.push(DeleteScopeEntry { rel: rel.clone(), kind: "dir".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&path, &meta) });
                 walk(base, root_rel, &path, depth + 1, counts, entries)?;
             } else if ft.is_file() {
                 counts.total_files += 1;
@@ -769,7 +786,7 @@ fn collect_delete_scope(base: &Path, root: &Path, root_rel: &str) -> Result<(Fol
                     use sha2::{Digest, Sha256};
                     format!("{:x}", Sha256::digest(&bytes))
                 };
-                entries.push(DeleteScopeEntry { rel, kind: "file".into(), size: meta.len(), mtime_ms: metadata_mtime_ms(&meta), content_sha256: Some(hash), physical_id: delete_physical_id(&meta) });
+                entries.push(DeleteScopeEntry { rel, kind: "file".into(), size: meta.len(), mtime_ms: metadata_mtime_ms(&meta), content_sha256: Some(hash), physical_id: delete_physical_id(&path, &meta) });
             }
         }
         Ok(())
@@ -777,14 +794,15 @@ fn collect_delete_scope(base: &Path, root: &Path, root_rel: &str) -> Result<(Fol
     walk(base, root_rel, root, 0, &mut counts, &mut entries)?;
     // include root dir itself as scope entry (for constrained cleanup/removal decisions)
     if let Ok(meta) = std::fs::symlink_metadata(root) {
-        entries.push(DeleteScopeEntry { rel: root_rel.to_string(), kind: "dir".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&meta) });
+        entries.push(DeleteScopeEntry { rel: root_rel.to_string(), kind: "dir".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(root, &meta) });
     }
     let mut ancestor = std::path::Path::new(root_rel).parent();
     while let Some(dir) = ancestor {
         if dir.as_os_str().is_empty() { break; }
-        let meta = std::fs::symlink_metadata(base.join(dir)).map_err(|e| format!("Cannot inspect deletion ancestor: {e}"))?;
+        let path = base.join(dir);
+        let meta = std::fs::symlink_metadata(&path).map_err(|e| format!("Cannot inspect deletion ancestor: {e}"))?;
         if !meta.file_type().is_dir() { return Err("Deletion ancestor is not a physical directory".into()); }
-        entries.push(DeleteScopeEntry { rel: dir.to_string_lossy().replace('\\', "/"), kind: "ancestor".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&meta) });
+        entries.push(DeleteScopeEntry { rel: dir.to_string_lossy().replace('\\', "/"), kind: "ancestor".into(), size: 0, mtime_ms: metadata_mtime_ms(&meta), content_sha256: None, physical_id: delete_physical_id(&path, &meta) });
         ancestor = dir.parent();
     }
     entries.sort();
@@ -819,7 +837,7 @@ fn scope_entry_for<'a>(entries: &'a [DeleteScopeEntry], rel: &str, kind: &str) -
 }
 
 fn scope_file_matches(expected: &DeleteScopeEntry, path: &Path, meta: &std::fs::Metadata) -> bool {
-    if expected.physical_id.is_none() || delete_physical_id(meta) != expected.physical_id ||
+    if expected.physical_id.is_none() || delete_physical_id(path, meta) != expected.physical_id ||
         meta.len() != expected.size || metadata_mtime_ms(meta) != expected.mtime_ms {
         return false;
     }
@@ -836,7 +854,7 @@ fn scope_file_matches(expected: &DeleteScopeEntry, path: &Path, meta: &std::fs::
 
 fn scope_dir_matches(expected: &DeleteScopeEntry, path: &Path) -> bool {
     let Ok(meta) = std::fs::symlink_metadata(path) else { return false; };
-    meta.file_type().is_dir() && expected.physical_id.is_some() && delete_physical_id(&meta) == expected.physical_id
+    meta.file_type().is_dir() && expected.physical_id.is_some() && delete_physical_id(path, &meta) == expected.physical_id
 }
 
 fn scope_ancestors_match(base: &Path, rel: &str, scope_entries: &[DeleteScopeEntry]) -> bool {
@@ -945,10 +963,11 @@ pub(crate) fn recover_pending_folder_delete_at(base: &Path) -> Result<(), String
     // now hold a different note or folder, so path-only cleanup is forbidden.
     if journal.phase == DeletePhase::Deleting {
         for (note, id) in &journal.provenance_ids {
+            let path = base.join(note);
             let original_still_at_path = scope_entry_for(&journal.scope_entries, note, "file")
-                .and_then(|expected| std::fs::symlink_metadata(base.join(note)).ok()
+                .and_then(|expected| std::fs::symlink_metadata(&path).ok()
                     .map(|meta| meta.file_type().is_file() && expected.physical_id.is_some()
-                        && delete_physical_id(&meta) == expected.physical_id))
+                        && delete_physical_id(&path, &meta) == expected.physical_id))
                 .unwrap_or(false);
             if !original_still_at_path {
                 crate::gdrive::provenance::retire_deleted_note_if_id(base, note, id)?;

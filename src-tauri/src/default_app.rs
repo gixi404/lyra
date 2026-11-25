@@ -216,10 +216,7 @@ pub fn is_desktop_match(query_result: &str, desktop_file: &str) -> bool {
     }
     let is_q_lyra = q.ends_with(".desktop") && (q.contains("lyra") || q == "com.lyra.dev.desktop");
     let is_d_lyra = d.ends_with(".desktop") && (d.contains("lyra") || d == "com.lyra.dev.desktop");
-    if is_q_lyra && is_d_lyra {
-        return true;
-    }
-    false
+    is_q_lyra && is_d_lyra
 }
 
 pub fn get_linux_applications_dirs() -> Vec<PathBuf> {
