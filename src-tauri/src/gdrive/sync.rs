@@ -5457,6 +5457,7 @@ mod tests {
     /// Se contabilizan subidas (POST), actualizaciones (PATCH) y descargas.
     struct Aud001Server {
         base_url: String,
+        server: Arc<tiny_http::Server>,
         uploads: Arc<std::sync::atomic::AtomicUsize>,
         updates: Arc<std::sync::atomic::AtomicUsize>,
         downloads: Arc<std::sync::atomic::AtomicUsize>,
@@ -5481,20 +5482,21 @@ mod tests {
                 .collect();
             let files_json = format!(r#"{{"files":[{}]}}"#, entries.join(","));
 
-            let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+            let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
             let port = server.server_addr().to_ip().unwrap().port();
             let base_url = format!("http://127.0.0.1:{port}");
 
             let up = uploads.clone();
             let ud = updates.clone();
             let dl = downloads.clone();
+            let listener = server.clone();
             let handle = std::thread::spawn(move || {
                 let json = |body: &str| {
                     tiny_http::Response::from_string(body.to_string()).with_header(
                         tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
                     )
                 };
-                while let Ok(Some(mut req)) = server.recv_timeout(Duration::from_millis(600)) {
+                while let Ok(mut req) = listener.recv() {
                     let url = req.url().to_string();
                     let method = req.method().clone();
 
@@ -5527,6 +5529,7 @@ mod tests {
 
             Self {
                 base_url,
+                server,
                 uploads,
                 updates,
                 downloads,
@@ -5549,16 +5552,11 @@ mod tests {
         fn client(&self) -> DriveClient {
             DriveClient::new_with_provider_and_base_url(Arc::new(TestTokenProvider), self.base_url.clone()).unwrap()
         }
-
-        fn join(mut self) {
-            if let Some(h) = self.handle.take() {
-                let _ = h.join();
-            }
-        }
     }
 
     impl Drop for Aud001Server {
         fn drop(&mut self) {
+            self.server.unblock();
             if let Some(h) = self.handle.take() {
                 let _ = h.join();
             }
@@ -5615,7 +5613,7 @@ mod tests {
         assert_eq!(view.note_count, 1);
         assert_eq!(view.notes.iter().map(|note| note.name.as_str()).collect::<Vec<_>>(), vec!["Nota privada.txt"]);
 
-        server.join();
+        drop(server);
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -5653,7 +5651,7 @@ mod tests {
         assert!(!second.pending_authorization);
 
         ctx2.persist().unwrap();
-        server.join();
+        drop(server);
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -5685,7 +5683,7 @@ mod tests {
         assert_eq!(std::fs::read(&note_path).unwrap(), b"no se autoriza esta cuenta");
 
         ctx2.persist().unwrap();
-        server.join();
+        drop(server);
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -5712,7 +5710,7 @@ mod tests {
         assert!(!res.pending_authorization);
 
         ctx.persist().unwrap();
-        server.join();
+        drop(server);
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -5750,7 +5748,7 @@ mod tests {
         assert!(second.blocked_uploads.is_empty());
 
         ctx2.persist().unwrap();
-        server.join();
+        drop(server);
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -5821,7 +5819,7 @@ mod tests {
         );
 
         ctx_b.persist().unwrap();
-        server.join();
+        drop(server);
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
