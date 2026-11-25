@@ -412,7 +412,7 @@ test("13. Reglas de habilitación/deshabilitación del botón de Preferencias", 
 });
 
 test("14. Preferencias: Texto del botón es «Configurar» y subtítulo está eliminado", () => {
-  const preferencesPath = new URL("../src/pages/Preferences.tsx", import.meta.url).pathname;
+  const preferencesPath = new URL("../src/pages/Preferences.tsx", import.meta.url);
   const code = fs.readFileSync(preferencesPath, "utf-8");
 
   // El texto del botón debe ser «Configurar»
@@ -423,7 +423,7 @@ test("14. Preferencias: Texto del botón es «Configurar» y subtítulo está el
 });
 
 test("15. Preferencias: «Aplicación predeterminada» se ubica inmediatamente debajo de «Tema»", () => {
-  const preferencesPath = new URL("../src/pages/Preferences.tsx", import.meta.url).pathname;
+  const preferencesPath = new URL("../src/pages/Preferences.tsx", import.meta.url);
   const code = fs.readFileSync(preferencesPath, "utf-8");
 
   const temaIndex = code.indexOf("{/* Tema */}");

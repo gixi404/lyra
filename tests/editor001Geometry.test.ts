@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { execSync, execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
 
 // 1. Verificación estática del código fuente de TinyEditor.tsx
 test("EDITOR-001: TinyEditor.tsx no inyecta \\u200B en párrafos no vacíos con espacios finales", () => {
@@ -36,35 +38,24 @@ test("EDITOR-001: TinyEditor.tsx no inyecta \\u200B en párrafos no vacíos con 
   );
 });
 
-function isChromeAvailable(): boolean {
-  try {
-    execSync("google-chrome --version", { stdio: "ignore" });
-    return true;
-  } catch {
+function findChromium(): string | undefined {
+  return ["google-chrome", "chromium"].find(binary => {
     try {
-      execSync("chromium --version", { stdio: "ignore" });
+      execFileSync(binary, ["--version"], { stdio: "ignore" });
       return true;
     } catch {
       return false;
     }
-  }
+  });
 }
 
 function isWebKit2Available(): boolean {
   try {
-    execSync('python3 -c "import gi; gi.require_version(\'WebKit2\', \'4.1\'); from gi.repository import WebKit2"', { stdio: "ignore" });
+    execFileSync("python3", ["-c", "import gi; gi.require_version('WebKit2', '4.1'); from gi.repository import WebKit2"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-}
-
-// Helper para detectar navegadores o motores disponibles
-function getAvailableEngines(): { chrome: boolean; webkit2: boolean } {
-  return {
-    chrome: isChromeAvailable(),
-    webkit2: isWebKit2Available(),
-  };
 }
 
 // Script HTML/JS común que evalúa la geometría real con los estilos de TinyEditor
@@ -222,10 +213,12 @@ interface LayoutResults {
   error?: string;
 }
 
-function runChromeLayoutTest(fixturePath: string): LayoutResults {
-  const chromeBin = fs.existsSync("/usr/bin/google-chrome") ? "google-chrome" : "chromium";
-  const cmd = `${chromeBin} --headless=new --disable-gpu --virtual-time-budget=1000 --dump-dom file://${fixturePath}`;
-  const stdout = execSync(cmd, { encoding: "utf-8", timeout: 10000 });
+function runChromeLayoutTest(binary: string, fixtureUrl: string, profile: string): LayoutResults {
+  const stdout = execFileSync(binary, [
+    "--headless=new", "--disable-gpu", "--disable-dev-shm-usage", "--no-first-run",
+    "--disable-background-networking", `--user-data-dir=${profile}`,
+    "--virtual-time-budget=1000", "--dump-dom", fixtureUrl,
+  ], { encoding: "utf-8", timeout: 45000 });
   const match = stdout.match(/<pre id=["']test-results["']>([\s\S]*?)<\/pre>/);
   if (!match || !match[1]) {
     throw new Error("No se pudo obtener el resultado de Chromium headless");
@@ -233,7 +226,7 @@ function runChromeLayoutTest(fixturePath: string): LayoutResults {
   return JSON.parse(match[1]);
 }
 
-function runWebKit2LayoutTest(fixturePath: string): LayoutResults {
+function runWebKit2LayoutTest(fixtureUrl: string): LayoutResults {
   const pyScript = `
 import gi
 gi.require_version('WebKit2', '4.1')
@@ -258,28 +251,30 @@ def on_load_changed(web_view, load_event):
         web_view.run_javascript('window.__testResult', None, on_js_finished, None)
 
 view.connect('load-changed', on_load_changed)
-view.load_uri('file://${fixturePath}')
+view.load_uri(sys.argv[1])
 loop.run()
 `;
-  const out = execFileSync("python3", ["-"], { input: pyScript, encoding: "utf-8", timeout: 10000 });
+  const out = execFileSync("python3", ["-", fixtureUrl], { input: pyScript, encoding: "utf-8", timeout: 45000 });
   const lines = out.trim().split("\n");
   const jsonLine = lines.find((l) => l.startsWith("{")) || "{}";
   return JSON.parse(jsonLine);
 }
 
 test("EDITOR-001: Validación de geometría y regresión en motores de renderizado reales", () => {
-  const engines = getAvailableEngines();
-  if (!engines.chrome && !engines.webkit2) {
+  const chromium = findChromium();
+  const webkit2 = isWebKit2Available();
+  if (!chromium && !webkit2) {
     console.warn("ADVERTENCIA: Ni Chromium ni WebKitGTK 4.1 están disponibles en el entorno. Se omite la validación visual en vivo.");
     return;
   }
 
-  const tmpFixture = path.resolve("/tmp", `lyra_geometry_fixture_${Date.now()}.html`);
-  fs.writeFileSync(tmpFixture, generateLayoutFixtureHtml(), "utf-8");
-
+  const tempDir = fs.mkdtempSync(path.join(tmpdir(), "lyra-geometry-"));
   try {
-    if (engines.chrome) {
-      const res = runChromeLayoutTest(tmpFixture);
+    const fixturePath = path.join(tempDir, "fixture.html");
+    fs.writeFileSync(fixturePath, generateLayoutFixtureHtml(), "utf-8");
+    const fixtureUrl = pathToFileURL(fixturePath).href;
+    if (chromium) {
+      const res = runChromeLayoutTest(chromium, fixtureUrl, path.join(tempDir, "chromium"));
       assert.ok(!res.error, `Error en ejecución de Chromium: ${res.error}`);
 
       // 1. Demostración de que la implementación anterior con \\u200B fallaba (diff !== 0)
@@ -308,8 +303,8 @@ test("EDITOR-001: Validación de geometría y regresión en motores de renderiza
       assert.equal(res.spacesOnly.diff, 0, "Párrafos compuestos exclusivamente de espacios deben sincronizar 0px");
     }
 
-    if (engines.webkit2) {
-      const res = runWebKit2LayoutTest(tmpFixture);
+    if (webkit2) {
+      const res = runWebKit2LayoutTest(fixtureUrl);
       assert.ok(!res.error, `Error en ejecución de WebKitGTK: ${res.error}`);
 
       // 1. Demostración de que la implementación anterior con \\u200B fallaba en WebKitGTK
@@ -338,8 +333,6 @@ test("EDITOR-001: Validación de geometría y regresión en motores de renderiza
       assert.equal(res.spacesOnly.diff, 0, "WebKitGTK: Párrafos de solo espacios deben sincronizar 0px");
     }
   } finally {
-    if (fs.existsSync(tmpFixture)) {
-      fs.unlinkSync(tmpFixture);
-    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

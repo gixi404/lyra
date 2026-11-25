@@ -86,7 +86,7 @@ test("4. Las demás notificaciones de la aplicación no se ven afectadas", () =>
 // -----------------------------------------------------------------------------
 
 test("5. MenuFile: handleTrashConfirm no emite toast de éxito pero conserva el de error", () => {
-  const menuFilePath = new URL("../src/components/MenuFile.tsx", import.meta.url).pathname;
+  const menuFilePath = new URL("../src/components/MenuFile.tsx", import.meta.url);
   const code = fs.readFileSync(menuFilePath, "utf-8");
 
   // Extraer el cuerpo de la función handleTrashConfirm
@@ -117,7 +117,7 @@ test("5. MenuFile: handleTrashConfirm no emite toast de éxito pero conserva el 
 });
 
 test("6. MenuPaperFile: handleRestoreConfirm no emite toast de éxito pero conserva el de error", () => {
-  const menuPaperFilePath = new URL("../src/components/MenuPaperFile.tsx", import.meta.url).pathname;
+  const menuPaperFilePath = new URL("../src/components/MenuPaperFile.tsx", import.meta.url);
   const code = fs.readFileSync(menuPaperFilePath, "utf-8");
 
   // Extraer el cuerpo de la función handleRestoreConfirm

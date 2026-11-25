@@ -82,7 +82,7 @@ test("1. Movimiento confirmado seguido de persistencia inmediata (sin debounce)"
 });
 
 test("2. Movimiento fallido: la persistencia inmediata NO se ejecuta y el orden queda intacto", () => {
-  const explorerPath = new URL("../src/components/FolderExplorer.tsx", import.meta.url).pathname;
+  const explorerPath = new URL("../src/components/FolderExplorer.tsx", import.meta.url);
   const src = fs.readFileSync(explorerPath, "utf-8");
 
   const persists = [...src.matchAll(/persistOrderAfterPhysicalMove\(/g)].map(m => m.index ?? -1);

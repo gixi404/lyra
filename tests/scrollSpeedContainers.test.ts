@@ -17,7 +17,7 @@ import { configStore } from "../src/store/configStore.ts";
 // 19. El listado usa un contenedor de scroll propio e independiente del editor
 // ---------------------------------------------------------------------------
 test("19. El listado usa un contenedor de scroll propio e independiente del documento/editor (List + Preferencias)", () => {
-  const listPath = new URL("../src/pages/List.tsx", import.meta.url).pathname;
+  const listPath = new URL("../src/pages/List.tsx", import.meta.url);
   const listCode = fs.readFileSync(listPath, "utf-8");
 
   // Scroll estructural: contenedor dedicado (no window) para evitar resets por html.in-editor/transiciones.
@@ -32,7 +32,7 @@ test("19. El listado usa un contenedor de scroll propio e independiente del docu
   assert.ok(listCode.includes("setListScroll("), "List debe persistir la posición");
   assert.ok(listCode.includes("applyListScroll("), "List debe restaurar vía applyListScroll");
 
-  const prefsPath = new URL("../src/pages/Preferences.tsx", import.meta.url).pathname;
+  const prefsPath = new URL("../src/pages/Preferences.tsx", import.meta.url);
   const prefsCode = fs.readFileSync(prefsPath, "utf-8");
   assert.ok(prefsCode.includes("useScrollSpeed();"), "Preferencias conserva useScrollSpeed() sobre window");
 
@@ -47,7 +47,7 @@ test("19. El listado usa un contenedor de scroll propio e independiente del docu
 // 20. TinyEditor lee la preferencia viva y re-adjunta su listener independiente
 // ---------------------------------------------------------------------------
 test("20. TinyEditor lee la preferencia viva y re-adjunta su listener independiente", () => {
-  const editorPath = new URL("../src/components/TinyEditor.tsx", import.meta.url).pathname;
+  const editorPath = new URL("../src/components/TinyEditor.tsx", import.meta.url);
   const code = fs.readFileSync(editorPath, "utf-8");
 
   assert.ok(code.includes("myScrollSpeed"), "TinyEditor debe leer myScrollSpeed de usePreferences");
@@ -74,7 +74,7 @@ test("20. TinyEditor lee la preferencia viva y re-adjunta su listener independie
 // 21. listScroll: contenedor dedicado cuando aplica, fallback a ventana si no
 // ---------------------------------------------------------------------------
 test("21. listScroll prioriza el contenedor dedicado del listado y usa ventana como fallback", () => {
-  const listScrollPath = new URL("../src/utils/listScroll.ts", import.meta.url).pathname;
+  const listScrollPath = new URL("../src/utils/listScroll.ts", import.meta.url);
   const code = fs.readFileSync(listScrollPath, "utf-8");
 
   assert.ok(code.includes("isDedicatedListScroller") || code.includes("in-list-scroll"), "listScroll debe reconocer el contenedor dedicado del listado");
@@ -135,7 +135,7 @@ test("21. listScroll prioriza el contenedor dedicado del listado y usa ventana c
 // 22. Sin dobles aplicaciones: HANDLED, defaultPrevented, ctrl, horizontal, cancelable
 // ---------------------------------------------------------------------------
 test("22. Sin aplicaciones duplicadas ni interferencias (HANDLED, ctrl, horizontal, cancelable)", () => {
-  const hookPath = new URL("../src/hooks/useScrollSpeed.ts", import.meta.url).pathname;
+  const hookPath = new URL("../src/hooks/useScrollSpeed.ts", import.meta.url);
   const hookCode = fs.readFileSync(hookPath, "utf-8");
   assert.ok(hookCode.includes("removeEventListener"), "useScrollSpeed debe limpiar el listener");
   assert.ok(hookCode.includes("passive: false"), "useScrollSpeed debe usar passive: false para permitir preventDefault");

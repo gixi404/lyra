@@ -119,7 +119,7 @@ test("1. Valor predeterminado 1.0×", () => {
 // 2. Persistencia después de reiniciar la aplicación
 // ---------------------------------------------------------------------------
 test("2. Persistencia después de reiniciar la aplicación", () => {
-  const persistentPrefsPath = new URL("../src/utils/persistentPreferences.ts", import.meta.url).pathname;
+  const persistentPrefsPath = new URL("../src/utils/persistentPreferences.ts", import.meta.url);
   const prefsCode = fs.readFileSync(persistentPrefsPath, "utf-8");
 
   // Comprobar que "scroll-speed" está registrado en PERSISTENT_KEYS
@@ -133,7 +133,7 @@ test("2. Persistencia después de reiniciar la aplicación", () => {
   );
 
   // Comprobar que usePreferences exporta myScrollSpeed
-  const usePreferencesPath = new URL("../src/hooks/usePreferences.ts", import.meta.url).pathname;
+  const usePreferencesPath = new URL("../src/hooks/usePreferences.ts", import.meta.url);
   const hookCode = fs.readFileSync(usePreferencesPath, "utf-8");
   assert.ok(hookCode.includes("myScrollSpeed"), "usePreferences debe definir y retornar myScrollSpeed");
 
@@ -549,7 +549,7 @@ test("13. Escalado fluido y preciso de gestos de touchpad y rueda de ratón con 
 // 14. Preferencias: Ubicación e integridad del control deslizante
 // ---------------------------------------------------------------------------
 test("14. Preferencias: Ubicación e integridad del control deslizante de velocidad de desplazamiento", () => {
-  const preferencesPath = new URL("../src/pages/Preferences.tsx", import.meta.url).pathname;
+  const preferencesPath = new URL("../src/pages/Preferences.tsx", import.meta.url);
   const code = fs.readFileSync(preferencesPath, "utf-8");
 
   // 1. Debe incluir la sección «Velocidad de desplazamiento»
@@ -811,7 +811,7 @@ test("17. Verificación completa del funcionamiento real sobre el contenedor de 
 // 18. Integración del multiplicador de velocidad dentro de TinyEditor
 // ---------------------------------------------------------------------------
 test("18. Integración del multiplicador de velocidad dentro de TinyEditor", () => {
-  const editorPath = new URL("../src/components/TinyEditor.tsx", import.meta.url).pathname;
+  const editorPath = new URL("../src/components/TinyEditor.tsx", import.meta.url);
   const code = fs.readFileSync(editorPath, "utf-8");
 
   // 1. Debe invocar myScrollSpeed desde usePreferences
