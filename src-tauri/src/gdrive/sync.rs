@@ -775,6 +775,7 @@ static ACTIVE_TMP_FILES: std::sync::LazyLock<Mutex<HashSet<PathBuf>>> =
 
 static TEST_FAIL_TEMP_WRITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static TEST_FAIL_LINK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(unix)]
 static TEST_FAIL_DIR_SYNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
@@ -785,7 +786,7 @@ pub fn test_inject_temp_write_failure(flag: bool) {
 pub fn test_inject_link_failure(flag: bool) {
     TEST_FAIL_LINK.store(flag, std::sync::atomic::Ordering::SeqCst);
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub fn test_inject_dir_sync_failure(flag: bool) {
     TEST_FAIL_DIR_SYNC.store(flag, std::sync::atomic::Ordering::SeqCst);
 }
@@ -5889,6 +5890,7 @@ mod tests {
         assert!(!entries.contains(&"nueva.txt".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn m7_dir_sync_failure_keeps_destination_intact() {
         let _fault = TEST_FAULT_LOCK.lock().unwrap();
