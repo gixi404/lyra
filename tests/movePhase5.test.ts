@@ -9,12 +9,14 @@ interface PendingMove {
   isFolder: boolean;
   phase: "prepared" | "physical" | "awaitingFrontend" | "aborted";
   notes: Array<{ oldPath: string; newPath: string }>;
+  destinationFileOrder?: string[];
 }
 
 interface InvokeArgs {
   sourcePath?: string;
   destinationPath?: string;
   expectedNotes?: string[];
+  destinationFileOrder?: string[];
   paths?: string[];
   path?: string;
   draftId?: string;
@@ -34,6 +36,7 @@ function makeWindow(opts?: {
   let failPrefsWrite = opts?.failPrefsWrite ?? false;
   let pendingMove: PendingMove | null = opts?.pendingMove ?? null;
   let ackCalls = 0;
+  let acknowledgedFileOrder: string | undefined;
   let moveCalls = 0;
 
   (globalThis as unknown as { window: unknown }).window = {
@@ -94,6 +97,7 @@ function makeWindow(opts?: {
               isFolder: cmd === "move_folder_local",
               phase: "awaitingFrontend",
               notes: changes.map((n) => ({ oldPath: n.oldPath, newPath: n.newPath })),
+              destinationFileOrder: args.destinationFileOrder,
             };
             return changes;
           }
@@ -102,6 +106,7 @@ function makeWindow(opts?: {
           case "pending_local_move":
             return pendingMove;
           case "acknowledge_local_move":
+            acknowledgedFileOrder = JSON.parse(disk.get("lyra/.preferences.json") ?? "{}").fileOrder;
             ackCalls++;
             pendingMove = null;
             return undefined;
@@ -115,6 +120,7 @@ function makeWindow(opts?: {
     local, disk, drafts,
     setFailPrefsWrite: (v: boolean) => { failPrefsWrite = v; },
     getAckCalls: () => ackCalls,
+    getAcknowledgedFileOrder: () => acknowledgedFileOrder,
     getMoveCalls: () => moveCalls,
     getPendingMove: () => pendingMove,
   };
@@ -180,6 +186,36 @@ test("moveLocalPath (nota, menú): mueve a otra carpeta, conserva orden manual a
   assert.equal(h.local.get("A/n1.md-modified"), undefined);
   assert.equal(h.local.get("theme"), "dark");
   assert.equal(h.getAckCalls(), 1);
+});
+
+test("an ordered drop saves the selected position before acknowledging the move", async () => {
+  const h = makeWindow();
+  resetStores();
+  const order = ["B/first.md", "B/x.md", "B/last.md"];
+  h.local.set("fileOrder", JSON.stringify({ A: ["A/x.md"], B: ["B/first.md", "B/last.md"], C: ["C/other.md"] }));
+  const { moveLocalPath } = await import("../src/utils/pathOperations.ts");
+  await moveLocalPath("file", "A/x.md", "B/x.md", order);
+  assert.equal(h.getAckCalls(), 1);
+  assert.deepEqual(JSON.parse(h.getAcknowledgedFileOrder() ?? "{}"), { A: [], B: order, C: ["C/other.md"] });
+});
+
+test("an ordered drop recovers its selected position after an interrupted preference write", async () => {
+  const h = makeWindow({ failPrefsWrite: true });
+  resetStores();
+  const initial = { A: ["A/x.md"], B: ["B/first.md", "B/last.md"] };
+  const selected = ["B/first.md", "B/x.md", "B/last.md"];
+  h.local.set("fileOrder", JSON.stringify(initial));
+  const { moveLocalPath, recoverPendingLocalMove } = await import("../src/utils/pathOperations.ts");
+  await assert.rejects(moveLocalPath("file", "A/x.md", "B/x.md", selected), /journal was kept for recovery/i);
+  assert.equal(h.getAckCalls(), 0);
+  assert.deepEqual(h.getPendingMove()?.destinationFileOrder, selected);
+  // Simulate reopening with the last successfully saved preferences.
+  h.local.set("fileOrder", JSON.stringify(initial));
+  h.setFailPrefsWrite(false);
+  await Promise.all([recoverPendingLocalMove(), recoverPendingLocalMove()]);
+  assert.equal(h.getMoveCalls(), 1);
+  assert.equal(h.getAckCalls(), 1);
+  assert.deepEqual(JSON.parse(h.getAcknowledgedFileOrder() ?? "{}"), { A: [], B: selected });
 });
 
 test("moveLocalPath (nota): fallo de persistencia no reconoce journal; recovery exitosa es idempotente sin duplicar ni mover posición (destino sin entrada previa)", async () => {

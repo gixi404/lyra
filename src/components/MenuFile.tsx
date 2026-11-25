@@ -190,6 +190,14 @@ function MenuFile({ fileName }: Props): Component {
     <div className="relative flex items-center">
       <ContextMenu label="Opciones" title="Opciones" reveal="hover">
         <MenuItem
+          icon={Info}
+          label="Información"
+          onSelect={() => setIsInfoOpen(true)}
+        />
+
+        <MenuSeparator />
+
+        <MenuItem
           icon={EditIcon}
           label={d.EditName ?? "Renombrar"}
           onSelect={() => setIsEditOpen(true)}
@@ -218,14 +226,6 @@ function MenuFile({ fileName }: Props): Component {
           label={d.MoveToTrashLabel ?? "Archivar"}
           tone="danger"
           onSelect={() => setIsTrashOpen(true)}
-        />
-
-        <MenuSeparator />
-
-        <MenuItem
-          icon={Info}
-          label="Información"
-          onSelect={() => setIsInfoOpen(true)}
         />
       </ContextMenu>
 

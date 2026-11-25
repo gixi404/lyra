@@ -98,6 +98,7 @@ const d = translations(),
     "Personaliza el icono y color de tus carpetas.",
     "Configura Lyra como editor predeterminado.",
     "Velocidad de desplazamiento configurable.",
+    "Arrastra y suelta tus archivos para ordenarlos.",
   ] as const;
 
 function parseChangelog(raw: string | null): string[] | null {

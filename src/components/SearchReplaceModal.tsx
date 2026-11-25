@@ -84,10 +84,24 @@ function SearchReplaceModal({
         searchInputRef.current?.select();
       }, 50);
       return () => clearTimeout(timer);
-    } else {
-      onSearchStateChange?.(null);
     }
-  }, [isOpen, onSearchStateChange]);
+
+    // Cualquier mecanismo de cierre (Escape, botón, clic fuera o Ctrl+F)
+    // deja el panel listo para la próxima apertura: campos vacíos y sin
+    // resaltados temporales. No se toca el contenido del documento.
+    setSearchQuery("");
+    setReplaceQuery("");
+    setMatchIndices([]);
+    setCurrentMatchIndex(0);
+
+    const textarea = textareaRef.current;
+    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+      const caret = textarea.selectionEnd;
+      textarea.setSelectionRange(caret, caret);
+    }
+    document.getElementById("search-scroll-mirror")?.remove();
+    onSearchStateChange?.(null);
+  }, [isOpen, onSearchStateChange, textareaRef]);
 
   useEffect(() => {
     if (!isOpen || !searchQuery || matchIndices.length === 0) {
@@ -263,10 +277,10 @@ function SearchReplaceModal({
               }}
               onKeyDown={handleKeyDown}
               className={twMerge(
-                "search-replace-modal no-print fixed top-4 right-4 z-[9999] p-3 rounded-xl shadow-2xl border backdrop-blur-lg flex flex-col gap-2 w-[340px] sm:w-[380px]",
+                "search-replace-modal no-print fixed top-4 right-4 z-[9999] p-3 rounded-xl shadow-2xl border flex flex-col gap-2 w-[340px] sm:w-[380px]",
                 isDay
-                  ? "bg-white/95 text-neutral-800 border-neutral-300 shadow-neutral-300/40"
-                  : "bg-zinc-900/95 text-zinc-100 border-zinc-700/80 shadow-black/50"
+                  ? "bg-white text-neutral-800 border-neutral-300 shadow-neutral-300/40"
+                  : "bg-zinc-900 text-zinc-100 border-zinc-700/80 shadow-black/50"
               )}
             >
       <div

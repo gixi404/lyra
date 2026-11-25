@@ -200,13 +200,6 @@ function List(): Component {
       return true;
     };
 
-    if (isSearching) {
-      applyListScroll(0);
-      hasRestoredRef.current = true;
-      scrollDebug("List.restoreEffect.searchReset", { currentView });
-      return () => { if (raf) window.cancelAnimationFrame(raf); };
-    }
-
     if (tryRevealCreatedNote()) {
       return () => { if (raf) window.cancelAnimationFrame(raf); };
     }
@@ -266,7 +259,6 @@ function List(): Component {
     const el = containerRef.current ?? (typeof document !== "undefined" ? document.getElementById("lyra-list-scroll-container") : null);
     if (!el) return;
     const handleScroll = (): void => {
-      if (isSearching) return;
       const pos = el.scrollTop;
       setListScroll(pos, currentView);
       scrollDebug("List.scrollEvent", { view: currentView, pos, source: "container" });
@@ -288,6 +280,8 @@ function List(): Component {
     let disposed = false;
     let cleanupInit: (() => void) | undefined;
     void (async () => {
+      if (!fileStore.getState().isInitialized) await initStartupPreferences();
+      if (disposed) return;
       try {
         await recoverPendingLocalMove();
       } catch (error) {
@@ -297,8 +291,6 @@ function List(): Component {
       void invoke<string[]>("pending_save_conflicts").then(conflicts => {
         if (!disposed && conflicts.length > 0) notification("error", "Hay guardados que requieren recuperación. El journal y los temporales se conservaron; las copias visibles se crearán al disponer de espacio y permisos.");
       }).catch(() => undefined);
-      if (!fileStore.getState().isInitialized) await initStartupPreferences();
-      if (disposed) return;
       cleanupInit = startLocalFirstListInitialization(
         getFilesWithStats,
         verifyMainFolder,

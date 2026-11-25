@@ -105,6 +105,11 @@ function Modal({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    // El modal se monta por portal bajo árboles React ajenos (por ejemplo, el
+    // diálogo de creación de archivos). Sin esto, el submit del formulario de
+    // la carpeta burbujearía al formulario padre y crearía el archivo antes de
+    // que la nueva carpeta se seleccione como destino.
+    e.stopPropagation();
     if (busy) return;
     if (hasInput && !inputValue.trim()) return;
     onConfirm(hasInput ? inputValue.trim() : undefined);

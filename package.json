@@ -1,7 +1,7 @@
 {
   "name": "lyra",
   "private": true,
-  "version": "2.0.15",
+  "version": "2.1.0",
   "type": "module",
   "packageManager": "pnpm@11.3.0",
   "scripts": {
@@ -14,10 +14,13 @@
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "check": "pnpm lint && pnpm typecheck && pnpm lint:rust",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:dnd:webkit": "node tests/dndReparentWebkit.mjs",
     "newversion": "node scripts/newversion.js",
     "revertversion": "node scripts/revertversion.js"
   },
   "dependencies": {
+    "@dnd-kit/dom": "0.5.3",
+    "@dnd-kit/react": "0.5.3",
     "@fontsource/cinzel": "^5.3.0",
     "@fontsource/fira-code": "^5.3.0",
     "@fontsource/ia-writer-duo": "^5.0.11",
@@ -33,7 +36,6 @@
     "@fontsource/roboto": "^5.3.0",
     "@fontsource/source-code-pro": "^5.3.0",
     "@fontsource/space-mono": "^5.3.0",
-    "@hello-pangea/dnd": "^18.0.1",
     "@react-spring/web": "^9.7.5",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-fs": "2.7.1",

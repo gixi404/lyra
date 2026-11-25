@@ -13,6 +13,7 @@ interface ModalSortProps {
 }
 
 const SORT_OPTIONS: { id: SortOptionId; label: string }[] = [
+  { id: "manual", label: "Manual" },
   { id: "mtime", label: "Última edición" },
   { id: "az", label: "A-Z" },
   { id: "za", label: "Z-A" },

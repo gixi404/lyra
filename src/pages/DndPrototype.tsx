@@ -1,202 +1,127 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, Folder as FolderIcon } from "lucide-react";
-import { motion } from "motion/react";
-import { useExplorerDnd } from "../dnd-explorer/useExplorerDnd.ts";
-import DragOverlay from "../dnd-explorer/DragOverlay.tsx";
-import type { DropTarget, DragItem } from "../dnd-explorer/types.ts";
+import { useEffect, useRef, useState } from "react";
+import { ChevronRight, FileText, Folder } from "lucide-react";
+import { DragDropProvider, DragOverlay, useDroppable } from "@dnd-kit/react";
+import { isSortable, useSortable } from "@dnd-kit/react/sortable";
+import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 
-type Node = { id: string; name: string; folders: Node[]; files: string[] };
+type FolderId = "root" | "projects" | "alpha" | "deep" | "ideas" | "empty";
+type FileId = string;
+type Contents = Record<FolderId, FileId[]>;
+const initial: Contents = {
+  root: ["Welcome.txt", "Notes.txt"],
+  projects: ["Plan.md", "Timeline.md"],
+  alpha: ["Design.md", "Research.md"],
+  deep: ["Archive.md"],
+  ideas: ["Idea 1.md", "Idea 2.md", "Idea 3.md"],
+  empty: [],
+};
+const children: Partial<Record<FolderId, FolderId[]>> = {
+  root: ["projects", "ideas", "empty"],
+  projects: ["alpha"],
+  alpha: ["deep"],
+};
+const labels: Record<FolderId, string> = {
+  root: "Lyra", projects: "Projects", alpha: "Alpha", deep: "Deep", ideas: "Ideas", empty: "Empty folder",
+};
+const fileId = (name: string) => `file:${name}`;
+const folderId = (name: FolderId) => `folder:${name}`;
 
-function buildMock(): Node {
-  return {
-    id: "", name: "Lyra", folders: [
-      { id: "Proyectos", name: "Proyectos", folders: [
-        { id: "Proyectos/Alpha", name: "Alpha", folders: [
-          { id: "Proyectos/Alpha/Deep", name: "Deep", folders: [], files: ["Proyectos/Alpha/Deep/d1.md", "Proyectos/Alpha/Deep/d2.md"] }
-        ], files: ["Proyectos/Alpha/a1.md", "Proyectos/Alpha/a2.md"] },
-        { id: "Proyectos/Beta", name: "Beta", folders: [], files: ["Proyectos/Beta/b1.md"] },
-      ], files: ["Proyectos/p1.md", "Proyectos/p2.md"] },
-      { id: "Ideas", name: "Ideas", folders: [], files: ["Ideas/i1.md", "Ideas/i2.md", "Ideas/i3.md"] },
-      { id: "Vacía", name: "Vacía", folders: [], files: [] },
-    ], files: ["root1.md", "root2.md", "root3.md"]
-  };
+function FileRow({ name, group, index, depth }: { name: string; group: FolderId; index: number; depth: number }) {
+  const { ref, isDragging } = useSortable({
+    id: fileId(name), index, group, type: "file", accept: "file",
+    transition: { duration: 190, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+  });
+  return (
+    <div ref={ref} data-testid={fileId(name)} data-group={group}
+      style={{ padding: "11px 12px", paddingLeft: 18 + depth * 20, borderBottom: "1px solid #363b45", background: "#242b36", borderRadius: 5, cursor: "grab", opacity: isDragging ? 0.35 : 1, touchAction: "none", userSelect: "none" }}>
+      <FileText size={15} style={{ display: "inline", verticalAlign: "middle", marginRight: 8 }} />{name}
+    </div>
+  );
 }
 
-interface Flat {
-  id: string; kind: "folder" | "file"; path: string; depth: number; open: boolean; isRoot: boolean; containerKey: string;
-}
-
-function flattenProper(node: Node, expanded: Record<string, boolean>): Flat[] {
-  const rows: Flat[] = [];
-  const walk = (n: Node, depth: number, ancestorOpen: boolean) => {
-    for (const child of n.folders) {
-      const selfExpanded = expanded[child.id] ?? true;
-      rows.push({ id: `folder:${child.id}`, kind: "folder", path: child.id, depth, open: ancestorOpen, isRoot: false, containerKey: n.id });
-      walk(child, depth + 1, ancestorOpen && selfExpanded);
-    }
-    for (const f of n.files) {
-      rows.push({ id: `file:${f}`, kind: "file", path: f, depth, open: ancestorOpen, isRoot: false, containerKey: n.id });
-    }
-  };
-  const rootOpen = expanded["root:lyra"] ?? true;
-  rows.push({ id: "folder:", kind: "folder", path: "", depth: 0, open: true, isRoot: true, containerKey: "" });
-  for (const f of node.files) rows.push({ id: `file:${f}`, kind: "file", path: f, depth: 1, open: rootOpen, isRoot: false, containerKey: "" });
-  for (const child of node.folders) {
-    const selfExpanded = expanded[child.id] ?? true;
-    rows.push({ id: `folder:${child.id}`, kind: "folder", path: child.id, depth: 0, open: true, isRoot: false, containerKey: "" });
-    walk(child, 1, selfExpanded);
-  }
-  return rows;
+function FolderRow({ id, depth, expanded, onToggle, active }: { id: FolderId; depth: number; expanded: boolean; onToggle: () => void; active: boolean }) {
+  const { ref, isDropTarget } = useDroppable({ id: folderId(id), type: "folder", accept: "file", collisionPriority: 1 });
+  return (
+    <div ref={ref} data-testid={folderId(id)} onClick={onToggle}
+      style={{ padding: "12px", paddingLeft: 12 + depth * 20, background: isDropTarget || active ? "#30577a" : "#17202c", borderRadius: 5, cursor: "pointer", marginTop: 3 }}>
+      <ChevronRight size={16} style={{ display: "inline", verticalAlign: "middle", transform: expanded ? "rotate(90deg)" : undefined, transition: "transform 190ms" }} />
+      <Folder size={16} style={{ display: "inline", verticalAlign: "middle", margin: "0 8px" }} />{labels[id]}
+    </div>
+  );
 }
 
 export default function DndPrototype() {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ "root:lyra": true, "Proyectos": true, "Proyectos/Alpha": false, "Proyectos/Beta": true, "Ideas": true, "Vacía": true, "Proyectos/Alpha/Deep": true });
-  const [tempExpanded, setTempExpanded] = useState<Record<string, boolean>>({});
-  const [log, setLog] = useState<string[]>([]);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [contents, setContents] = useState<Contents>(initial);
+  const [expanded, setExpanded] = useState<Record<FolderId, boolean>>({ root: true, projects: true, alpha: false, deep: false, ideas: true, empty: true });
+  const [active, setActive] = useState<string | null>(null);
+  const [hover, setHover] = useState<FolderId | null>(null);
+  const [log, setLog] = useState("Hold a file for 150 ms or move it 8 px to drag it.");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTimer = () => { if (timer.current) clearTimeout(timer.current); timer.current = null; };
+  useEffect(() => () => clearTimer(), []);
 
-  const effective = useMemo(() => ({ ...expanded, ...tempExpanded }), [expanded, tempExpanded]);
-  const effectiveRef = useRef(effective);
-  effectiveRef.current = effective;
-
-  const rows = useMemo(() => flattenProper(buildMock(), effective), [effective]);
-
-  const { dnd, onPointerDownRow, onClickCapture } = useExplorerDnd({
-    rootRef,
-    scrollRef,
-    enabled: true,
-    manualOrder: true,
-    canDragFolders: true,
-    isEffectivelyExpanded: (path, isRoot) => {
-      const e = effectiveRef.current;
-      return isRoot ? (e["root:lyra"] ?? true) : !!e[path];
-    },
-    requestTempExpand: (path, isRoot) => {
-      setTempExpanded(prev => ({ ...prev, [isRoot ? "root:lyra" : path]: true }));
-    },
-    onDrop: async (item: DragItem, target: DropTarget, reason) => {
-      setLog(l => [`${reason}: ${item.id} -> ${JSON.stringify(target)}`, ...l].slice(0, 12));
-      // simulate success: keep target container/folder ancestors expanded
-      if (reason === "cancel" || !target) { setTempExpanded({}); return null; }
-      setTempExpanded({});
-      return [];
-    },
-    onDragEnd: (_keep, cancelled) => {
-      if (cancelled) setTempExpanded({});
-      else setTempExpanded({});
-    },
-  });
-
-  // build segments
-  const segments = useMemo(() => {
-    const base: Array<{ kind: "folder"; row: Flat } | { kind: "files"; containerKey: string; rows: Flat[] }> = [];
-    let i = 0;
-    while (i < rows.length) {
-      const r = rows[i];
-      if (r.kind === "folder") { base.push({ kind: "folder", row: r }); i++; }
-      else {
-        const ck = r.containerKey; const rs: Flat[] = [];
-        while (i < rows.length && rows[i].kind === "file" && rows[i].containerKey === ck) { rs.push(rows[i]); i++; }
-        base.push({ kind: "files", containerKey: ck, rows: rs });
-      }
-    }
-    const fileSegKeys = new Set(base.filter(s => s.kind === "files").map(s => s.containerKey));
-    const segs: typeof base = [];
-    for (const seg of base) {
-      segs.push(seg);
-      if (seg.kind === "folder") {
-        const selfKey = seg.row.isRoot ? "root:lyra" : seg.row.path;
-        const selfOpen = (effective[selfKey] ?? true) && seg.row.open;
-        const containerKey = seg.row.path;
-        if (selfOpen && !fileSegKeys.has(containerKey)) {
-          segs.push({ kind: "files", containerKey, rows: [] });
-          fileSegKeys.add(containerKey);
-        }
-      }
-    }
-    return segs;
-  }, [rows, effective]);
-
-  const dragged = dnd.dragging;
-
-  return (
-    <div style={{ padding: 20, color: "#eee", background: "#101010", minHeight: "100vh" }}>
-      <h2 style={{ marginBottom: 8 }}>DND Prototype</h2>
-      <div ref={scrollRef} data-explorer-scroll style={{ height: 420, overflow: "auto", border: "1px solid #333", borderRadius: 8, padding: 8, width: 680, maxWidth: "100%" }}>
-        <div ref={rootRef} onClickCapture={onClickCapture} style={{ position: "relative" }}>
-          {segments.map(seg => {
-            if (seg.kind === "folder") {
-              const r = seg.row;
-              const selfKey = r.isRoot ? "root:lyra" : r.path;
-              const selfOpen = effective[selfKey] ?? true;
-              const isHover = dnd.folderHoverPath === r.path;
-              return (
-                <motion.div key={r.id} initial={false} animate={{ height: r.open ? "auto" : 0 }} style={{ overflow: "hidden" }}>
-                  <div data-explorer-row-id={r.id} data-explorer-row-kind="folder" data-folder-path={r.path} data-folder-open={selfOpen ? "1" : "0"}
-                    onPointerDown={(e) => onPointerDownRow(e, r.id)}
-                    style={{ padding: "10px 8px", paddingLeft: r.depth * 20 + 8, display: "flex", alignItems: "center", gap: 8, cursor: r.isRoot ? "default" : "grab", background: isHover ? "rgba(56,189,248,0.12)" : undefined, borderRadius: 6, opacity: dragged?.id === r.id ? 0.3 : 1 }}>
-                    <span onClick={(e) => { e.stopPropagation(); setExpanded(p => ({ ...p, [selfKey]: !(p[selfKey] ?? true) })); }} style={{ display: "inline-flex", cursor: "pointer" }}>
-                      {selfOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    </span>
-                    <FolderIcon size={16} /> <span>{r.isRoot ? "Lyra (carpeta)" : r.path.split("/").pop()}</span>
-                  </div>
-                </motion.div>
-              );
-            }
-            const { containerKey, rows: frows } = seg;
-            const blockOpen = frows.length === 0 ? true : frows[0].open;
-            const insertTarget = (dnd.dropTarget && dnd.dropTarget.type === "file-insert" && dnd.dropTarget.containerKey === containerKey) ? dnd.dropTarget.index : null;
-            const gapHeight = dnd.cloneSize?.height ?? 44;
-            const hasDraggedInBlock = !!dragged && frows.some(r => r.id === dragged.id);
-            // Preserve source space to prevent layout shifts, but avoid doubling space when insertion gap is in this same container.
-            const insertInThisContainer = insertTarget !== null && dragged?.kind === "file";
-            const showSourcePlaceholder = hasDraggedInBlock && dragged?.kind === "file" && !insertInThisContainer;
-            let visIdx = 0;
-            const items: ReactNode[] = [];
-            for (const r of frows) {
-              const isDragged = dragged?.id === r.id;
-              if (isDragged) {
-                if (showSourcePlaceholder) {
-                  items.push(<div key={`${r.id}:src`} aria-hidden="true" style={{ height: gapHeight, borderRadius: 6 }} />);
-                }
-                continue;
-              }
-              if (insertTarget !== null && visIdx === insertTarget && dragged?.kind === "file") {
-                items.push(<motion.div key={`${containerKey}:gap:${visIdx}`} layout initial={{ height: 0, opacity: 0 }} animate={{ height: gapHeight, opacity: 0.2 }} style={{ background: "rgba(56,189,248,0.2)", borderRadius: 6, margin: "2px 0" }} />);
-              }
-              items.push(
-                <div key={r.id} data-explorer-row-id={r.id} data-explorer-row-kind="file"
-                  onPointerDown={(e) => onPointerDownRow(e, r.id)}
-                  style={{ padding: "10px 8px", paddingLeft: r.depth * 20 + 28, display: "flex", alignItems: "center", gap: 8, cursor: "grab", borderRadius: 6 }}>
-                  <FileText size={15} /> <span>{r.path.split("/").pop()}</span>
-                </div>
-              );
-              visIdx++;
-            }
-            if (insertTarget !== null && insertTarget >= visIdx && dragged?.kind === "file") {
-              items.push(<motion.div key={`${containerKey}:gap:end`} layout initial={{ height: 0, opacity: 0 }} animate={{ height: gapHeight, opacity: 0.2 }} style={{ background: "rgba(56,189,248,0.2)", borderRadius: 6, margin: "2px 0" }} />);
-            }
-            return (
-              <motion.div key={`files:${containerKey}`} initial={false} animate={{ height: blockOpen ? "auto" : 0 }} style={{ overflow: "hidden" }}>
-                <div data-file-droppable={containerKey} style={{ display: "flex", flexDirection: "column", minHeight: frows.length === 0 ? 28 : undefined }}>
-                  {items}
-                </div>
-              </motion.div>
-            );
-          })}
+  function renderFolder(id: FolderId, depth: number): React.ReactNode {
+    return (
+      <div key={id}>
+        <FolderRow id={id} depth={depth} expanded={expanded[id]} active={hover === id}
+          onToggle={() => setExpanded(current => ({ ...current, [id]: !current[id] }))} />
+        <div style={{ overflow: "hidden", maxHeight: expanded[id] ? 4000 : 0, opacity: expanded[id] ? 1 : 0, transition: "max-height 220ms ease, opacity 220ms ease" }}>
+          {(children[id] ?? []).map(child => renderFolder(child, depth + 1))}
+          <div data-testid={`list:${id}`} style={{ minHeight: 30, padding: "3px 0" }}>
+            {contents[id].map((name, index) => <FileRow key={fileId(name)} name={name} group={id} index={index} depth={depth + 1} />)}
+          </div>
         </div>
       </div>
-      <DragOverlay dnd={dnd}>
-        {dragged ? (
-          <div style={{ padding: "10px 12px", background: "#1f2937", color: "#fff", borderRadius: 8, display: "flex", alignItems: "center", gap: 8, height: "100%" }}>
-            {dragged.kind === "folder" ? <FolderIcon size={16} /> : <FileText size={15} />}
-            <span>{dragged.path === "" ? "Lyra (carpeta)" : dragged.path.split("/").pop()}</span>
-          </div>
-        ) : null}
+    );
+  }
+
+  return (
+    <DragDropProvider
+      sensors={defaults => [...defaults.filter(sensor => sensor !== PointerSensor), PointerSensor.configure({
+        activationConstraints: [
+          new PointerActivationConstraints.Distance({ value: 8 }),
+          new PointerActivationConstraints.Delay({ value: 150, tolerance: 12 }),
+        ],
+      })]}
+      onDragStart={event => { setActive(String(event.operation.source?.id ?? "")); setLog("Dragging"); }}
+      onDragOver={event => {
+        const target = event.operation.target;
+        const folder = typeof target?.id === "string" && target.id.startsWith("folder:") ? target.id.slice(7) as FolderId : null;
+        if (folder === hover) return;
+        clearTimer(); setHover(folder);
+        if (folder && !expanded[folder]) timer.current = setTimeout(() => setExpanded(current => ({ ...current, [folder]: true })), 500);
+      }}
+      onDragEnd={event => {
+        clearTimer(); setHover(null); setActive(null);
+        if (event.canceled) { setLog("Canceled"); return; }
+        const { source, target } = event.operation;
+        if (!isSortable(source)) { setLog("Invalid source"); return; }
+        const from = source.initialGroup as FolderId;
+        const to = typeof target?.id === "string" && target.id.startsWith("folder:")
+          ? target.id.slice(7) as FolderId : source.group as FolderId;
+        const name = String(source.id).slice(5);
+        if (!(from in contents) || !(to in contents)) { setLog("Invalid target"); return; }
+        setContents(current => {
+          const next = { ...current, [from]: current[from].filter(item => item !== name) };
+          const destination = from === to ? next[to] : [...current[to]];
+          destination.splice(Math.max(0, Math.min(source.index, destination.length)), 0, name);
+          next[to] = destination;
+          return next;
+        });
+        setLog(`${name}: ${labels[from]} → ${labels[to]} (${source.index})`);
+      }}
+    >
+      <main style={{ background: "#101722", color: "#f3f4f6", minHeight: "100vh", padding: 24, fontFamily: "sans-serif" }}>
+        <h1>Drag and drop prototype</h1>
+        <p>Fictional files only. Escape cancels the operation.</p>
+        <div data-testid="prototype-scroll" style={{ width: 650, maxWidth: "100%", height: 380, overflowY: "auto", border: "1px solid #475569", padding: 8 }}>
+          {renderFolder("root", 0)}
+        </div>
+        <p data-testid="prototype-status">{log}</p>
+      </main>
+      <DragOverlay dropAnimation={{ duration: 190, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+        {active ? <div style={{ padding: 12, width: 320, background: "#334155", color: "white", borderRadius: 6, boxShadow: "0 10px 30px #0008" }}>{active.slice(5)}</div> : null}
       </DragOverlay>
-      <pre style={{ marginTop: 12, fontSize: 12, color: "#9ca3af", maxHeight: 200, overflow: "auto" }}>{log.join("\n")}</pre>
-      <div style={{ marginTop: 8, fontSize: 12, color: "#9ca3af" }}>target: {JSON.stringify(dnd.dropTarget)} hover: {String(dnd.folderHoverPath)}</div>
-    </div>
+    </DragDropProvider>
   );
 }

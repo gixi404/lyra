@@ -7,6 +7,7 @@ import useFile from "../hooks/useFile.ts";
 import usePreferences from "../hooks/usePreferences.ts";
 import { configStore } from "../store/configStore.ts";
 import { normalize, notification, themes } from "../utils/helpers.ts";
+import { filterFilesByNormalizedSearch } from "../utils/searchProjection.ts";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { searchStore, type SortOptionId } from "../store/searchStore.ts";
@@ -15,10 +16,11 @@ import type { Component } from "../utils/types.ts";
 import { AlertCircle } from "lucide-react";
 import { includeRetainedExits } from "../utils/listExit.ts";
 import { deleteArchivedBatch } from "../utils/archiveDeletion.ts";
-import { displayNoteLabel, displayNoteName, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
+import { displayNoteLabel, displayNoteSuccessMessage } from "../utils/visibleNames.ts";
 import { getNecessaryFolderPaths } from "../utils/searchProjection.ts";
 import { hasArchivedAncestor } from "../utils/archivePathState.ts";
 import { logger } from "../utils/logger.ts";
+import { buildFileOrderFromPaths, registerFileOrderCapture } from "../utils/manualOrder.ts";
 
 const SESSION_RANDOM_SALT = Math.floor(Math.random() * 0x7fffffff) + 1;
 
@@ -67,6 +69,9 @@ const ListFiles = memo(({ arr }: Props): Component => {
     hasIndividualDeletion = fileStore(state => state.deletingFiles.length > 0),
     deletionBusy = isDeleting || hasIndividualDeletion,
     mountedRef = useRef(false),
+    filesRef = useRef<string[]>([]),
+    lastActiveFilesRef = useRef<string[]>([]),
+    paperIsOpenRef = useRef(false),
     [showTooltip, setShowTooltip] = useState<boolean>(false),
     { deleteFile } = useFile(),
     exitingFiles = fileStore(state => state.exitingFiles),
@@ -133,45 +138,51 @@ const ListFiles = memo(({ arr }: Props): Component => {
       ? Array.from(new Set([...paperFiles, ...arr.filter(inArchivedFolder)]))
       : arr.filter(f => !paperSet.has(f) && !inArchivedFolder(f));
 
-    const filtered = current.filter(name => {
-      if (normalizedSearch.length === 0) return true;
-      const physical = normalize(name);
-      const visible = normalize(displayNoteName(name));
-      return physical.includes(normalizedSearch) || visible.includes(normalizedSearch);
-    });
+    const filtered = filterFilesByNormalizedSearch(current, normalizedSearch);
 
-    const sorted = filtered.sort((a, b) => {
-      let res = 0;
-      if (sortOption === "mtime") {
-        res = (statsMap[b]?.mtime || 0) - (statsMap[a]?.mtime || 0);
-      } else if (sortOption === "az") {
-        res = a.localeCompare(b);
-      } else if (sortOption === "za") {
-        res = b.localeCompare(a);
-      } else if (sortOption === "recent") {
-        res = (statsMap[b]?.birthtime || 0) - (statsMap[a]?.birthtime || 0);
-      } else if (sortOption === "oldest") {
-        res = (statsMap[a]?.birthtime || 0) - (statsMap[b]?.birthtime || 0);
-      } else if (sortOption === "random") {
-        res = getHash(a) - getHash(b);
-      }
-      if (res !== 0) return res;
-      return a.localeCompare(b);
-    });
+    const sorted = sortOption === "manual"
+      ? filtered
+      : filtered.sort((a, b) => {
+        let res = 0;
+        if (sortOption === "mtime") {
+          res = (statsMap[b]?.mtime || 0) - (statsMap[a]?.mtime || 0);
+        } else if (sortOption === "az") {
+          res = a.localeCompare(b);
+        } else if (sortOption === "za") {
+          res = b.localeCompare(a);
+        } else if (sortOption === "recent") {
+          res = (statsMap[b]?.birthtime || 0) - (statsMap[a]?.birthtime || 0);
+        } else if (sortOption === "oldest") {
+          res = (statsMap[a]?.birthtime || 0) - (statsMap[b]?.birthtime || 0);
+        } else if (sortOption === "random") {
+          res = getHash(a) - getHash(b);
+        }
+        if (res !== 0) return res;
+        return a.localeCompare(b);
+      });
     const matchingRetained = retainedExits.filter(item => normalize(item.name).includes(normalizedSearch));
     return includeRetainedExits(sorted, matchingRetained, paperIsOpen ? "paper" : "active");
   }, [arr, normalizedSearch, sortOption, paperFiles, paperIsOpen, paperSet, statsMap, retainedExits, inArchivedFolder]);
+
+  // Mantiene disponible el orden visual vigente para capturarlo al elegir "Manual".
+  filesRef.current = files;
+  paperIsOpenRef.current = paperIsOpen;
+  if (!paperIsOpen) lastActiveFilesRef.current = files;
+  useEffect(() => registerFileOrderCapture(() =>
+    buildFileOrderFromPaths(paperIsOpenRef.current ? lastActiveFilesRef.current : filesRef.current)
+  ), []);
 
   useEffect(() => {
     fileStore.getState().setRenderedOrder(paperIsOpen ? "paper" : "active", files);
   }, [paperIsOpen, files]);
 
-  const isFirstMountRef = useRef<boolean>(true);
+  // Solo un cambio real de vista (Documentos <-> Archivados) limpia la búsqueda.
+  // Inicializar la referencia con el valor actual evita que un remontaje al
+  // volver del editor (o el doble efecto de StrictMode) reinicie el filtro.
+  const previousPaperIsOpenRef = useRef<boolean>(paperIsOpen);
   useEffect(() => {
-    if (isFirstMountRef.current) {
-      isFirstMountRef.current = false;
-      return;
-    }
+    if (previousPaperIsOpenRef.current === paperIsOpen) return;
+    previousPaperIsOpenRef.current = paperIsOpen;
     resetSearch();
     setShowTooltip(false);
     fileStore.getState().flushPendingExits();
@@ -199,6 +210,7 @@ const ListFiles = memo(({ arr }: Props): Component => {
           <FolderExplorer
             folders={visibleFolders}
             files={files}
+            manualOrder={sortOption === "manual"}
             searchActive={isSearching}
             renderFile={(name, depth) => <ItemFile fileName={name} key={name} folderDepth={depth} isExiting={exitingFiles.includes(name)} />}
           />

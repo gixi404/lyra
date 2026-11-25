@@ -188,19 +188,41 @@ test("context menu: the file trigger is revealed on hover and the folder trigger
   assert.ok(!read("src/components/FolderMenu.tsx").includes('reveal="hover"'));
 });
 
-test("context menu: Información is always the last action of the menu", () => {
-  const sources = [
-    "src/components/MenuFile.tsx",
-  ];
-  for (const source of sources) {
-    const code = read(source);
-    const items = [...code.matchAll(/<MenuItem\b[\s\S]*?\/>/g)].map(match => match[0]);
-    assert.ok(items.length >= 2, `${source} must render menu items`);
-    const labels = items.map(item => /label="([^"]+)"/.exec(item)?.[1] ?? "");
-    const last = labels[labels.length - 1];
-    assert.equal(last, "Información", `${source} must end with Información (got ${labels.join(", ")})`);
-    assert.equal(labels.filter(label => label === "Información").length, 1, `${source} must show Información once`);
-  }
+test("context menu: Información is the first action in active file and folder menus", () => {
+  const file = read("src/components/MenuFile.tsx");
+  const fileItems = [...file.matchAll(/<MenuItem\b[\s\S]*?\/>/g)].map(match => match[0]);
+  assert.equal(fileItems.length, 5, "the file menu must keep its five actions");
+  assert.ok(/icon=\{Info\}[\s\S]*?label="Información"/.test(fileItems[0]),
+    "Información must be the first action (got " + fileItems[0] + ")");
+  assert.ok(fileItems[0].includes("setIsInfoOpen(true)"), "the information action must keep its behavior");
+  assert.equal(fileItems.filter(item => item.includes('label="Información"')).length, 1,
+    "the file menu must show Información once");
+  assert.ok(fileItems[1].includes('label={d.EditName ?? "Renombrar"}'));
+  assert.ok(fileItems[2].includes('label="Mover a…"'));
+  assert.ok(fileItems[3].includes('label="Exportar"'));
+  assert.ok(fileItems[4].includes('label={d.MoveToTrashLabel ?? "Archivar"}'));
+
+  const fileMenu = file.slice(file.indexOf("<ContextMenu"), file.indexOf("</ContextMenu>"));
+  const betweenInfoAndEdit = fileMenu.slice(
+    fileMenu.indexOf('label="Información"'),
+    fileMenu.indexOf('label={d.EditName ?? "Renombrar"}')
+  );
+  assert.equal((betweenInfoAndEdit.match(/<MenuSeparator \/>/g) ?? []).length, 1,
+    "exactly one separator between Información and the next action");
+  assert.ok(!/\s*<MenuSeparator \/>\s*<\/ContextMenu>/.test(fileMenu),
+    "the menu must not end with a dangling separator");
+
+  const folderSource = read("src/components/FolderMenu.tsx");
+  const infoIndex = folderSource.indexOf('<MenuItem icon={Info} label="Información"');
+  assert.ok(infoIndex > folderSource.indexOf("<ContextMenu"), "Información must be inside the folder menu");
+  assert.ok(infoIndex < folderSource.indexOf("label={d.NewNote}"), "Información must precede the other folder actions");
+  assert.equal((folderSource.match(/label="Información"/g) ?? []).length, 1,
+    "the folder menu must show Información once");
+  assert.ok(folderSource.includes("onSelect={() => void showInfo()}"), "the folder action must keep its behavior");
+  assert.ok(/<MenuItem icon=\{Info\} label="Información"[\s\S]{0,200}\{hasActionsAfterInfo && <MenuSeparator \/>\}/.test(folderSource),
+    "the separator after Información is only rendered when further actions exist");
+  assert.ok(folderSource.includes("const showInfoAction = !archived && !structural"),
+    "archived and structural folders must not gain the information action");
 
   const archived = read("src/components/MenuPaperFile.tsx");
   const archivedItems = [...archived.matchAll(/<MenuItem\b[\s\S]*?\/>/g)].map(match => match[0]);

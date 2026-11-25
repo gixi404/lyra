@@ -75,6 +75,10 @@ export default function CreateNoteDialog({ isOpen, folders, initialFolder = "", 
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    // Los formularios de diálogos anidados (como la creación de carpeta del
+    // selector de destino) se montan por portal, pero sus eventos React siguen
+    // burbujeando hasta este formulario. Solo este formulario debe crear el archivo.
+    if (e.target !== e.currentTarget) return;
     if (!name.trim()) return;
     onCreate(name.trim(), folder);
   };

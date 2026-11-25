@@ -22,6 +22,7 @@ interface PendingMove {
   isFolder: boolean;
   phase: "prepared" | "physical" | "awaitingFrontend" | "aborted";
   notes: PathChange[];
+  destinationFileOrder?: string[];
 }
 
 async function reconcileLocalDrafts(changes: PathChange[], aborted: boolean): Promise<void> {
@@ -58,19 +59,21 @@ async function reconcileLocalDrafts(changes: PathChange[], aborted: boolean): Pr
   }
 }
 
-export async function recoverPendingLocalMove(): Promise<void> {
-  const pending = await invoke<PendingMove | null>("pending_local_move");
-  if (!pending) return;
-  if (pending.phase !== "aborted" && pending.phase !== "awaitingFrontend") {
-    throw new Error("A local move is still in an unresolved physical phase");
-  }
-  await reconcileLocalDrafts(pending.notes, pending.phase === "aborted");
-  if (pending.phase === "awaitingFrontend") {
-    await migratePreferences(pending.notes, pending.isFolder
-      ? { oldPath: pending.sourcePath, newPath: pending.destinationPath } : undefined);
-    remapOpenedNoteIdentities(pending.notes);
-  }
-  await invoke("acknowledge_local_move", { sourcePath: pending.sourcePath, destinationPath: pending.destinationPath });
+export function recoverPendingLocalMove(): Promise<void> {
+  return runPathOperation(async () => {
+    const pending = await invoke<PendingMove | null>("pending_local_move");
+    if (!pending) return;
+    if (pending.phase !== "aborted" && pending.phase !== "awaitingFrontend") {
+      throw new Error("A local move is still in an unresolved physical phase");
+    }
+    await reconcileLocalDrafts(pending.notes, pending.phase === "aborted");
+    if (pending.phase === "awaitingFrontend") {
+      const folderMove = pending.isFolder ? { oldPath: pending.sourcePath, newPath: pending.destinationPath } : undefined;
+      await migratePreferences(pending.notes, folderMove, pending.destinationFileOrder);
+      remapOpenedNoteIdentities(pending.notes);
+    }
+    await invoke("acknowledge_local_move", { sourcePath: pending.sourcePath, destinationPath: pending.destinationPath });
+  });
 }
 
 async function prepareDrafts(changes: PathChange[]): Promise<{ commit: () => Promise<string[]>; rollback: () => Promise<void> }> {
@@ -140,7 +143,11 @@ async function prepareDrafts(changes: PathChange[]): Promise<{ commit: () => Pro
   };
 }
 
-export async function migratePreferences(changes: PathChange[], folderMove?: { oldPath: string; newPath: string }): Promise<void> {
+export async function migratePreferences(
+  changes: PathChange[],
+  folderMove?: { oldPath: string; newPath: string },
+  destinationFileOrder?: readonly string[],
+): Promise<void> {
   const rename = (path: string) => folderMove ? remapPath(path, folderMove.oldPath, folderMove.newPath)
     : changes.find(change => change.oldPath === path)?.newPath ?? path;
   for (const change of changes) {
@@ -300,10 +307,7 @@ export async function migratePreferences(changes: PathChange[], folderMove?: { o
       }
     }
   }
-  // Orden manual de archivos: clave propia "fileOrder" con la misma semántica de rutas.
-  // En movimientos de carpeta se remapean claves y valores; en movimientos de archivo se
-  // reubica la entrada (mismo padre conserva índice; cruce de carpeta va al final, la
-  // posición exacta dentro del destino la fija quien orquesta el movimiento).
+  // Remap paths first, then apply any destination order recorded for this drop.
   let fileOrder: Record<string, string[]> = {};
   try {
     const raw: unknown = JSON.parse(window.localStorage.getItem("fileOrder") ?? "{}");
@@ -318,6 +322,9 @@ export async function migratePreferences(changes: PathChange[], folderMove?: { o
     fileOrder = next;
   } else {
     for (const change of changes) fileOrder = relocateEntry(fileOrder, change);
+    if (destinationFileOrder && changes.length === 1) {
+      fileOrder[getFileDirectory(changes[0].newPath)] = [...destinationFileOrder];
+    }
   }
   window.localStorage.setItem("fileOrder", JSON.stringify(fileOrder));
   remapMetadataBindings(changes, folderMove);
@@ -325,15 +332,26 @@ export async function migratePreferences(changes: PathChange[], folderMove?: { o
   await savePersistentPreferencesNow();
 }
 
-export async function moveLocalPath(kind: "file" | "folder", sourcePath: string, destinationPath: string): Promise<string[]> {
-  return runPathOperation(() => moveLocalPathLocked(kind, sourcePath, destinationPath, false));
+export async function moveLocalPath(
+  kind: "file" | "folder",
+  sourcePath: string,
+  destinationPath: string,
+  destinationFileOrder?: readonly string[],
+): Promise<string[]> {
+  return runPathOperation(() => moveLocalPathLocked(kind, sourcePath, destinationPath, false, destinationFileOrder));
 }
 
 export async function recoverArchivedPathTo(kind: "file" | "folder", sourcePath: string, destinationPath: string): Promise<string[]> {
   return runPathOperation(() => moveLocalPathLocked(kind, sourcePath, destinationPath, true));
 }
 
-async function moveLocalPathLocked(kind: "file" | "folder", sourcePath: string, destinationPath: string, recovery: boolean): Promise<string[]> {
+async function moveLocalPathLocked(
+  kind: "file" | "folder",
+  sourcePath: string,
+  destinationPath: string,
+  recovery: boolean,
+  destinationFileOrder?: readonly string[],
+): Promise<string[]> {
   if (!(await flushActiveEditors())) throw new Error("An open note could not be saved; move cancelled");
   await flushEditorDrafts();
   const known = fileStore.getState().files;
@@ -348,6 +366,7 @@ async function moveLocalPathLocked(kind: "file" | "folder", sourcePath: string, 
       : (kind === "folder" ? "move_folder_local" : "move_note_local");
     changes = await invoke<PathChange[]>(command, {
       sourcePath, destinationPath, ...(kind === "folder" && !recovery ? { expectedNotes: predicted.map(change => change.oldPath) } : {}),
+      ...(destinationFileOrder && command === "move_note_local" ? { destinationFileOrder } : {}),
     });
   } catch (error) {
     const status = await invoke<"notMoved" | "pending" | "unknown">("local_move_status", {
@@ -365,7 +384,7 @@ async function moveLocalPathLocked(kind: "file" | "folder", sourcePath: string, 
   // para evitar remontajes/parpadeos por cambios de ruta (especialmente en renombrado de carpetas).
   remapExplorerKeys(changes, kind === "folder" ? { oldPath: sourcePath, newPath: destinationPath } : undefined);
   try {
-    await migratePreferences(changes, kind === "folder" ? { oldPath: sourcePath, newPath: destinationPath } : undefined);
+    await migratePreferences(changes, kind === "folder" ? { oldPath: sourcePath, newPath: destinationPath } : undefined, destinationFileOrder);
   } catch {
     throw new Error("Visual preferences could not be updated after the move; the move journal was kept for recovery");
   }

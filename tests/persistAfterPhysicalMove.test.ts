@@ -86,9 +86,9 @@ test("2. Movimiento fallido: la persistencia inmediata NO se ejecuta y el orden 
   const src = fs.readFileSync(explorerPath, "utf-8");
 
   const persists = [...src.matchAll(/persistOrderAfterPhysicalMove\(/g)].map(m => m.index ?? -1);
-  // 3 puntos: (1) archivo movido a otra carpeta por drop directo, (2) archivo movido a otro contenedor por inserción posicional,
-  // (3) carpeta movida a otro padre (jerárquico). Todos son movimientos físicos confirmados.
-  assert.equal(persists.length, 3, "la persistencia inmediata existe solo en movimientos físicos confirmados (archivos x2 y carpetas x1)");
+  assert.equal(persists.length, 1, "folder moves keep their separate order write");
+  assert.equal(src.match(/moveLocalPath\("file", draggedPath, destinationPath, selectedOrder\)/g)?.length, 2,
+    "both file drop paths pass the selected order into the move transaction");
 
   // Reordenamientos puros (mismo contenedor/padre) no persisten en disco de forma inmediata.
   // Archivo: reorden dentro del mismo contenedor (isSameContainer) aplica orden y retorna sin moveLocalPath/persist.

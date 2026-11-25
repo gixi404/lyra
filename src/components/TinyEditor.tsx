@@ -1061,7 +1061,6 @@ function TinyEditor({
         onSelect={handleInteractionWithDebug}
         onFocus={handleInteractionWithDebug}
         onScroll={syncScrollPos}
-        placeholder="..."
         spellCheck
         className={twMerge(
           "editor-textarea block h-screen w-full resize-none bg-transparent focus:outline-none overflow-x-hidden overflow-y-scroll relative z-10",

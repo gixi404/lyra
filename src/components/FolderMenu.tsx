@@ -250,9 +250,17 @@ export default function FolderMenu({ path, archived = false, structural = false,
   }
 
   const showInfoAction = !archived && !structural;
+  const hasActionsAfterInfo = canCreate || canRename || canPersonalize || canMove || canArchive || isArchivedItem;
 
   return <div className="relative ml-auto" onClick={event => event.stopPropagation()}>
     <ContextMenu label={`Opciones de ${folderName}`} title={`Opciones de ${folderName}`}>
+      {showInfoAction && (
+        <>
+          <MenuItem icon={Info} label="Información" onSelect={() => void showInfo()} />
+          {hasActionsAfterInfo && <MenuSeparator />}
+        </>
+      )}
+
       {canCreate && <>
         <MenuItem
           icon={FilePlus}
@@ -304,13 +312,6 @@ export default function FolderMenu({ path, archived = false, structural = false,
         <>
           <MenuSeparator />
           <MenuItem icon={Trash2} label="Eliminar" tone="danger" onSelect={() => void prepareDelete()} />
-        </>
-      )}
-
-      {showInfoAction && (
-        <>
-          <MenuSeparator />
-          <MenuItem icon={Info} label="Información" onSelect={() => void showInfo()} />
         </>
       )}
     </ContextMenu>

@@ -61,6 +61,8 @@ struct MoveJournal {
     folder_id: Option<String>,
     #[serde(default)]
     phase: MovePhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    destination_file_order: Option<Vec<String>>,
     /// Recovery move: clear explicit folder archive by identity after the move is finalized.
     #[serde(default)]
     recovery_clear_folder_archive: bool,
@@ -1116,6 +1118,7 @@ fn move_folder_at_inner(base: &Path, source_path: &str, destination_path: &str, 
         notes: notes.clone(),
         folder_id: Some(folder_id),
         phase: MovePhase::Prepared,
+        destination_file_order: None,
         recovery_clear_folder_archive,
         recovery_clear_note_archive: false,
     };
@@ -1137,10 +1140,15 @@ fn move_folder_at(base: &Path, source_path: &str, destination_path: &str, expect
 }
 
 #[tauri::command]
-pub async fn move_note_local(app: tauri::AppHandle, source_path: String, destination_path: String) -> Result<Vec<PathChange>, String> {
+pub async fn move_note_local(
+    app: tauri::AppHandle,
+    source_path: String,
+    destination_path: String,
+    destination_file_order: Option<Vec<String>>,
+) -> Result<Vec<PathChange>, String> {
     let base = base_dir(&app)?;
     let _guard = crate::gdrive::sync::MANIFEST_LOCK.lock().await;
-    move_note_at(&base, &source_path, &destination_path)
+    move_note_at_inner(&base, &source_path, &destination_path, false, destination_file_order)
 }
 
 #[tauri::command]
@@ -1156,10 +1164,16 @@ pub async fn recover_archived_note_to(app: tauri::AppHandle, source_path: String
     let base = base_dir(&app)?;
     let _guard = crate::gdrive::sync::MANIFEST_LOCK.lock().await;
     let _archive_guard = crate::gdrive::archive::ARCHIVE_LOCK.lock().await;
-    move_note_at_inner(&base, &source_path, &destination_path, true)
+    move_note_at_inner(&base, &source_path, &destination_path, true, None)
 }
 
-fn move_note_at_inner(base: &Path, source_path: &str, destination_path: &str, recovery: bool) -> Result<Vec<PathChange>, String> {
+fn move_note_at_inner(
+    base: &Path,
+    source_path: &str,
+    destination_path: &str,
+    recovery: bool,
+    destination_file_order: Option<Vec<String>>,
+) -> Result<Vec<PathChange>, String> {
     crate::local_identity::recover_save(base)?;
     recover_move_at(base)?;
     if read_move_journal(base)?.is_some() { return Err("Un movimiento anterior necesita recuperación en la interfaz antes de realizar otro".into()); }
@@ -1169,6 +1183,16 @@ fn move_note_at_inner(base: &Path, source_path: &str, destination_path: &str, re
     if !source.is_file() { return Err("Source note does not exist".into()); }
     if destination.exists() { return Err("El destino ya existe".into()); }
     if !destination.parent().is_some_and(Path::is_dir) { return Err("La carpeta de destino no existe".into()); }
+    if let Some(order) = &destination_file_order {
+        let destination_parent = destination_path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let mut unique = std::collections::HashSet::new();
+        if !order.iter().all(|path| {
+            path.rsplit_once('/').map_or("", |(parent, _)| parent) == destination_parent
+                && unique.insert(path.as_str())
+        }) || !unique.contains(destination_path) {
+            return Err("Invalid destination file order".into());
+        }
+    }
     if recovery {
         validate_recovery_move_state(base, source_path, destination_path, false)?;
     } else {
@@ -1190,6 +1214,7 @@ fn move_note_at_inner(base: &Path, source_path: &str, destination_path: &str, re
         notes: notes.clone(),
         folder_id: None,
         phase: MovePhase::Prepared,
+        destination_file_order,
         recovery_clear_folder_archive: false,
         recovery_clear_note_archive,
     };
@@ -1206,8 +1231,9 @@ fn move_note_at_inner(base: &Path, source_path: &str, destination_path: &str, re
     Ok(notes)
 }
 
+#[cfg(test)]
 fn move_note_at(base: &Path, source_path: &str, destination_path: &str) -> Result<Vec<PathChange>, String> {
-    move_note_at_inner(base, source_path, destination_path, false)
+    move_note_at_inner(base, source_path, destination_path, false, None)
 }
 
 #[tauri::command]
@@ -1238,6 +1264,8 @@ pub struct PendingMove {
     is_folder: bool,
     phase: MovePhase,
     notes: Vec<PathChange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    destination_file_order: Option<Vec<String>>,
 }
 
 #[tauri::command]
@@ -1251,6 +1279,7 @@ pub async fn pending_local_move(app: tauri::AppHandle) -> Result<Option<PendingM
         is_folder: journal.is_folder,
         phase: journal.phase,
         notes: journal.notes,
+        destination_file_order: journal.destination_file_order,
     }))
 }
 
@@ -1522,7 +1551,7 @@ mod tests {
         assert_eq!(crate::local_identity::verified_note_id(base, "Work/renamed.md").unwrap(), Some(id.clone()));
         archive::set_archived(base, "Work/renamed.md", true, None).unwrap();
         assert_eq!(archive::projection(base, None).unwrap().archived_names, ["Work/renamed.md"]);
-        move_note_at_inner(base, "Work/renamed.md", "Work/recovered.md", true).unwrap();
+        move_note_at_inner(base, "Work/renamed.md", "Work/recovered.md", true, None).unwrap();
         remove_move_journal(base).unwrap();
         assert!(archive::projection(base, None).unwrap().archived_names.is_empty());
         assert_eq!(crate::local_identity::open_note(base, "Work/recovered.md").unwrap().1, "edited");
@@ -1610,7 +1639,7 @@ mod tests {
         std::fs::create_dir(&base).unwrap();
         create_folder_at(&base, "A").unwrap();
         std::fs::write(base.join("A/note.md"), "preserved").unwrap();
-        write_move_journal(&base, &MoveJournal { source: "A".into(), destination: "B".into(), is_folder: true, notes: vec![], folder_id: Some(folder_marker(&base.join("A")).unwrap()), phase: MovePhase::Prepared, recovery_clear_folder_archive: false, recovery_clear_note_archive: false }).unwrap();
+        write_move_journal(&base, &MoveJournal { source: "A".into(), destination: "B".into(), is_folder: true, notes: vec![], folder_id: Some(folder_marker(&base.join("A")).unwrap()), phase: MovePhase::Prepared, destination_file_order: None, recovery_clear_folder_archive: false, recovery_clear_note_archive: false }).unwrap();
         std::fs::create_dir(base.join("B")).unwrap();
         assert!(recover_move_at(&base).is_err());
         assert!(base.join("B").is_dir());
@@ -1677,7 +1706,7 @@ mod tests {
         let draft = serde_json::json!({"v":1,"noteName":"old.md","draftId":old_id,"content":"unsaved","revision":2,"baseHash":"base"});
         crate::drafts::save_draft_file(base, &old_id, &draft.to_string()).unwrap();
         let journal = MoveJournal { source: "old.md".into(), destination: "new.md".into(), is_folder: false,
-            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared, recovery_clear_folder_archive: false, recovery_clear_note_archive: false };
+            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared, destination_file_order: None, recovery_clear_folder_archive: false, recovery_clear_note_archive: false };
         write_move_journal(base, &journal).unwrap();
         std::fs::rename(base.join("old.md"), base.join("new.md")).unwrap();
         recover_move_at(base).unwrap();
@@ -1716,12 +1745,14 @@ mod tests {
             let draft = serde_json::json!({"v":1,"noteName":"old.md","draftId":old_id,"content":format!("draft-{phase}")});
             crate::drafts::save_draft_file(base, &old_id, &draft.to_string()).unwrap();
             MOVE_FAULT.with(|current| *current.borrow_mut() = Some(phase));
-            let result = move_note_at(base, "old.md", "new.md");
+            let order = vec!["first.md".into(), "new.md".into(), "last.md".into()];
+            let result = move_note_at_inner(base, "old.md", "new.md", false, Some(order.clone()));
             MOVE_FAULT.with(|current| *current.borrow_mut() = None);
             assert!(result.is_err(), "{phase}");
             recover_move_at(base).unwrap();
             recover_move_at(base).unwrap();
             let journal = read_move_journal(base).unwrap().unwrap();
+            assert_eq!(journal.destination_file_order, Some(order));
             if phase == "prepared" {
                 assert!(journal.phase == MovePhase::Aborted);
                 assert_eq!(std::fs::read_to_string(base.join("old.md")).unwrap(), "note-prepared");
@@ -1761,7 +1792,7 @@ mod tests {
         std::fs::create_dir(&base).unwrap();
         std::fs::write(base.join("old.md"), "preserved").unwrap();
         write_move_journal(&base, &MoveJournal { source: "old.md".into(), destination: "new.md".into(), is_folder: false,
-            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared, recovery_clear_folder_archive: false, recovery_clear_note_archive: false }).unwrap();
+            notes: vec![PathChange { old_path: "old.md".into(), new_path: "new.md".into() }], folder_id: None, phase: MovePhase::Prepared, destination_file_order: None, recovery_clear_folder_archive: false, recovery_clear_note_archive: false }).unwrap();
         std::fs::hard_link(base.join("old.md"), base.join("new.md")).unwrap();
         recover_move_at(&base).unwrap();
         assert!(!base.join("old.md").exists());
@@ -2785,7 +2816,7 @@ mod tests {
         assert!(archived_paths(base).unwrap().contains(&"A".to_string()));
         assert!(crate::gdrive::archive::projection(base, None).unwrap().archived_names.contains(&"A/B/note.md".to_string()));
 
-        let moved = move_note_at_inner(base, "A/B/note.md", "note.md", true).unwrap();
+        let moved = move_note_at_inner(base, "A/B/note.md", "note.md", true, None).unwrap();
         assert_eq!(moved[0].old_path, "A/B/note.md");
         assert_eq!(moved[0].new_path, "note.md");
         assert_eq!(std::fs::read_to_string(base.join("note.md")).unwrap(), "hola");
@@ -2881,6 +2912,7 @@ mod tests {
             source: "A/n.md".into(), destination: "n.md".into(), is_folder: false,
             notes: vec![PathChange { old_path: "A/n.md".into(), new_path: "n.md".into() }],
             folder_id: None, phase: MovePhase::Physical,
+            destination_file_order: None,
             recovery_clear_folder_archive: false, recovery_clear_note_archive: true,
         };
         clear_recovery_archive_state(base, &note_journal).unwrap();
@@ -2898,6 +2930,7 @@ mod tests {
         let folder_journal = MoveJournal {
             source: "B".into(), destination: "Dest/B".into(), is_folder: true,
             notes: vec![], folder_id: Some(bid), phase: MovePhase::Physical,
+            destination_file_order: None,
             recovery_clear_folder_archive: true, recovery_clear_note_archive: false,
         };
         clear_recovery_archive_state(base, &folder_journal).unwrap();
@@ -2940,7 +2973,7 @@ mod tests {
         crate::gdrive::archive::set_archived(base, "Arch/b.md", true, None).unwrap();
         set_folder_archived_at(base, "Arch", true).unwrap();
         // recover only a.md to root
-        move_note_at_inner(base, "Arch/a.md", "a.md", true).unwrap();
+        move_note_at_inner(base, "Arch/a.md", "a.md", true, None).unwrap();
         let proj = crate::gdrive::archive::projection(base, None).unwrap();
         assert!(!proj.archived_names.iter().any(|n| n == "a.md" || n == "Arch/a.md"));
         assert!(proj.archived_names.contains(&"Arch/b.md".to_string()));
@@ -2965,6 +2998,7 @@ mod tests {
             source: "A/n.md".into(), destination: "n.md".into(), is_folder: false,
             notes: vec![PathChange { old_path: "A/n.md".into(), new_path: "n.md".into() }],
             folder_id: None, phase: MovePhase::Physical,
+            destination_file_order: None,
             recovery_clear_folder_archive: false, recovery_clear_note_archive: true,
         };
         write_move_journal(base, &journal).unwrap();
@@ -2991,6 +3025,7 @@ mod tests {
             source: "Dev/Sub".into(), destination: "Sub".into(), is_folder: true,
             notes: vec![PathChange { old_path: "Dev/Sub/f.txt".into(), new_path: "Sub/f.txt".into() }],
             folder_id: Some(sub_id), phase: MovePhase::Physical,
+            destination_file_order: None,
             recovery_clear_folder_archive: true, recovery_clear_note_archive: false,
         };
         write_move_journal(base2, &fj).unwrap();

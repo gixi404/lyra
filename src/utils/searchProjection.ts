@@ -1,5 +1,27 @@
 import { ROOT_FOLDER_ID } from "./folderTree.ts";
+import { normalize } from "./helpers.ts";
 import { getFileDirectory } from "./noteName.ts";
+import { displayNoteName } from "./visibleNames.ts";
+
+/**
+ * Filtro compartido del explorador. Recibe la búsqueda ya normalizada para
+ * evitar recalcularla por cada nota y conserva una única definición de qué
+ * cuenta como coincidencia (ruta física o nombre visible).
+ */
+export function matchesNormalizedSearch(filePath: string, normalizedSearch: string): boolean {
+  if (normalizedSearch.length === 0) return true;
+  return normalize(filePath).includes(normalizedSearch)
+    || normalize(displayNoteName(filePath)).includes(normalizedSearch);
+}
+
+export function filterFilesByNormalizedSearch(
+  files: readonly string[],
+  normalizedSearch: string,
+): string[] {
+  return normalizedSearch.length === 0
+    ? [...files]
+    : files.filter(file => matchesNormalizedSearch(file, normalizedSearch));
+}
 
 /**
  * Devuelve todos los directorios antecesores de una nota, de más externo a más interno.

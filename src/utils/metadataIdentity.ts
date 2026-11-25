@@ -113,6 +113,26 @@ export function hasMetadataBinding(kind: MetadataKind, path: string): boolean {
   return Boolean(readBindings()[entryKey(kind, path)]);
 }
 
+/**
+ * Valida si la posición de orden (fileOrder/folderOrder) de una ruta sigue siendo
+ * válida. A diferencia de `metadataMatches` (usado para personalización: nombres,
+ * colores, iconos), el orden es una propiedad del PATH, no del contenido. Un archivo
+ * sin vínculo de identidad no evidencia reemplazo, por lo que conserva su posición.
+ * Solo se descarta la posición cuando existe un vínculo y la identidad viva difiere
+ * (archivo sustituido en la misma ruta). Un vínculo aún no verificado en esta sesión
+ * se conserva de forma optimista.
+ */
+export function metadataOrderValid(kind: MetadataKind, path: string): boolean {
+  if (!inTauri()) return true;
+  const key = entryKey(kind, path);
+  if (key === "folder:") return true;
+  const expected = readBindings()[key];
+  if (!expected) return true;
+  const current = live.get(key);
+  if (current === undefined) return true;
+  return current === expected;
+}
+
 export async function bindMetadata(kind: MetadataKind, path: string): Promise<boolean> {
   if (!inTauri()) return true;
   const key = entryKey(kind, path);

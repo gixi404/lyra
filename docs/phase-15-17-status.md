@@ -4,7 +4,7 @@
 - **Fase 15 (colores de carpetas):** implementada.
 - **Fase 16 (iconos de carpetas):** implementada.
 - **Fase 17 (nombres visibles vs físicos):** implementada.
-- **Fases 10–14 (drag-and-drop interno):** implementadas parcialmente y **pospuestas**; permanecen deshabilitadas (`src/dnd-explorer/config.ts`, `EXPLORER_DND_ENABLED = false`). Google Drive sigue fuera del alcance.
+- **Fases 10–14 (drag-and-drop interno):** retomadas con `@dnd-kit/react` y habilitadas mediante `EXPLORER_DND_ENABLED`; la validación final en las aplicaciones instaladas de Fedora y Windows 11 sigue pendiente. Google Drive sigue fuera del alcance.
 
 ## Validaciones automáticas previas (última ejecución antes de esta pausa)
 - `pnpm check` ✅

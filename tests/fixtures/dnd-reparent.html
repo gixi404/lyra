@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>Explorer reparent regression</title></head>
+  <body>
+    <div id="root"></div>
+    <script>
+      const spec = JSON.parse(new URLSearchParams(location.search).get("spec") || '{"folders":["A","B","B/C"],"files":["A/Archivo.md","B/C/Existing.md"]}');
+      window.fixtureSpec = spec;
+      window.__LYRA_DND_TEST__ = true;
+      // En el app real las identidades están vinculadas; sin trackIdentity el
+      // fixture debe reflejar ese estado para que fileOrder no se descarte.
+      if (!spec.trackIdentity) window.__LYRA_METADATA_TEST_BYPASS__ = true;
+      window.fixtureErrors = [];
+      window.fixtureMoves = [];
+      window.fixtureIdentityCalls = [];
+      window.fixtureOrderSaveDone = false;
+      const diskKey = `fixtureDisk:${spec.id}`;
+      const preferencesKey = `fixturePreferences:${spec.id}`;
+      const savedPreferences = JSON.parse(sessionStorage.getItem(preferencesKey) ?? "null");
+      if (savedPreferences?.fileOrder) localStorage.setItem("fileOrder", savedPreferences.fileOrder);
+      else if (spec.fileOrder) localStorage.setItem("fileOrder", JSON.stringify(spec.fileOrder));
+      localStorage.setItem("sortOption", savedPreferences?.sortOption ?? spec.sortOption ?? "manual");
+      window.fixtureDisk = JSON.parse(sessionStorage.getItem(diskKey) || JSON.stringify(spec.files));
+      if (spec.expanded) localStorage.setItem("folderExpanded", JSON.stringify(spec.expanded));
+      else localStorage.removeItem("folderExpanded");
+      window.addEventListener("error", event => window.fixtureErrors.push(event.message));
+      window.addEventListener("unhandledrejection", event => window.fixtureErrors.push(String(event.reason)));
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (command, args) => {
+          if (command === "metadata_identity" && spec.trackIdentity) {
+            window.fixtureIdentityCalls.push(args);
+            if (args.kind === "file" && !window.fixtureDisk.includes(args.path)) throw new Error("File does not exist");
+            return `identity:${args.path}`;
+          }
+          if (command === "plugin:path|join") return "lyra";
+          if (command === "read_draft_file") return null;
+          if (command === "move_note_local") {
+            window.fixtureMoves.push(args);
+            if (window.fixtureFailMove) throw new Error("Simulated physical move failure");
+            const index = window.fixtureDisk.indexOf(args.sourcePath);
+            if (index < 0 || window.fixtureDisk.includes(args.destinationPath)) throw new Error("Invalid physical move");
+            window.fixtureDisk[index] = args.destinationPath;
+            sessionStorage.setItem(diskKey, JSON.stringify(window.fixtureDisk));
+            return [{ oldPath: args.sourcePath, newPath: args.destinationPath }];
+          }
+          if (command === "local_move_status") return "notMoved";
+          if (command === "plugin:fs|write_text_file") {
+            if (window.fixtureDelaySaveMs) await new Promise(resolve => setTimeout(resolve, window.fixtureDelaySaveMs));
+            sessionStorage.setItem(preferencesKey, new TextDecoder().decode(args));
+            window.fixtureOrderSaveDone = true;
+          }
+          return undefined;
+        },
+      };
+    </script>
+    <script type="module" src="./dnd-reparent.tsx"></script>
+  </body>
+</html>

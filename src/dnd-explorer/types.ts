@@ -8,7 +8,7 @@ export interface DragItem {
 }
 
 export type DropTarget =
-  | { type: "file-insert"; containerKey: string; index: number }
+  | { type: "file-insert"; containerKey: string; index: number; visiblePaths?: string[] }
   | { type: "file-into-folder"; folderPath: string } // direct drop on folder -> end of direct notes
   | { type: "folder-into"; targetFolderPath: string } // hierarchical move: make child of target folder
   | { type: "folder-reorder"; parentKey: string; index: number; refPath?: string } // reorder among siblings

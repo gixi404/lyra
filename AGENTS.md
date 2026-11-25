@@ -66,7 +66,7 @@ pnpm run tauri dev      # desarrollo con hot-reload
   - Archivos (`MenuFile`, `MenuPaperFile`): oculto por defecto (`opacity-0`), visible con `group-hover`, `group-focus-within` y `focus-visible`. No modifica el flujo ni las dimensiones de la fila.
   - Carpetas (`FolderMenu`): siempre visible, con el mismo estilo de disparador.
 - **Acciones**: los menús de carpeta reutilizan `Modal` (crear, renombrar, archivar, recuperar) e `InfoModal` (información). Archivar una carpeta exige confirmación previa con `variant="danger"` y un texto adaptado; la opción «Archivar» usa el mismo hover rojo que los archivos.
-- **Orden e iconos de las acciones**: todas las acciones llevan icono (incluida «Mover a…») y **«Información» es siempre la última**, precedida de separador, en los tres menús (archivos, archivos archivados y carpetas).
+- **Orden e iconos de las acciones**: todas las acciones llevan icono (incluida «Mover a…»). **«Información» es la primera opción** en los menús de archivos y carpetas activos, seguida de un separador; el resto de acciones conservan su orden relativo. En «Archivados» el menú no se modifica: mantiene Recuperar / Eliminar y no incluye «Información».
 - **Temas**: los popups compartidos (`Modal`, `InfoModal`, `MoveItemDialog`, `CreateNoteDialog`, `FolderPicker`) adaptan colores a `isDay`; el tema oscuro conserva su aspecto original y el tema claro deja de usar superficies oscuras.
 - **Reglas de negocio intactas**: la carpeta virtual «Lyra» sigue protegida (no se renombra, mueve ni archiva) y las carpetas estructurales de la vista de archivados solo ofrecen información.
 

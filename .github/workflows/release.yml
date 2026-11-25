@@ -10,7 +10,42 @@ permissions:
   contents: write
 
 jobs:
+  dnd-webkit:
+    name: DnD WebKitGTK regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      LYRA_DND_TEST_BROWSER: /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/MiniBrowser
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.3.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install WebKitGTK driver and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y webkit2gtk-driver libwebkit2gtk-4.1-0 xvfb xauth
+
+      - name: Install JavaScript dependencies
+        run: pnpm install
+
+      - name: Test DnD WebKitGTK regression
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" pnpm test:dnd:webkit
+
   release:
+    needs: dnd-webkit
     permissions:
       contents: write
     strategy:

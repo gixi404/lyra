@@ -1,36 +1,15 @@
-# Explorador: Drag-and-drop (fases 10–14) — pospuesto
+# Internal file drag and drop
 
-Estado: **implementado parcialmente y pospuesto** (deshabilitado temporalmente). No bloquea el avance de las fases 15–17 ni la futura importación externa por arrastre (fases 18–19), que es independiente del arrastre interno del explorador.
+The explorer uses `@dnd-kit/react` 0.5.3 and `@dnd-kit/dom` 0.5.3. The old custom pointer geometry engine has been removed. `@hello-pangea/dnd` is no longer installed.
 
-## Qué está implementado (conservado, inactivo)
+`EXPLORER_DND_ENABLED` in `src/dnd-explorer/config.ts` is the immediate disable switch. Dragging is limited to active files in the normal explorer when no search is active. Folders, archived files and search results cannot be dragged. Folder headers accept drops, including the virtual Lyra root. The Manual sort option enables same-folder reordering; automatic sort modes allow cross-folder moves without changing the selected criterion.
 
-- Motor propio basado en Pointer Events + Motion en `src/dnd-explorer/` (`types.ts`, `geometry.ts`, `useExplorerDnd.ts`, `DragOverlay.tsx`, `config.ts`).
-- Integración en `src/components/FolderExplorer.tsx` (reordenación/inserción de archivos, movimiento a carpeta, reordenación/movimiento jerárquico de carpetas, auto-expansión con retardo, autoscroll, clon, resolución de drop/cancelación, persistencia de expansión en éxito) reutilizando `moveLocalPath`, proyección optimista y persistencia de orden existentes.
-- Utilidades de expansión y pruebas relacionadas: `src/utils/dndExpansion.ts`, `tests/dndExpansionPaths.test.ts` (y ajustes estructurales en pruebas de persistencia cuando aplicó).
-- Prototipo aislado: `src/pages/DndPrototype.tsx` (ruta `/__dnd-prototype`, registrada solo en entorno de desarrollo).
-- `@hello-pangea/dnd` sigue instalado pero sin uso en el explorador.
+`FolderExplorer.tsx` registers file rows with `useSortable` and folder headers with `useDroppable`. Dnd-kit owns pointer activation, optimistic visual sorting, collision detection, overlay placement, row transitions and auto-scroll. A drag starts after an 8 px pointer movement or a 150 ms hold with 12 px movement tolerance. Hovering a collapsed folder for 500 ms temporarily expands it using the existing Motion animation. Only `onDragEnd` commits an operation. The explorer reads the sortable source's current `group` and `index`, and validates `initialGroup` against the original file path. File paths are never used as drag IDs; `explorerKeys.ts` supplies stable IDs.
 
-## Problemas pendientes (razón del aplazamiento)
+All folder and file rows are direct children of the same React-owned list element. Their `group` values still identify logical file containers. This is required because Optimistic Sorting physically reorders sortable DOM nodes, including across groups. Keeping one DOM parent lets React reconcile a confirmed cross-folder move without attempting to remove a node from its former container. The WebKitGTK regression is `pnpm test:dnd:webkit`; it uses fictional files and a mocked physical move, then checks the real drag, DOM reorder, React commit, move count and final visual state.
 
-Validación real en **Tauri/WebKitGTK (Fedora)** mostró inestabilidad y el esfuerzo de estabilización desvió el avance del resto de mejoras:
+Same-folder manual drops persist `fileOrder`. Cross-folder drops call the existing `moveLocalPath` and `persistOrderAfterPhysicalMove`; the physical move pipeline retains its identity, draft, metadata and journal safeguards. A failed physical move clears the visual projection and reports the error. A completed move with auxiliary persistence failure follows the existing reconciliation behavior.
 
-- Oscilación/inestabilidad del índice de inserción y retroalimentación geometría↔hueco en contenedores dinámicos durante el arrastre (parcialmente mitigada en código, sin validación final satisfactoria).
-- Sensibilidad del ciclo de vida de puntero/captura y diferencias de comportamiento frente a Chromium (WebKitGTK no es representativo por pruebas en Chromium).
-- Geometría dinámica en expandir/colapsar/desplazar/redimensionar durante el arrastre, animaciones/fluidity y ausencia de saltos/solapes/teleports/duplicados aún por confirmar en runtime real.
-- Casos por cerrar: auto-expansión sucesiva fiable, inserción en notas recién reveladas, reordenación jerárquica de carpetas con desplazamiento compatible, autoscroll, persistencia de expansión/scroll en todos los casos, soporte táctil fino y ausencia de clic accidental, todo en WebKitGTK/Fedora.
+The definitive destination order is built from the visible container order at release and inserted at the sortable drop index, not from a possibly incomplete stored `fileOrder`. The optimistic projection is retired only when the destination path is already present in the rendered props (or the source is gone). This keeps the dnd-kit placement and the React commit identical, so folder rows do not reorder or shift back during the drop. The WebKitGTK regression traces the folder row position frame by frame and fails on an oscillating row or a destination that moves away from its drop slot.
 
-Evidencia diagnóstica previa (instrumentación temporal, ya desactivada): `~/Documentos/lyra/dnd-debug.log` (trazas de sesiones de arrastre en WebKitGTK).
-
-## Cómo reactivar
-
-1. En `src/dnd-explorer/config.ts` cambiar `EXPLORER_DND_ENABLED` a `true` (`DND_PROTOTYPE_ROUTE_ENABLED` ya se limita a desarrollo).
-2. El hook `useExplorerDnd` y la integración de `FolderExplorer` vuelven a activarse con el flag; la ruta `/__dnd-prototype` queda disponible en `pnpm tauri dev`/dev.
-3. Para diagnóstico en runtime real, puede reactivarse un logger de archivo temporal dentro de `$DOCUMENT/**` (p. ej. reutilizando `src/utils/dndDebug.ts`, que se conserva) e inicializarlo en `src/main.tsx`; evitar ampliar permisos de Tauri.
-4. Validar en Tauri/WebKitGTK (Fedora) antes de dar por cerradas las fases 10–14: arrastre básico estable, reorden/inserción intra/inter-contenedor y multinivel, auto-expansión 550 ms, movimiento jerárquico de carpetas sin ciclos, scroll/autoscroll, persistencia de expansión en éxito y restauración en cancelación/error, sin saltos/flicker/teleports/solapes/duplicados.
-
-## Al retomar
-
-- Priorizar estabilidad en WebKitGTK sobre paridad con Chromium.
-- No modificar Google Drive, backend de movimientos físicos/journals ni notas personales.
-- Conservar y reutilizar `moveLocalPath`, proyección optimista y persistencia de orden/migraciones existentes.
-- Si el motor no se estabiliza, conservar estos archivos para investigación y recuperar el último sistema funcional sin perder funcionalidades ya implementadas.
+An isolated fixture with fictional files is available at `/dnd-prototype.html` during Vite development, and through `/__dnd-prototype` in the development router. It has no access to the user's notes or preferences. The fixture was exercised with WebKitGTK 4.1 MiniBrowser 2.54.2 via WebDriver and with headless Google Chrome. WebKitGTK interactions passed for same-list reorder, cross-folder move, consecutive expansion of Alpha and Deep, move into an empty folder, auto-scroll and Escape cancellation. The production component was also exercised in an isolated WebKitGTK fixture for manual reorder and rollback after a simulated Tauri move failure. These checks did not use a packaged Tauri build or Windows 11. Confirm final animation quality and persisted physical moves in the installed apps before release.
