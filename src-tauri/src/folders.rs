@@ -857,6 +857,30 @@ fn scope_dir_matches(expected: &DeleteScopeEntry, path: &Path) -> bool {
     meta.file_type().is_dir() && expected.physical_id.is_some() && delete_physical_id(path, &meta) == expected.physical_id
 }
 
+#[cfg(target_os = "linux")]
+fn retain_delete_scope_handles(base: &Path, entries: &[DeleteScopeEntry]) -> Result<Vec<std::fs::File>, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    entries.iter().map(|expected| {
+        let path = base.join(&expected.rel);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_PATH | libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|e| format!("Cannot retain confirmed deletion identity: {e}"))?;
+        let meta = file.metadata().map_err(|e| format!("Cannot inspect confirmed deletion identity: {e}"))?;
+        let expected_file = matches!(expected.kind.as_str(), "file" | "marker");
+        if (expected_file && !meta.is_file())
+            || (!expected_file && !meta.is_dir())
+            || expected.physical_id.is_none()
+            || delete_physical_id(&path, &meta) != expected.physical_id
+        {
+            return Err("The confirmed deletion identity changed".into());
+        }
+        Ok(file)
+    }).collect()
+}
+
 fn scope_ancestors_match(base: &Path, rel: &str, scope_entries: &[DeleteScopeEntry]) -> bool {
     let mut parent = std::path::Path::new(rel).parent();
     while let Some(dir) = parent {
@@ -983,6 +1007,9 @@ pub(crate) fn recover_pending_folder_delete_at(base: &Path) -> Result<(), String
 }
 
 fn delete_archived_folder_permanently_at(base: &Path, relative_path: &str, expected: Option<DeleteFolderExpected>) -> Result<DeleteFolderResult, String> {
+    crate::gdrive::sync::ensure_safe_base_dir(base)?;
+    let canonical_base = base.canonicalize().map_err(|e| format!("Cannot inspect notes directory: {e}"))?;
+    let base = canonical_base.as_path();
     crate::local_identity::recover_save(base)?;
     recover_move_at(base)?;
     recover_pending_folder_delete_at(base)?;
@@ -994,6 +1021,10 @@ fn delete_archived_folder_permanently_at(base: &Path, relative_path: &str, expec
     }
 
     let (counts, scope_entries) = collect_delete_scope(base, &target, relative_path)?;
+    // Keep the confirmed inodes alive until deletion completes so they cannot
+    // be recycled for newly created files or folders in this operation.
+    #[cfg(target_os = "linux")]
+    let _scope_handles = retain_delete_scope_handles(base, &scope_entries)?;
     let scope_fingerprint = delete_scope_fingerprint(&scope_entries);
     if let Some(exp) = expected {
         if counts.total_files != exp.total_files || counts.total_folders != exp.total_folders {
@@ -1921,6 +1952,7 @@ mod tests {
         assert!(!base.join("Renombrada").exists());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn rename_folder_only_changes_case_on_linux() {
         let root = tempfile::tempdir().unwrap();

@@ -448,6 +448,8 @@ pub(crate) fn save_note_versioned(base: &Path, name: &str, expected_id: &str, ex
     let new_physical = physical_id(&open_regular(&new_anchor)?)?;
     let journal = SaveJournal { version: 1, name: name.into(), id: expected_id.into(), temp: temp_name, backup: backup_name, new_anchor: new_anchor_name, old_anchor: old_anchor_name, old_physical, new_physical, expected_old_hash: Some(expected_hash.to_string()) };
     write_journal(base, &journal)?;
+    // ReplaceFileW opens the staging file exclusively, including through hard links.
+    drop(file);
     recover_save(base)?;
     let modified = fs::metadata(&target).ok().and_then(|meta| meta.modified().ok())
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())

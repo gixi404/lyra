@@ -4735,20 +4735,21 @@ mod tests {
     fn test_aud_002_resolve_safe_path_and_symlinks() {
         let temp_dir = std::env::temp_dir().join(format!("lyra_test_safe_path_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
         let _ = std::fs::create_dir_all(&temp_dir);
+        let canonical_base = temp_dir.canonicalize().unwrap();
 
         // Archivo seguro nuevo
         let safe = resolve_safe_path(&temp_dir, "mi_nota.txt");
         assert!(safe.is_ok());
-        assert_eq!(safe.unwrap(), temp_dir.join("mi_nota.txt"));
+        assert_eq!(safe.unwrap(), canonical_base.join("mi_nota.txt"));
 
         // Archivos seguros en raíz y subcarpetas
         let safe_sub = resolve_safe_path(&temp_dir, "sub/nota.txt");
         assert!(safe_sub.is_ok());
-        assert_eq!(safe_sub.unwrap(), temp_dir.join("sub").join("nota.txt"));
+        assert_eq!(safe_sub.unwrap(), canonical_base.join("sub").join("nota.txt"));
 
         let safe_nested = resolve_safe_path(&temp_dir, "trabajo/clientes/reunion.txt");
         assert!(safe_nested.is_ok());
-        assert_eq!(safe_nested.unwrap(), temp_dir.join("trabajo").join("clientes").join("reunion.txt"));
+        assert_eq!(safe_nested.unwrap(), canonical_base.join("trabajo").join("clientes").join("reunion.txt"));
 
         // Path traversal bloqueado
         assert!(resolve_safe_path(&temp_dir, "../nota.txt").is_err());
@@ -4796,7 +4797,7 @@ mod tests {
         let nested_target = ensure_safe_parent_hierarchy(&temp_dir, "trabajo/clientes/2026/reunion.txt");
         assert!(nested_target.is_ok(), "Debe crear la jerarquía de directorios de forma segura");
         let target_path = nested_target.unwrap();
-        assert_eq!(target_path, temp_dir.join("trabajo").join("clientes").join("2026").join("reunion.txt"));
+        assert_eq!(target_path, temp_dir.canonicalize().unwrap().join("trabajo").join("clientes").join("2026").join("reunion.txt"));
         assert!(temp_dir.join("trabajo").join("clientes").join("2026").is_dir());
 
         // 2. Intento de path traversal rechazado
@@ -5333,7 +5334,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_aud_004_clean_stale_tmp_save_files_respects_ttl() {
         let temp_dir = std::env::temp_dir().join(format!("lyra_test_ttl_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
@@ -5346,11 +5346,7 @@ mod tests {
         // 2. Temporal antiguo (>300s): ajustar mtime a 400 segundos en el pasado
         let stale_tmp = temp_dir.join(".tmp_save_200_antiguo.txt");
         std::fs::write(&stale_tmp, b"Contenido antiguo que debe rescatarse").unwrap();
-        let past_time = std::time::SystemTime::now() - std::time::Duration::from_secs(400);
-        if let Ok(file) = std::fs::File::open(&stale_tmp) {
-            let times = std::fs::FileTimes::new().set_modified(past_time);
-            let _ = file.set_times(times);
-        }
+        set_old(&stale_tmp, 400);
 
         // Ejecutar limpieza preventiva
         let recovered = clean_stale_tmp_save_files(&temp_dir);
@@ -5832,8 +5828,8 @@ mod tests {
     // -----------------------------------------------------------------
     // M7 — Creación atómica exclusiva (hard link publicado)
     // -----------------------------------------------------------------
-    fn set_old(path: &PathBuf, secs_ago: u64) {
-        let f = std::fs::File::open(path).unwrap();
+    fn set_old(path: &std::path::Path, secs_ago: u64) {
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago))
             .unwrap();
     }
